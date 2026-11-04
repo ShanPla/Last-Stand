@@ -1,0 +1,67 @@
+# Builds the Windows download and attaches it to a GitHub Release.
+# Runs when a version tag such as v1.0.0 is pushed, or by hand from the Actions tab.
+name: Release the PC download
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.0.0"
+        required: true
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      # A pushed tag names itself. A manual run is given the tag as an input.
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # Release build of the game only. No tests, and no Emscripten.
+      - name: Build
+        run: |
+          cmake --preset native -DLS_BUILD_TESTS=OFF
+          cmake --build --preset native --config Release --target laststand
+
+      # The exe at the top level, then the licenses the download needs.
+      - name: Package
+        run: |
+          NAME="LastStand-${TAG}-windows-x64"
+          mkdir -p stage/licenses
+          cp build/native/Release/laststand.exe stage/LastStand.exe
+          cp .github/workflows/release-readme.txt stage/README.txt
+          cp LICENSE stage/LICENSE.txt
+          cp src/components/Ui/Font/OFL.txt stage/licenses/PixelifySans-OFL.txt
+          cp build/native/_deps/raylib-src/LICENSE stage/licenses/raylib-LICENSE.txt
+          cp build/native/_deps/raylib-src/src/external/glfw/LICENSE.md stage/licenses/glfw-LICENSE.txt
+          cd stage
+          cmake -E tar cf "../${NAME}.zip" --format=zip -- LastStand.exe README.txt LICENSE.txt licenses
+          cd ..
+          echo "ZIP=${NAME}.zip" >> "$GITHUB_ENV"
+
+      # The notes are written here, not generated from commit messages.
+      - name: Publish the release
+        run: |
+          printf '%s\n' \
+            "Last Stand for Windows. Unzip the folder and run LastStand.exe." \
+            "" \
+            "The program is not code signed, so Windows may warn about it. Choose More info, then Run anyway." \
+            "" \
+            "You can also play in a browser with nothing to install: https://shanpla.github.io/Last-Stand/" \
+            > release-notes.txt
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP" --clobber
+          else
+            gh release create "$TAG" "$ZIP" --title "Last Stand $TAG" --notes-file release-notes.txt --target "$GITHUB_SHA"
+          fi

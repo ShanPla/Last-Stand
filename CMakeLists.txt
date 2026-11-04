@@ -5,6 +5,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Link the C runtime into the program on Windows, so the exe runs on a PC without
+# the Visual C++ redistributable installed. This must be set before any target
+# is created, so that raylib and our libraries all use the same runtime.
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 option(LS_BUILD_TESTS "Build the native unit tests and bot run" ON)
 option(LS_SIM_ONLY "Build only the simulation and its tests, with no raylib or window" OFF)
 
@@ -105,6 +112,10 @@ target_link_libraries(laststand PRIVATE ls_sim ls_audio raylib)
 if(MSVC)
   target_compile_options(laststand PRIVATE /W4 /utf-8)
   target_link_libraries(laststand PRIVATE winmm)
+  # The Release exe is a Windows app with no console window for players. Other
+  # configurations keep the console, so log output is still visible while debugging.
+  # mainCRTStartup keeps the plain main() entry point.
+  target_link_options(laststand PRIVATE "$<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS;/ENTRY:mainCRTStartup>")
 endif()
 endif()
 
