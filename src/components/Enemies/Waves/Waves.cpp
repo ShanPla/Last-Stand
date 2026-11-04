@@ -73,13 +73,16 @@ void update(GameState& state) {
             adds -= 1.0f;
             enemies::spawn(state, EnemyType::Walker, spawnPoint(state), false);
         }
-        // Crates normally come from kills, and a player with empty guns gets few
-        // kills. Timed crates mean the boss fight can never become unwinnable.
-        const uint32_t crateTicks = static_cast<uint32_t>(balance::kBossAmmoCrateSeconds / kDt);
-        if (run.tick % crateTicks == 0) {
-            const Vec2 offset = fromAngle(state.rng.range(0.0f, kTau)) * balance::kBossAmmoCrateDistance;
-            pickups::spawnPickup(state, state.player.pos + offset, PickupType::Ammo);
-        }
+    }
+
+    // Crates normally come from kills, and a player with empty guns gets few kills.
+    // Timed crates mean ammo keeps arriving anyway, faster during the boss fight, so
+    // no run can become unwinnable. Stress tests skip this like the rest of the waves.
+    const float crateSeconds = run.bossSpawned ? balance::kBossAmmoCrateSeconds : balance::kTimedAmmoCrateSeconds;
+    const float crateDistance = run.bossSpawned ? balance::kBossAmmoCrateDistance : balance::kTimedAmmoCrateDistance;
+    if (run.tick % static_cast<uint32_t>(crateSeconds / kDt) == 0) {
+        const Vec2 offset = fromAngle(state.rng.range(0.0f, kTau)) * crateDistance;
+        pickups::spawnPickup(state, state.player.pos + offset, PickupType::Ammo);
     }
 }
 

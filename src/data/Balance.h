@@ -286,7 +286,11 @@ inline constexpr float kGemMergeCellSize = 96.0f;
 inline constexpr int kKillsPerPickupDrop = 70;   // A pickup drops about this often.
 inline constexpr float kHealPickupFraction = 0.25f;
 inline constexpr float kAmmoCrateFraction = 0.40f;  // Refills this much of each gun's reserve.
-inline constexpr int kKillsPerAmmoCrate = 140;     // An ammo crate drops about this often.
+inline constexpr int kKillsPerAmmoCrate = 200;     // An ammo crate drops about this often.
+// A crate also lands near the player on this timer, so a player making few kills
+// still gets a supply. Kill drops alone reward those who need ammo least.
+inline constexpr float kTimedAmmoCrateSeconds = 40.0f;
+inline constexpr float kTimedAmmoCrateDistance = 110.0f;
 inline constexpr float kBombDamage = 1200.0f;
 inline constexpr float kBombRadius = 760.0f;
 
