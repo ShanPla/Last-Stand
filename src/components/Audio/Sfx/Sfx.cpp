@@ -390,39 +390,86 @@ Samples evolution() {
     return out;
 }
 
+// Runs the signal through soft saturation. It adds harmonics above the deep notes,
+// so the low rumble can still be heard on laptop and phone speakers.
+void saturate(Samples& buffer, float drive) {
+    for (float& v : buffer) v = softClip(v * drive);
+}
+
+// Adds a copy of the middle of the sound, so the deep rumble keeps a body in the range
+// of laptop and phone speakers (about 150 to 500 Hz).
+void liftMids(Samples& buffer, float hz, float amount) {
+    Biquad band;
+    band.bandpass(hz, 0.7f);
+    for (float& v : buffer) v += amount * band.process(v);
+}
+
+// A low horn call: detuned saws a tritone apart through a closing low-pass, swelling in slowly.
+Samples horn(float hz, float seconds, float swell, float cutoff) {
+    float p1 = 0.0f, p2 = 0.3f, p3 = 0.6f;
+    OnePole lp;
+    lp.setCutoff(cutoff);
+    const float s1 = hz / kSr, s2 = hz * 1.006f / kSr, s3 = hz * 1.4142f / kSr;  // The third voice is a tritone up.
+    Samples out = render(seconds, [&](float t, size_t) {
+        const float body = lp.low(saw(p1, s1) + saw(p2, s2) + 0.6f * saw(p3, s3));
+        advance(p1, s1);
+        advance(p2, s2);
+        advance(p3, s3);
+        const float env = std::min(1.0f, t / swell) * decay(std::max(0.0f, t - swell), seconds * 0.5f);
+        return body * env;
+    });
+    saturate(out, 2.5f);
+    return out;
+}
+
 Samples bossSpawned() {
     Noise n(44);
-    OnePole lp, rise;
-    rise.setCutoff(300.0f);
+    OnePole rise;
+    rise.setCutoff(500.0f);
     Biquad bp;
     float p1 = 0.0f, p2 = 0.0f, p3 = 0.0f;
     int tick = 0;
     const float f1 = 55.0f, f2 = 55.5f, f3 = 77.8f;  // The third one is a tritone: the interval that sounds ominous.
-    return render(3.0f, [&](float t, size_t) {
+    OnePole lp;
+    Samples out = render(3.4f, [&](float t, size_t) {
         if ((tick++ & 31) == 0) {
-            lp.setCutoff(250.0f + 700.0f * std::min(1.0f, t / 1.2f));
-            bp.bandpass(200.0f + 1300.0f * std::min(1.0f, t / 1.15f), 1.0f);
+            lp.setCutoff(260.0f + 520.0f * std::min(1.0f, t / 1.3f));
+            bp.bandpass(140.0f + 560.0f * std::min(1.0f, t / 1.25f), 1.0f);
         }
-        const float swell = t < 1.2f ? (t / 1.2f) * (t / 1.2f) : decay(t - 1.2f, 1.8f);
-        const float drone = lp.low(saw(p1, f1 / kSr) + saw(p2, f2 / kSr) + 0.6f * saw(p3, f3 / kSr)) * swell * 0.5f;
+        const float swell = t < 1.3f ? (t / 1.3f) * (t / 1.3f) : decay(t - 1.3f, 2.0f);
+        const float drone = lp.low(saw(p1, f1 / kSr) + saw(p2, f2 / kSr) + 0.6f * saw(p3, f3 / kSr)) * swell * 0.9f;
         advance(p1, f1 / kSr);
         advance(p2, f2 / kSr);
         advance(p3, f3 / kSr);
-        const float riser = t < 1.15f ? bp.process(n.next()) * (t / 1.15f) * 0.5f : 0.0f;
-        const float since = t - 1.15f;
+        const float riser = t < 1.25f ? bp.process(n.next()) * (t / 1.25f) * 0.6f : 0.0f;
+        const float since = t - 1.25f;
         float impact = 0.0f;
-        if (since > 0.0f) impact = glideSine(since, 85.0f, 24.0f, 0.1f) * decay(since, 0.9f) * 1.3f + rise.low(n.next()) * decay(since, 0.4f) * 0.6f;
+        if (since > 0.0f) impact = thump(since, 120.0f, 38.0f, 0.1f, 2.5f) * decay(since, 1.0f) * 1.3f + rise.low(n.next()) * decay(since, 0.5f) * 0.7f;
         return drone + riser + impact;
     });
+    saturate(out, 3.5f);
+    liftMids(out, 260.0f, 1.8f);
+    // The horn call enters as the rumble builds, then rings out over the impact.
+    mixInto(out, horn(110.0f, 2.6f, 1.1f, 750.0f), 0.5f, 0.9f);
+    return out;
 }
 
 Samples bossPhase() {
-    Samples out = explosion(1.3f, 100.0f, 0.5f, 1500.0f, 0.5f, 45);
-    // Three notes a semitone apart make a sour stab, then a siren sweeps up.
-    const float notes[] = {57, 58, 63};
-    for (float note : notes) mixInto(out, tone(midiToHz(note), 0.9f, 0.5f, 1800.0f), 0.05f, 0.5f);
-    const Samples siren = render(0.9f, [&](float t, size_t) { return glideSine(t, 400.0f, 900.0f, 0.3f) * std::sin(kPi * t / 0.9f) * 0.3f; });
-    mixInto(out, siren, 0.1f, 1.0f);
+    Samples out = explosion(1.6f, 70.0f, 0.6f, 1100.0f, 0.8f, 45);
+    saturate(out, 1.8f);
+    for (float& v : out) v *= 0.3f;
+    mixInto(out, horn(98.0f, 1.3f, 0.12f, 800.0f), 0.05f, 1.2f);
+    // A falling growl replaces the old bright siren.
+    Samples growl = render(1.1f, [&](float t, size_t) {
+        const float w = std::sin(kPi * std::min(1.0f, t / 1.1f));
+        return glideSaw(t, 240.0f, 105.0f, 0.4f) * w * w;
+    });
+    OnePole lp;
+    lp.setCutoff(650.0f);
+    for (float& v : growl) v = lp.low(v);
+    saturate(growl, 2.5f);
+    mixInto(out, growl, 0.1f, 0.5f);
+    liftMids(out, 260.0f, 1.2f);
     return out;
 }
 
@@ -496,7 +543,7 @@ const Entry kEntries[kSfxCount] = {
     {{"gem_9", 2, 0.035f}, 0.26f},         {{"level_up", 1, 0.5f}, 0.55f},      {{"pickup_heal", 1, 0.1f}, 0.45f},
     {{"pickup_magnet", 1, 0.3f}, 0.24f},   {{"pickup_bomb", 1, 0.3f}, 0.42f},   {{"pickup_ammo", 1, 0.1f}, 0.40f},
     {{"bomb_blast", 2, 0.3f}, 0.95f},      {{"explosion", 3, 0.07f}, 0.70f},    {{"evolution", 1, 1.0f}, 0.65f},
-    {{"boss_spawned", 1, 2.0f}, 0.80f},    {{"boss_phase", 1, 1.0f}, 0.75f},    {{"boss_killed", 1, 5.0f}, 0.95f},
+    {{"boss_spawned", 1, 2.0f}, 0.50f},    {{"boss_phase", 1, 1.0f}, 0.60f},    {{"boss_killed", 1, 5.0f}, 0.95f},
     {{"ui_move", 1, 0.04f}, 0.22f},        {{"ui_confirm", 1, 0.06f}, 0.32f},   {{"ui_back", 1, 0.06f}, 0.30f},
     {{"ui_card_pick", 1, 0.06f}, 0.34f},   {{"ui_reroll", 1, 0.1f}, 0.32f},     {{"ui_pause", 1, 0.1f}, 0.32f},
 };

@@ -97,9 +97,65 @@ void leadNote(Ctx& c, size_t start, float hz, float hold, float vel, float drive
     }
 }
 
+// --- Boss instruments ----------------------------------------------------------
+// The boss layers aim for deep and dark without needing speakers that can play sub-bass.
+// Each low note is pushed through soft saturation, which creates harmonics between about
+// 150 and 500 Hz that small speakers and phones can reproduce, so the weight is still heard.
+
+// A growling bass: two detuned saws beat against each other slowly, over a sub sine.
+void growlNote(Ctx& c, size_t start, float hz, float hold, float vel) {
+    float p1 = 0.0f, p2 = 0.37f, sub = 0.0f;
+    OnePole lp, tone;
+    tone.setCutoff(1100.0f);  // Keeps the top end dark after the saturation.
+    Biquad mids;
+    mids.bandpass(260.0f, 0.7f);  // Lifts the 150 to 500 Hz range that small speakers can play.
+    const float dt1 = hz * 0.992f / kSr, dt2 = hz * 1.008f / kSr, dtSub = hz / kSr;
+    const size_t count = frames(hold + 0.2f);
+    for (size_t i = 0; i < count; ++i) {
+        const float t = static_cast<float>(i) / kSr;
+        if ((i & 31) == 0) lp.setCutoff(700.0f + 350.0f * std::sin(kTwoPi * 0.45f * t) + 250.0f * std::exp(-t / 0.3f));
+        const float osc = 0.9f * saw(p1, dt1) + 0.9f * saw(p2, dt2) + 0.3f * sine(sub);
+        advance(p1, dt1);
+        advance(p2, dt2);
+        advance(sub, dtSub);
+        float grown = tone.low(softClip(lp.low(osc) * 4.5f));
+        grown += 1.6f * mids.process(grown);
+        put(c, start + i, grown * std::min(1.0f, t / 0.02f) * releaseGate(t, hold, 0.2f) * vel);
+    }
+}
+
+// A dark choir-like drone: detuned saws, a low-pass that drifts slowly, and a formant
+// band that gives it an open vowel sound.
+void darkPadNote(Ctx& c, size_t start, float hz, float hold, float vel, float lfoOffset) {
+    float p1 = lfoOffset * 0.31f, p2 = lfoOffset * 0.53f + 0.2f;
+    p1 -= std::floor(p1);
+    p2 -= std::floor(p2);
+    OnePole lp;
+    Biquad vowel;
+    vowel.bandpass(480.0f, 1.6f);
+    const float dt1 = hz * 0.996f / kSr, dt2 = hz * 1.004f / kSr;
+    const size_t count = frames(hold + 1.2f);
+    for (size_t i = 0; i < count; ++i) {
+        const float t = static_cast<float>(i) / kSr;
+        if ((i & 63) == 0) lp.setCutoff(520.0f + 220.0f * std::sin(kTwoPi * 0.11f * t + lfoOffset));
+        const float osc = saw(p1, dt1) + saw(p2, dt2);
+        advance(p1, dt1);
+        advance(p2, dt2);
+        const float body = softClip(lp.low(osc) * 1.8f);
+        const float env = std::min(1.0f, t / 1.2f) * releaseGate(t, hold, 1.2f);
+        put(c, start + i, (body + 0.9f * vowel.process(body)) * env * vel);
+    }
+}
+
 // Drum hits sound the same every time, as on a real drum machine, so each one is
 // rendered once and then copied into the song. That is much cheaper than
 // synthesizing hundreds of identical hits.
+// A sine that glides from f0 down to f1, evaluated at time t.
+float glideSineCycles(float t, float f0, float f1, float tau) {
+    const float cycles = f1 * t + (f0 - f1) * tau * (1.0f - std::exp(-t / tau));
+    return std::sin(kTwoPi * (cycles - std::floor(cycles)));
+}
+
 void addWave(Ctx& c, size_t start, const Samples& wave, float gain) {
     for (size_t i = 0; i < wave.size(); ++i) put(c, start + i, wave[i] * gain);
 }
@@ -195,6 +251,56 @@ const Samples& tomWave(int index) {
     return waves[index];
 }
 
+// Boss drums are slow and heavy. The boom is saturated and has a mid "knock" on top,
+// so the hit is still felt on speakers that cannot play the lowest notes.
+const Samples& bossKickWave() {
+    static const Samples wave = [] {
+        Noise n(111);
+        OnePole lp;
+        lp.setCutoff(1400.0f);
+        return render(0.55f, [&](float t, size_t) {
+            const float cycles = 38.0f * t + (125.0f - 38.0f) * 0.05f * (1.0f - std::exp(-t / 0.05f));
+            const float body = std::sin(kTwoPi * (cycles - std::floor(cycles))) * decay(t, 0.45f);
+            const float knock = std::sin(kTwoPi * (210.0f * t - 70.0f * 0.03f * std::exp(-t / 0.03f))) * decay(t, 0.09f) * 0.5f;
+            return softClip(body * 3.0f) * 0.5f + knock * 1.5f + lp.low(n.next()) * decay(t, 0.01f) * 0.35f;
+        });
+    }();
+    return wave;
+}
+
+// A big dark snare: low noise, a falling tone, and a long boom underneath.
+const Samples& bossSnareWave() {
+    static const Samples wave = [] {
+        Noise n(112);
+        Biquad bp;
+        bp.bandpass(750.0f, 0.6f);
+        OnePole lp;
+        lp.setCutoff(2600.0f);
+        return render(0.7f, [&](float t, size_t) {
+            const float tone = glideSineCycles(t, 190.0f, 78.0f, 0.04f);
+            const float boom = std::sin(kTwoPi * (55.0f * t + 40.0f * 0.06f * (1.0f - std::exp(-t / 0.06f)))) * decay(t, 0.5f);
+            const float noise = lp.low(bp.process(n.next())) * decay(t, 0.3f) * 2.4f;
+            return noise + softClip(tone * 2.0f) * decay(t, 0.25f) * 0.9f + softClip(boom * 2.0f) * 0.6f;
+        });
+    }();
+    return wave;
+}
+
+Samples makeDarkTom(float hz) {
+    return render(0.6f, [hz](float t, size_t) {
+        const float cycles = hz * 0.5f * t + hz * 0.5f * 0.05f * (1.0f - std::exp(-t / 0.05f));
+        return softClip(std::sin(kTwoPi * (cycles - std::floor(cycles))) * 2.5f) * decay(t, 0.35f);
+    });
+}
+
+const Samples& darkTomWave(int index) {
+    static const Samples waves[3] = {makeDarkTom(330.0f), makeDarkTom(260.0f), makeDarkTom(200.0f)};
+    return waves[index];
+}
+
+void bossKick(Ctx& c, size_t start, float vel) { addWave(c, start, bossKickWave(), vel); }
+void bossSnare(Ctx& c, size_t start, float vel) { addWave(c, start, bossSnareWave(), vel); }
+void darkTom(Ctx& c, size_t start, int index, float vel) { addWave(c, start, darkTomWave(index), vel); }
 void kick(Ctx& c, size_t start, float vel) { addWave(c, start, kickWave(), vel); }
 void snare(Ctx& c, size_t start, float vel) { addWave(c, start, snareWave(), vel); }
 void clap(Ctx& c, size_t start, float vel) { addWave(c, start, clapWave(), vel); }
@@ -273,10 +379,22 @@ int intoLeadRange(int midi) {
 
 // --- Boss layer data ---------------------------------------------------------
 
-// A phrygian: the flat second (B flat) is the sour note that makes it menacing.
+// A phrygian: the flat second (B flat) and the tritone are the sour notes that make it dread.
 constexpr int kBossRoots[kBossBars] = {33, 33, 33, 33, 34, 34, 33, 33, 33, 33, 36, 36, 34, 34, 32, 40};
-constexpr int kBossRiff1[16] = {0, -1, 0, 1, 0, -1, 3, -1, 0, -1, 0, 1, 5, -1, 3, 1};
-constexpr int kBossRiff2[16] = {7, -1, 7, 8, 7, -1, 5, -1, 3, -1, 3, 1, 0, -1, 1, 0};
+
+// The lead is a sparse, low motif: two long notes per bar, as semitones above the root.
+// One row per bar within a group of four. The tritone (6) and flat second (1) give the dread.
+struct Phrase {
+    int step[2];
+    int offset[2];
+    float len[2];
+};
+constexpr Phrase kBossMotif[4] = {
+    {{0, 12}, {0, 1}, {11.0f, 4.0f}},
+    {{0, 8}, {0, 6}, {7.0f, 8.0f}},
+    {{0, 8}, {0, 1}, {7.0f, 8.0f}},
+    {{0, 8}, {7, 6}, {7.0f, 8.0f}},
+};
 
 // --- Rendering per stem and bar ------------------------------------------------
 
@@ -375,55 +493,56 @@ void renderLead(Ctx& c, int bar) {
     }
 }
 
+// Two long growling notes per bar. At the end of a four bar group the second one slides
+// up a semitone to the flat second, so the line leans without ever resolving.
 void renderBossBass(Ctx& c, int bar) {
     const float root = static_cast<float>(kBossRoots[bar]);
-    for (int s = 0; s < 16; ++s) {
-        int offset = 0;
-        if (s == 6 || s == 14) offset = 12;
-        if (bar >= 8 && (s == 3 || s == 11)) offset = 7;
-        const float vel = (s % 4 == 0) ? 1.0f : (s % 2 == 0 ? 0.85f : 0.7f);
-        bassNote(c, stepFrame(bar, static_cast<float>(s)), midiToHz(root + static_cast<float>(offset)), stepSeconds(0.85f), vel * 0.9f, 4.0f, 2000.0f);
-    }
+    growlNote(c, stepFrame(bar, 0), midiToHz(root), stepSeconds(7.5f), 1.0f);
+    const float second = (bar % 4 == 3) ? root + 1.0f : root;
+    growlNote(c, stepFrame(bar, 8), midiToHz(second), stepSeconds(5.5f), 0.9f);
+    growlNote(c, stepFrame(bar, 14), midiToHz(root), stepSeconds(1.5f), 0.6f);
 }
 
+// Half-time: a heavy kick on the downbeat, one a little later, and a huge snare on beat three.
+// Every fourth bar toms fall away after the snare. Nothing busy and no bright cymbals.
 void renderBossDrums(Ctx& c, int bar) {
     const int inGroup = bar % 4;
-    const float kicks[] = {0, 4, 8, 10, 12};
-    for (float s : kicks) kick(c, stepFrame(bar, s), s == 0 ? 1.0f : 0.95f);
-    if (inGroup == 3) kick(c, stepFrame(bar, 14), 0.9f);
-    for (int s = 0; s < 16; ++s) {
-        if (s % 4 == 2) hat(c, stepFrame(bar, static_cast<float>(s)), 0.85f, HatKind::Open);
-        else hat(c, stepFrame(bar, static_cast<float>(s)), (s % 2 == 0) ? 0.5f : 0.35f, HatKind::Closed);
-    }
-    snare(c, stepFrame(bar, 4), 1.0f);
-    clap(c, stepFrame(bar, 4), 0.7f);
+    bossKick(c, stepFrame(bar, 0), 1.0f);
+    bossKick(c, stepFrame(bar, 10), 0.8f);
+    bossSnare(c, stepFrame(bar, 8), 1.0f);
     if (inGroup == 3) {
-        for (int i = 0; i < 4; ++i) snare(c, stepFrame(bar, 12.0f + static_cast<float>(i)), 0.65f + 0.12f * static_cast<float>(i));
-    } else {
-        snare(c, stepFrame(bar, 12), 1.0f);
-        clap(c, stepFrame(bar, 12), 0.7f);
+        for (int i = 0; i < 3; ++i) darkTom(c, stepFrame(bar, 11.0f + 2.0f * static_cast<float>(i)), i, 0.9f - 0.1f * static_cast<float>(i));
     }
-    if (bar % 8 == 0) crash(c, stepFrame(bar, 0), 1.0f);
+    if (bar % 8 == 0) darkTom(c, stepFrame(bar, 0), 2, 0.8f);
 }
 
 void renderBossLead(Ctx& c, int bar) {
-    const int* riff = (bar % 4 < 2) ? kBossRiff1 : kBossRiff2;
-    const float root = static_cast<float>(kBossRoots[bar] + 36);
-    for (int s = 0; s < 16; ++s) {
-        if (riff[s] < 0) continue;
-        leadNote(c, stepFrame(bar, static_cast<float>(s)), midiToHz(root + static_cast<float>(riff[s])), stepSeconds(1.5f), 0.9f, 2.5f, 2600.0f);
+    const Phrase& phrase = kBossMotif[bar % 4];
+    const float root = static_cast<float>(kBossRoots[bar]);
+    for (int i = 0; i < 2; ++i) {
+        const float semitones = root + static_cast<float>(phrase.offset[i]);
+        const float hold = stepSeconds(phrase.len[i]);
+        const size_t at = stepFrame(bar, static_cast<float>(phrase.step[i]));
+        // An octave pair: the low note carries weight, the upper one the harmonics speakers can play.
+        leadNote(c, at, midiToHz(semitones + 12.0f), hold, 1.0f, 3.4f, 900.0f);
+        leadNote(c, at, midiToHz(semitones + 24.0f), hold, 0.45f, 2.4f, 1100.0f);
     }
 }
 
-// A held tritone and flat ninth drone. It never resolves, which keeps the fight tense.
+// A held tritone and flat ninth drone, sung by a dark choir. It never resolves.
+// The chord's four notes are spread over the bars it lasts, so no single step does all the work.
 void renderBossPad(Ctx& c, int bar) {
     const int root = kBossRoots[bar];
-    if (bar > 0 && kBossRoots[bar - 1] == root) return;
+    int first = bar;
+    while (first > 0 && kBossRoots[first - 1] == root) --first;
     int span = 1;
-    while (bar + span < kBossBars && kBossRoots[bar + span] == root) ++span;
+    while (first + span < kBossBars && kBossRoots[first + span] == root) ++span;
     const float hold = static_cast<float>(span * kBarFrames) / kSr + 0.2f;
     const int notes[4] = {root + 12, root + 18, root + 24, root + 25};
-    for (int i = 0; i < 4; ++i) padNote(c, stepFrame(bar, 0), midiToHz(static_cast<float>(notes[i])), hold, 0.5f, static_cast<float>(i) * 2.3f);
+    for (int i = 0; i < 4; ++i) {
+        if (i % span != bar - first) continue;
+        darkPadNote(c, stepFrame(first, 0), midiToHz(static_cast<float>(notes[i])), hold, 0.5f, static_cast<float>(i) * 2.3f);
+    }
 }
 
 // A few quieter copies, a dotted eighth note apart, give plucks the classic synthwave echo.
@@ -454,7 +573,7 @@ struct StemSettings {
 constexpr StemSettings kSettings[kStemCount] = {
     {"pad", 0.070f, 0, 0},          {"bass", 0.075f, 0, 0},         {"drums_light", 0.060f, 0, 0}, {"arp", 0.080f, 3, 0.45f},
     {"drums_full", 0.070f, 0, 0},   {"lead", 0.085f, 3, 0.35f},     {"boss_bass", 0.100f, 0, 0},   {"boss_drums", 0.085f, 0, 0},
-    {"boss_lead", 0.100f, 3, 0.3f}, {"boss_pad", 0.075f, 0, 0},
+    {"boss_lead", 0.080f, 6, 0.35f}, {"boss_pad", 0.085f, 0, 0},
 };
 
 }  // namespace
