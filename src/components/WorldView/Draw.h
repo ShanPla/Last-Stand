@@ -71,8 +71,9 @@ void groundRing(const View& view, Vec2 center, float radius, float width, int st
 
 inline constexpr float kAtlasTexel = 1.0f / static_cast<float>(kAtlasSize);
 
-// Grade 255 means the time of day tints this sprite, and 0 means it stays true.
-inline void spriteQuad(const SpriteRef& ref, int x, int y, bool mirror, uint8_t row, uint8_t grade = 255, uint8_t alpha = 255) {
+// Grade 255 means the time of day tints this sprite, and 0 means it stays true. flash
+// is how far it mixes toward the hit flash color, and must stay under 255.
+inline void spriteQuad(const SpriteRef& ref, int x, int y, bool mirror, uint8_t row, uint8_t grade = 255, uint8_t alpha = 255, uint8_t flash = 0) {
     const float u0 = static_cast<float>(ref.x) * kAtlasTexel;
     const float v0 = static_cast<float>(ref.y) * kAtlasTexel;
     const float u1 = static_cast<float>(ref.x + ref.w) * kAtlasTexel;
@@ -84,7 +85,7 @@ inline void spriteQuad(const SpriteRef& ref, int x, int y, bool mirror, uint8_t 
     const float b = t + static_cast<float>(ref.h);
     const float texLeft = mirror ? u1 : u0;
     const float texRight = mirror ? u0 : u1;
-    rlColor4ub(row, grade, 0, alpha);
+    rlColor4ub(row, grade, flash, alpha);
     rlTexCoord2f(texLeft, v0);
     rlVertex2f(l, t);
     rlTexCoord2f(texLeft, v1);

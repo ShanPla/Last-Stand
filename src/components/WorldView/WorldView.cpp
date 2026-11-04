@@ -1,5 +1,6 @@
 #include "components/WorldView/WorldView.h"
 
+#include "components/Effects/Effects.h"
 #include "components/WorldView/Characters.h"
 #include "components/WorldView/DayCycle.h"
 #include "components/WorldView/Draw.h"
@@ -69,7 +70,6 @@ View g_view;
 
 bool g_ready = false;
 bool g_fastMode = false;
-bool g_reducedMotion = false;
 int g_quality = 1;
 float g_fixedDayTime = -1.0f;
 
@@ -140,19 +140,27 @@ void fitTargetToWindow() {
 }
 
 // The camera stays on whole art pixels. Sprites and ground share the same grid, so
-// nothing shimmers against anything else as the view scrolls.
-void aimCamera(const GameState& state, float alpha) {
+// nothing shimmers against anything else as the view scrolls. Screen shake is added
+// here in whole art pixels too, so to the renderer a shake is just the camera walking.
+// Returns where the camera would be with no shake, which is where the soldier stands.
+Vec2 aimCamera(const GameState& state, float alpha) {
     const Vec2 player = lerp(state.player.prevPos, state.player.pos, alpha);
     const float column = std::floor(player.x * kArtPerWorld + 0.5f);
     const float row = std::floor(player.y * kArtPerWorld * kTiltSquash + 0.5f);
-    g_view.focusX = column / kArtPerWorld;
-    g_view.focusY = row / (kArtPerWorld * kTiltSquash);
+    int shakeColumns = 0;
+    int shakeRows = 0;
+    effects::shakeArtPixels(&shakeColumns, &shakeRows);
+    g_view.focusX = (column + static_cast<float>(shakeColumns)) / kArtPerWorld;
+    g_view.focusY = (row + static_cast<float>(shakeRows)) / (kArtPerWorld * kTiltSquash);
+    return {column / kArtPerWorld, row / (kArtPerWorld * kTiltSquash)};
 }
 
 // --- Figures -----------------------------------------------------------------
 
 int collectVisibleZombies(const GameState& state, float alpha) {
     int visible = 0;
+    int flashing = 0;
+    bool bossSeen = false;
     for (int i = 0; i < state.enemies.count; ++i) {
         const Enemy& enemy = state.enemies[i];
         const ScreenPoint feet = project(g_view, lerp(enemy.prevPos, enemy.pos, alpha));
@@ -162,7 +170,12 @@ int collectVisibleZombies(const GameState& state, float alpha) {
         VisibleFigure& figure = g_visible[visible++];
         figure.feet = feet;
         figure.enemyIndex = static_cast<uint16_t>(i);
+        if (enemy.flash > 0.0f) flashing++;
+        if (enemy.type == EnemyType::Boss) bossSeen = figureTouchesTarget(g_view, state, enemy, feet);
     }
+    // The effects need the size of the crowd under fire before any figure is drawn.
+    effects::setFlashingCount(flashing);
+    effects::noteBossOnScreen(bossSeen, state);
     return visible;
 }
 
@@ -266,7 +279,6 @@ void init() {
 }
 
 void setFastMode(bool enabled) { g_fastMode = enabled; }
-void setReducedMotion(bool enabled) { g_reducedMotion = enabled; }
 void setFixedDayTime(float seconds) { g_fixedDayTime = seconds; }
 
 void setQuality(int quality) {
@@ -290,7 +302,7 @@ void consumeEvents(const GameState& state) {
 void draw(const GameState& state, float alpha) {
     if (!g_ready) init();
     fitTargetToWindow();
-    aimCamera(state, alpha);
+    const Vec2 ringCenter = aimCamera(state, alpha);
     updateGround(g_view, state.run.seed);
 
     const Vec2 playerWorld = lerp(state.player.prevPos, state.player.pos, alpha);
@@ -298,7 +310,7 @@ void draw(const GameState& state, float alpha) {
 
     const DayLook look = dayLookAt(dayClock(state));
     const uint32_t tick = state.run.tick;
-    const bool flicker = !g_reducedMotion && g_quality > 0;
+    const bool flicker = effects::flickerAllowed() && g_quality > 0;
 
     const int zombies = collectVisibleZombies(state, alpha);
     VisibleFigure& playerFigure = g_visible[zombies];
@@ -327,10 +339,11 @@ void draw(const GameState& state, float alpha) {
 
     // Flat things on the ground first, so characters always stand on top of them.
     beginFlat();
+    // Stains go under the telegraphs, so they can never hide one.
+    effects::drawStains(g_view, look.spriteTint);
     drawGroundMarks(g_view, state, alpha);
-    // The ring sits on the camera focus, the same whole art pixel as his feet, so it
-    // never wobbles around him as he walks.
-    const Vec2 ringCenter{g_view.focusX, g_view.focusY};
+    // The ring sits on the unshaken camera position, the same whole art pixel as his
+    // feet, so it never wobbles around him as he walks.
     drawSoldierRing(g_view, ringCenter);
     endFlat();
 
@@ -374,24 +387,36 @@ void draw(const GameState& state, float alpha) {
     drawSoldierRingOverCrowd(g_view, ringCenter);
     endFlat();
 
-    // Only shots and blasts glow: this is the one bright layer in the world.
-    rlSetBlendMode(RL_BLEND_ADDITIVE);
-    beginFlat();
-    drawGlows(g_view, state);
-    endFlat();
-    rlSetBlendMode(RL_BLEND_ALPHA);
+    // Weak devices have no neon layer, so plain discs light up their blasts instead.
+    if (!effects::glowEnabled()) {
+        rlSetBlendMode(RL_BLEND_ADDITIVE);
+        beginFlat();
+        drawGlows(g_view, state);
+        endFlat();
+        rlSetBlendMode(RL_BLEND_ALPHA);
+    }
 
     beginFlat();
     drawBlasts(g_view, state);
     drawShots(g_view, state, alpha);
     drawBeams(g_view, state);
+    effects::drawParticles(g_view, look.spriteTint);
     endFlat();
 
     beginSprites();
     drawSmoke(g_view, tick);
     drawAirSprites(g_view, state, alpha);
     drawMuzzleFlash(state, playerFigure.feet);
+    endSprites();
+
+    // The neon layer, any full-screen flash, then the numbers.
+    queueShotGlows(g_view, state, alpha);
+    effects::drawGlow(g_view);
+    effects::drawScreenFlash(g_view);
+    effects::drawNumbers(g_view, state);
+
     // Enemy bullets are drawn last, so nothing can hide them.
+    beginSprites();
     drawEnemyBullets(g_view, state, alpha);
     endSprites();
 

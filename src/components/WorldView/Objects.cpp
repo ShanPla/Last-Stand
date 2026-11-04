@@ -1,5 +1,6 @@
 #include "components/WorldView/Objects.h"
 
+#include "components/Effects/Effects.h"
 #include "components/Weapons/Blades/Blades.h"
 #include "components/Weapons/Weapons.h"
 #include "data/Balance.h"
@@ -13,6 +14,7 @@ namespace ls::worldview {
 namespace {
 
 constexpr int kManyShots = 1200;  // Above this, bullets drop to a single quad.
+constexpr int kMaxShotGlows = 320;  // The most shots lit in one frame.
 constexpr float kShotHeight = 14.0f;  // Art pixels above the ground: about chest height.
 constexpr float kFlameHeight = 10.0f;
 constexpr float kGrenadeArcHeight = 46.0f;
@@ -122,7 +124,7 @@ void drawExplosionFire(const View& view, const Zone& zone) {
 void drawFlame(const Projectile& shot, const ScreenPoint& ground, uint32_t tick) {
     const float life = clampf(shot.life / flameLifetime(), 0.0f, 1.0f);
     const uint32_t seed = hashPosition(shot.prevPos) >> 4;
-    const float flick = 0.85f + 0.3f * triangleWave(tick + seed, 8u);
+    const float flick = effects::flickerAllowed() ? 0.85f + 0.3f * triangleWave(tick + seed, 8u) : 1.0f;
     // A flame starts small and hot at the nozzle, swells, then thins out and rises.
     const float size = shot.radius * kArtPerWorld * ground.scale * (1.45f - 0.8f * life) * flick;
     uint8_t row = life > 0.62f ? kRowFireHot : (life > 0.28f ? kRowBase : kRowFireOld);
@@ -136,8 +138,9 @@ void drawFlame(const Projectile& shot, const ScreenPoint& ground, uint32_t tick)
 void drawBossCircle(const View& view, const Zone& zone, uint32_t tick) {
     const float radius = zone.maxRadius > 0.0f ? zone.maxRadius : zone.radius;
     const float progress = zone.maxLife > 0.0f ? clampf(1.0f - zone.life / zone.maxLife, 0.0f, 1.0f) : 1.0f;
-    // Pulses faster right before it lands, so the moment to leave is hard to miss.
-    const float pulse = triangleWave(tick, progress > 0.75f ? 8u : 24u);
+    // Pulses faster right before it lands, so the moment to leave is hard to miss. Where
+    // flicker is off it stays steady, and the closing ring still shows the timing.
+    const float pulse = effects::flickerAllowed() ? triangleWave(tick, progress > 0.75f ? 8u : 24u) : 0.5f;
 
     groundDisc(view, zone.a, radius, 2, fade(theme::kHostileFill, 0.18f));
     groundDisc(view, zone.a, std::max(1.0f, radius * progress), 2, fade(theme::kHostileFill, 0.34f + 0.20f * pulse));
@@ -181,7 +184,7 @@ void drawBossLine(const View& view, const Zone& zone, uint32_t tick) {
     const Vec2 endWorld = zone.a + worldDir * to;
     const float frontDistance = worldLength * progress;
     const Vec2 frontWorld = zone.a + worldDir * clampf(frontDistance, from, to);
-    const float pulse = triangleWave(tick, progress > 0.75f ? 8u : 24u);
+    const float pulse = effects::flickerAllowed() ? triangleWave(tick, progress > 0.75f ? 8u : 24u) : 0.5f;
 
     const Vec2 a0 = toScreen(view, startWorld + side);
     const Vec2 a1 = toScreen(view, startWorld - side);
@@ -231,7 +234,9 @@ void drawTeslaLink(const View& view, const Zone& zone, uint32_t tick) {
     const Vec2 a{pa.x, pa.y - kShotHeight * pa.scale};
     const Vec2 b{pb.x, pb.y - kShotHeight * pb.scale};
     const Vec2 normal = perpendicular(normalizedOr(b - a, Vec2{1.0f, 0.0f}));
-    const uint32_t seed = hashPosition(zone.a) ^ (tick / kTeslaRefreshTicks) * 2654435761u;
+    // The arc reshapes every few ticks. Where flicker is off, each arc keeps one shape.
+    const uint32_t reshape = effects::flickerAllowed() ? tick / kTeslaRefreshTicks : 0u;
+    const uint32_t seed = hashPosition(zone.a) ^ reshape * 2654435761u;
     const Color color = zone.evolved ? theme::kEvolvedAccent : theme::kTesla;
 
     Vec2 points[kTeslaSegments + 1];
@@ -297,9 +302,53 @@ void drawGlows(const View& view, const GameState& state) {
     for (const Zone& zone : state.zones) {
         if (zone.kind != ZoneKind::Explosion) continue;
         const float life = zone.maxLife > 0.0f ? clampf(zone.life / zone.maxLife, 0.0f, 1.0f) : 0.0f;
+        const float light = effects::explosionLight(life);
         const Color glow = zone.evolved ? theme::kGlowEvolved : theme::kGlowWarm;
-        groundDisc(view, zone.a, zone.radius * 1.5f, 4, fade(glow, life));
-        groundDisc(view, zone.a, zone.radius * 0.9f, 4, fade(glow, life));
+        groundDisc(view, zone.a, zone.radius * 1.5f, 4, fade(glow, light));
+        groundDisc(view, zone.a, zone.radius * 0.9f, 4, fade(glow, light));
+    }
+}
+
+void queueShotGlows(const View& view, const GameState& state, float alpha) {
+    if (!effects::glowEnabled()) return;
+    // Blasts first, as they matter most. Each has a fast flash at the start.
+    for (const Zone& zone : state.zones) {
+        const float life = zone.maxLife > 0.0f ? clampf(zone.life / zone.maxLife, 0.0f, 1.0f) : 0.0f;
+        if (zone.kind == ZoneKind::Explosion) {
+            const ScreenPoint point = project(view, zone.a);
+            const float reach = zone.radius * kArtPerWorld * point.scale;
+            const float y = point.y - 6.0f * point.scale;
+            const float light = effects::explosionLight(life);
+            effects::queueGlowSpot(point.x, y, reach * 1.35f, zone.evolved ? theme::kFxGlowEvolved : theme::kFxGlowBlast, 0.5f * light);
+            effects::queueGlowSpot(point.x, y, reach * 0.6f, theme::kFxGlowBlastCore, 0.7f * light * life * life);
+        } else if (zone.kind == ZoneKind::SniperBeam || zone.kind == ZoneKind::TeslaLink) {
+            // A beam is lit from a few spots along it, which is plenty at this size.
+            const ScreenPoint a = project(view, zone.a);
+            const ScreenPoint b = project(view, zone.b);
+            const Color color = zone.evolved ? theme::kFxGlowEvolved : (zone.kind == ZoneKind::TeslaLink ? theme::kFxGlowTesla : theme::kFxGlowBeam);
+            constexpr int kSpots = 4;
+            for (int i = 0; i <= kSpots; ++i) {
+                const float t = static_cast<float>(i) / static_cast<float>(kSpots);
+                effects::queueGlowSpot(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t - kShotHeight * a.scale, 14.0f, color, 0.5f * life);
+            }
+        }
+    }
+    // With thousands of shots on screen, every Nth one is lit. Nobody can count them, and
+    // this keeps the layer's cost fixed however many there are.
+    const int stride = 1 + state.projectiles.count / kMaxShotGlows;
+    for (int i = 0; i < state.projectiles.count; i += stride) {
+        const Projectile& shot = state.projectiles[i];
+        if (shot.kind == ProjectileKind::Mine || shot.kind == ProjectileKind::Grenade) continue;
+        const ScreenPoint ground = project(view, lerp(shot.prevPos, shot.pos, alpha));
+        if (!onTarget(view, ground, 16.0f, 30.0f, 16.0f)) continue;
+        if (shot.kind == ProjectileKind::Flame) {
+            effects::queueGlowSpot(ground.x, ground.y - kFlameHeight * ground.scale, 15.0f * ground.scale, shot.evolved ? theme::kFxGlowEvolved : theme::kFxGlowFlame, 0.34f);
+        } else if (shot.kind == ProjectileKind::Rocket) {
+            effects::queueGlowSpot(ground.x, ground.y - kShotHeight * ground.scale, 18.0f, shot.evolved ? theme::kFxGlowEvolved : theme::kFxGlowFlame, 0.6f);
+        } else {
+            const bool pellet = shot.radius < balance::kBulletRadius - 0.5f;
+            effects::queueGlowSpot(ground.x, ground.y - kShotHeight * ground.scale, pellet ? 7.0f : 10.0f, shot.evolved ? theme::kFxGlowEvolved : theme::kFxGlowShot, 0.55f);
+        }
     }
 }
 
@@ -339,7 +388,7 @@ void drawGroundSprites(const View& view, const GameState& state, float alpha) {
         if (!onTarget(view, point, 16.0f, 12.0f, 12.0f)) continue;
         // Each mine blinks on its own beat, so a minefield twinkles.
         const uint32_t beat = tick + (hashPosition(shot.pos) >> 10);
-        const bool lit = beat % 40u < 12u;
+        const bool lit = !effects::flickerAllowed() || beat % 40u < 12u;
         spriteQuad(itemSprite(lit ? Item::MineOn : Item::MineOff), roundToInt(point.x), roundToInt(point.y), false, shot.evolved ? kRowEvolved : kRowBase, 0);
     }
 
@@ -358,7 +407,7 @@ void drawGroundSprites(const View& view, const GameState& state, float alpha) {
         const ScreenPoint ground = project(view, pickup.pos);
         if (!onTarget(view, ground, 16.0f, 30.0f, 10.0f)) continue;
         const uint32_t beat = tick + (hashPosition(pickup.pos) >> 12);
-        const float bob = triangleWave(beat, 90u);
+        const float bob = effects::reducedMotion() ? 0.0f : triangleWave(beat, 90u);
         const int x = roundToInt(ground.x);
         const int y = roundToInt(ground.y);
         spriteQuad(itemSprite(bob > 0.5f ? Item::ShadowSmall : Item::ShadowMedium), x, y, false, kRowShadow, 0);
@@ -399,7 +448,7 @@ void drawAirSprites(const View& view, const GameState& state, float alpha) {
             const int x = roundToInt(ground.x);
             const int y = roundToInt(ground.y - kShotHeight * ground.scale);
             // A small flame at the tail, flickering between the two smallest puffs.
-            const uint32_t flick = tick >> 1;
+            const uint32_t flick = effects::flickerAllowed() ? tick >> 1 : 0u;
             spriteQuad(puffSprite((flick & 1u) != 0u ? 3.0f : 5.0f, flick), roundToInt(ground.x - dir.x * 7.0f), roundToInt(ground.y - kShotHeight * ground.scale - dir.y * 7.0f), false, shot.evolved ? kRowEvolved : kRowFireHot, 0);
             spriteQuad(rocketSprite(index), x, y, false, shot.evolved ? kRowEvolved : kRowBase, 0);
         }
@@ -426,7 +475,7 @@ void drawEnemyBullets(const View& view, const GameState& state, float alpha) {
     const uint32_t tick = state.run.tick;
     const SpriteRef& a = itemSprite(Item::EnemyBulletA);
     const SpriteRef& b = itemSprite(Item::EnemyBulletB);
-    const SpriteRef& frame = ((tick >> 3) & 1u) != 0u ? b : a;
+    const SpriteRef& frame = effects::flickerAllowed() && ((tick >> 3) & 1u) != 0u ? b : a;
     for (const EnemyBullet& bullet : state.enemyBullets) {
         const ScreenPoint ground = project(view, lerp(bullet.prevPos, bullet.pos, alpha));
         if (!onTarget(view, ground, 16.0f, 30.0f, 16.0f)) continue;

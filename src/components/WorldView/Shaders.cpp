@@ -1,5 +1,7 @@
 #include "components/WorldView/Shaders.h"
 
+#include "data/Theme.h"
+
 #include "rlgl.h"
 
 namespace ls::worldview {
@@ -30,8 +32,10 @@ void main() {
 
 // The atlas holds palette positions. The vertex color says which palette row to use,
 // how strongly the time of day tints this sprite, and how see-through it is. Its third
-// value marks a light pool, whose strength has to go into its color, as multiplying
-// blends can't use the alpha.
+// value is the hit flash: how far the figure mixes toward the flash color. The outline
+// stays dark, so a flashing figure in a crowd keeps its shape. The very top value of
+// that channel marks a light pool, whose strength has to go into its color, as
+// multiplying blends can't use the alpha.
 constexpr const char* kPaletteFragment = LS_GLSL_HEADER R"(
 in vec2 vUv;
 in vec4 vInfo;
@@ -39,12 +43,16 @@ out vec4 fragColor;
 uniform sampler2D texture0;
 uniform sampler2D uPalette;
 uniform vec3 uTint;
+uniform vec3 uFlash;
 void main() {
     int column = int(texture(texture0, vUv).r * 255.0 + 0.5);
     int row = int(vInfo.r * 255.0 + 0.5);
     vec4 color = texelFetch(uPalette, ivec2(column, row), 0);
     color.rgb = mix(color.rgb, color.rgb * uTint, vInfo.g);
-    color.rgb *= 1.0 - vInfo.b * (1.0 - vInfo.a);
+    float pool = step(0.998, vInfo.b);
+    float flash = (1.0 - pool) * vInfo.b * step(1.5, float(column));
+    color.rgb = mix(color.rgb, uFlash, flash);
+    color.rgb *= 1.0 - pool * (1.0 - vInfo.a);
     fragColor = vec4(color.rgb, color.a * vInfo.a);
 }
 )";
@@ -126,6 +134,8 @@ void loadShaders() {
     // after this, so it needs binding once a frame and never in the middle of a pass.
     const int unit = 1;
     SetShaderValue(g_palette.shader, GetShaderLocation(g_palette.shader, "uPalette"), &unit, SHADER_UNIFORM_INT);
+    const float flash[3] = {static_cast<float>(theme::kFxHitFlash.r) / 255.0f, static_cast<float>(theme::kFxHitFlash.g) / 255.0f, static_cast<float>(theme::kFxHitFlash.b) / 255.0f};
+    SetShaderValue(g_palette.shader, GetShaderLocation(g_palette.shader, "uFlash"), flash, SHADER_UNIFORM_VEC3);
 
     g_ground.shader = LoadShaderFromMemory(kGroundVertex, kGroundFragment);
     g_ground.projection = GetShaderLocation(g_ground.shader, "uProjection");

@@ -22,6 +22,9 @@ bool hasOverlay(const Enemy& enemy);
 // figures that are off screen.
 float figureHeight(const Enemy& enemy);
 float figureHalfWidth(const Enemy& enemy);
+// True when any part of the figure's real sprite is inside the picture. figureHeight
+// and figureHalfWidth are deliberately generous, so they can't answer this.
+bool figureTouchesTarget(const View& view, const GameState& state, const Enemy& enemy, const ScreenPoint& feet);
 
 void drawSoldierShadow(const GameState& state, const ScreenPoint& feet, const DayLook& look);
 void drawSoldier(const GameState& state, const ScreenPoint& feet, uint8_t strength);

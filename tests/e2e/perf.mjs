@@ -50,6 +50,8 @@ const frames = await page.evaluate(() => new Promise((resolve) => {
 }));
 
 const state = await page.evaluate(() => JSON.parse(Module.ccall('ls_query_state', 'string', [], [])));
+// So the numbers can be trusted: this shows the effects really were busy while measured.
+const fx = await page.evaluate(() => JSON.parse(Module.ccall('ls_query_effects', 'string', [], [])));
 frames.sort((a, b) => a - b);
 const average = frames.reduce((sum, value) => sum + value, 0) / frames.length;
 const p99 = frames[Math.floor(frames.length * 0.99)];
@@ -66,6 +68,16 @@ console.log(JSON.stringify({
   gameReportedFrameMs: state.frameMs,
   simMsPerStep: state.simMs,
   drawMsCpu: state.drawMs,
+  effects: {
+    particles: fx.particles,
+    particlesSpawned: fx.particlesSpawned,
+    stains: fx.stains,
+    numbers: fx.numbers,
+    numberEvents: fx.numberEvents,
+    glowsDrawnTotal: fx.glows,
+    zombiesFlashedPeak: fx.zombiesFlashedPeak,
+    quality: fx.quality,
+  },
   loadMs,
   transferKb: {
     raw: Math.round(web.sent.raw / 1024),

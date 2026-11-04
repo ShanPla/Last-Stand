@@ -20,6 +20,8 @@ void drawBladeTrails(const View& view, const GameState& state, float alpha);
 
 // The same things again, as a soft bright layer with additive blending.
 void drawGlows(const View& view, const GameState& state);
+// Queues light around shots, flames, beams and blasts for the effects' neon layer.
+void queueShotGlows(const View& view, const GameState& state, float alpha);
 
 // Sprites above characters: blast fire, flames, grenades, rockets and blades.
 void drawAirSprites(const View& view, const GameState& state, float alpha);

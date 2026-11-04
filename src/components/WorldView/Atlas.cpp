@@ -278,18 +278,15 @@ void buildPalette() {
         setRamp4(row, kPPants, kElitePants);
     }
 
-    // The flash and shadow rows paint every used position in one color.
+    // The shadow row paints every used position in one color. The hit flash isn't a
+    // row: the sprite shader mixes it in, so a flashing zombie keeps its own outfit.
     for (int c = 1; c < kPaletteWidth; ++c) {
         g_palette[kRowShadow][c] = kSpriteShadow;
         // The telegraph flash keeps some of the shading, so the pose still reads.
         const Color base = g_palette[kRowOutfits][c];
-        // The hit flash keeps a little too, so a crowd under fire isn't a white blob.
-        g_palette[kRowFlash][c] = Color{static_cast<unsigned char>((base.r + kFlashWhite.r * 2) / 3), static_cast<unsigned char>((base.g + kFlashWhite.g * 2) / 3),
-                                        static_cast<unsigned char>((base.b + kFlashWhite.b * 2) / 3), 255};
         g_palette[kRowHot][c] = Color{static_cast<unsigned char>((base.r + kFlashHot.r * 2) / 3), static_cast<unsigned char>((base.g + kFlashHot.g * 2) / 3),
                                       static_cast<unsigned char>((base.b + kFlashHot.b * 2) / 3), 255};
     }
-    g_palette[kRowFlash][kPOutline] = kOutline;
     g_palette[kRowHot][kPOutline] = kOutline;
 
     const auto setFlame = [](int rowIndex, Color outer, Color middle, Color core) {

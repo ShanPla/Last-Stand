@@ -75,7 +75,6 @@ enum PaletteRow : uint8_t {
     kRowOutfits = 0,
     kOutfitCount = 32,
     kRowElite = 32,  // One per zombie type.
-    kRowFlash = 40,  // Everything white: the hit flash.
     kRowShadow = 41,
     kRowBase = 42,
     kRowEvolved = 43,

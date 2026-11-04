@@ -65,7 +65,6 @@ struct Ramp2 {
 
 inline constexpr Color kNoColor{0, 0, 0, 0};
 inline constexpr Color kOutline{20, 16, 22, 255};
-inline constexpr Color kFlashWhite{255, 255, 255, 255};
 inline constexpr Color kFlashHot{255, 196, 90, 255};
 inline constexpr Color kSpriteShadow{10, 8, 16, 118};
 
@@ -371,5 +370,53 @@ inline constexpr Color kFadeFromDark{10, 10, 14, 255};      // Covers the screen
 // Bars on the game over screen, sorted from most to least damage.
 inline constexpr Color kBarPalette[6] = {{150, 200, 224, 255}, {132, 176, 224, 255}, {112, 208, 170, 255},
                                          {184, 140, 224, 255}, {240, 196, 120, 255}, {160, 214, 196, 255}};
+
+// --- Effects ---
+// Gore stays dark and muted, so it never competes with enemy bullets or telegraphs.
+// Only sparks and glows are bright, because shots and blasts are the one neon layer.
+inline constexpr Color kFxBlood[3] = {{52, 10, 14, 255}, {84, 16, 20, 255}, {120, 26, 28, 255}};
+inline constexpr Color kFxGore[3] = {{38, 18, 20, 255}, {62, 30, 28, 255}, {122, 108, 86, 255}};  // The last is a bone chip.
+inline constexpr Color kFxBile[3] = {{48, 66, 18, 255}, {78, 102, 26, 255}, {112, 136, 38, 255}};
+inline constexpr Color kFxPlayerBlood[3] = {{92, 18, 20, 255}, {128, 26, 26, 255}, {160, 40, 34, 255}};
+inline constexpr Color kFxSpark[3] = {{255, 248, 214, 255}, {255, 204, 110, 255}, {226, 124, 46, 255}};
+inline constexpr Color kFxTeslaSpark[3] = {{236, 244, 255, 255}, {170, 205, 255, 255}, {110, 150, 240, 255}};
+inline constexpr Color kFxEmber[3] = {{255, 196, 90, 255}, {240, 130, 44, 255}, {168, 66, 28, 255}};
+inline constexpr Color kFxEvolvedSpark[3] = {{246, 236, 255, 255}, {196, 140, 255, 255}, {120, 80, 220, 255}};
+inline constexpr Color kFxSmoke[2] = {{84, 80, 78, 255}, {112, 106, 100, 255}};
+inline constexpr Color kFxDebris[3] = {{52, 46, 44, 255}, {78, 70, 64, 255}, {104, 94, 84, 255}};
+inline constexpr Color kFxDust[2] = {{92, 84, 72, 255}, {122, 112, 96, 255}};
+inline constexpr Color kFxBrass{226, 186, 84, 255};
+inline constexpr Color kFxGemSparkle[3] = {{214, 255, 244, 255}, {214, 234, 255, 255}, {236, 222, 255, 255}};
+inline constexpr Color kFxLevelUp[3] = {{255, 240, 170, 255}, {255, 206, 96, 255}, {150, 230, 214, 255}};
+inline constexpr Color kFxBossBurst[3][3] = {
+    {{255, 170, 110, 255}, {232, 90, 50, 255}, {120, 30, 24, 255}},
+    {{255, 226, 120, 255}, {255, 170, 40, 255}, {170, 60, 10, 255}},
+    {{255, 250, 190, 255}, {255, 180, 30, 255}, {200, 70, 10, 255}},
+};
+// Ground stains. These fade through alpha, so they keep their dark color to the end.
+inline constexpr Color kFxStainBlood{40, 12, 16, 255};
+inline constexpr Color kFxStainBile{38, 50, 18, 255};
+inline constexpr Color kFxStainScorch{20, 18, 22, 255};
+// Damage numbers. They stay in soft cream and gold, away from the pink of enemy bullets.
+inline constexpr Color kFxNumberSmall{222, 214, 196, 255};
+inline constexpr Color kFxNumberBig{255, 208, 92, 255};
+inline constexpr Color kFxNumberHuge{255, 142, 62, 255};
+inline constexpr Color kFxNumberEdge{18, 12, 16, 255};
+inline constexpr Color kFxNumberMask{255, 255, 255, 255};  // White in the digit texture, which each number then tints.
+// Glows are added on top of the picture, so a low value is already bright.
+inline constexpr Color kFxGlowShot{255, 190, 96, 255};
+inline constexpr Color kFxGlowEvolved{170, 110, 255, 255};
+inline constexpr Color kFxGlowMuzzle{255, 206, 120, 255};
+inline constexpr Color kFxGlowBlast{255, 136, 48, 255};
+inline constexpr Color kFxGlowBlastCore{255, 226, 170, 255};
+inline constexpr Color kFxGlowBeam{130, 200, 255, 255};
+inline constexpr Color kFxGlowTesla{100, 150, 255, 255};
+inline constexpr Color kFxGlowFlame{255, 120, 40, 255};
+// What a hit figure mixes toward. A little warm, so a hit reads as light on the figure.
+inline constexpr Color kFxHitFlash{255, 244, 226, 255};
+// Full-screen flashes. They are always faint, and only ever drawn through the limiter.
+inline constexpr Color kFxScreenFlashWarm{255, 228, 180, 255};
+inline constexpr Color kFxScreenFlashHostile{255, 110, 70, 255};
+inline constexpr Color kFxScreenFlashEvolved{206, 164, 255, 255};
 
 }  // namespace ls::theme

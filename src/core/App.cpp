@@ -1,6 +1,7 @@
 #include "core/App.h"
 
 #include "components/Audio/Audio.h"
+#include "components/Effects/Effects.h"
 #include "components/Input/Input.h"
 #include "components/Ui/Font/Font.h"
 #include "components/Ui/GameOverScreen/GameOverScreen.h"
@@ -59,6 +60,13 @@ enum DebugCommand {
     kMovePlayerX = 18,
     kMovePlayerY = 19,
     kSetQuality = 20,
+    kSetShake = 21,      // Percent. These four change a setting exactly as the screen does.
+    kSetFlash = 22,      // Percent.
+    kSetDamageNumbers = 23,
+    kSetReducedMotion = 24,
+    kPushEvent = 25,     // Sends an event of this type through the normal list, at the player.
+    kResetFxCounters = 26,
+    kRunSteps = 27,      // Runs this many steps at once with no input, then reads their events.
 };
 
 // Which screen is showing. Level-up is not here: it is a phase of a running game.
@@ -119,11 +127,12 @@ void persist() {
     g_settingsDirty = false;
 }
 
-void applyAudioSettings() {
+// Called whenever a setting changes, so every change applies at once, even mid-fight.
+void applySettings() {
     const Settings& settings = save::current().settings;
-    worldview::setReducedMotion(settings.reducedMotion);
     audio::setMusicVolume(settings.musicVolume);
     audio::setEffectsVolume(settings.effectsVolume);
+    effects::applySettings({settings.screenShake, settings.flashIntensity, settings.damageNumbers, settings.reducedMotion});
 }
 
 // A missing or broken save gives defaults. The system's reduced motion preference
@@ -134,7 +143,7 @@ void loadSave() {
     std::string text;
     if (platform::readSave(&text)) save::current() = save::parse(text, defaults);
     else save::current() = defaults;
-    applyAudioSettings();
+    applySettings();
 }
 
 // ---- Screens and runs -----------------------------------------------------------
@@ -150,6 +159,7 @@ void setScreen(Screen screen) {
 // never makes sound, because only a real run sends events to audio.
 void startDemo() {
     worldview::setFixedDayTime(theme::kDuskSeconds);
+    effects::reset();
     sim::newRun(*g_state, kDemoSeed);
     for (WeaponId id : {WeaponId::Shotgun, WeaponId::Smg, WeaponId::Flamethrower, WeaponId::Tesla, WeaponId::Blades}) {
         weapons::grant(*g_state, id);
@@ -166,6 +176,7 @@ void startDemo() {
 
 void startRun(uint64_t seed) {
     worldview::setFixedDayTime(-1.0f);
+    effects::reset();
     sim::newRun(*g_state, seed != 0 ? seed : pickSeed());
     g_inDemo = false;
     g_accumulator = 0.0f;
@@ -278,6 +289,23 @@ void runDemo(float dtReal) {
     if (steps == kMaxStepsPerFrame) g_accumulator = 0.0f;
 }
 
+// ---- Weak devices ---------------------------------------------------------------
+
+// A phone that can't hold a steady frame rate loses the extras: the glow, the stains and
+// half the particles. It only ever steps down, as bouncing between looks would be worse.
+// Only frames that ran a fight count, so a slow first second of loading can't trigger it.
+constexpr float kSlowFrameMs = 26.0f;       // Worse than about 38 frames a second.
+constexpr float kSlowForSeconds = 4.0f;
+bool g_qualityPinned = false;               // Debug only: a test chose the quality itself.
+float g_slowSeconds = 0.0f;
+
+void watchFrameRate(float rawDt) {
+    if (g_qualityPinned || effects::quality() == 0 || g_inDemo || g_screen != Screen::Playing || g_state->run.phase != RunPhase::Playing) return;
+    if (rawDt > 0.25f) return;  // A hidden tab or a stall says nothing about the GPU.
+    g_slowSeconds = g_frameMs > kSlowFrameMs ? g_slowSeconds + rawDt : 0.0f;
+    if (g_slowSeconds > kSlowForSeconds) effects::setQuality(0);
+}
+
 // ---- Drawing --------------------------------------------------------------------
 
 void drawDebugOverlay() {
@@ -306,13 +334,14 @@ void init() {
     rlDisableBackfaceCulling();
     font::init();
     worldview::init();
+    effects::init();
     g_state = new GameState();
     g_debug = platform::debugEnabled();
     audio::init();
     loadSave();
-    startDemo();
     // A phone has no keyboard to hint at, so its prompts are right from the first frame.
     if (platform::touchIsOnlyPointer()) g_input.lastDevice = input::Device::Touch;
+    startDemo();
 }
 
 // WORLD PASS. Draws the game world from the simulation state, and nothing else. The
@@ -372,7 +401,7 @@ static void drawUiPass(float dtReal, bool playing) {
             ui::setFade(screenFade);
             const ui::SettingsResult result = ui::drawSettingsScreen(save::current().settings, g_settingsFrom == Screen::Paused ? "Back to pause" : "Back");
             if (result.changed) {
-                applyAudioSettings();
+                applySettings();
                 g_settingsDirty = true;
             }
             if (result.back) leaveSettings();
@@ -442,22 +471,34 @@ void frame() {
         }
     }
 
+    // A hit pause keeps back a little of this frame's time. The steps still run in the
+    // same order with the same kind of input, only later, so runs stay deterministic.
+    const float simDt = effects::filterSimulationTime(dtReal);
+    const bool paused = simDt < dtReal;
+
     // Time only moves in a real run on the play screen, or in the title demo.
     const bool demoRuns = g_inDemo && g_screen != Screen::Over;
     if (g_inDemo) {
         if (demoRuns) runDemo(dtReal);
     } else if (g_screen == Screen::Playing) {
         if (g_showcase) worldview::tickShowcase(*g_state);
-        else runSimulation(dtReal);
+        else runSimulation(simDt);
         if (playing && std::hypot(g_input.moveX, g_input.moveY) > 0.2f) g_moveTime += dtReal;
     }
 
-    // Events feed the sound. The demo makes none, and every frame's list is emptied.
+    // Events feed the sound and the effects. The demo makes no sound, and every frame's
+    // list is emptied.
     if (!g_inDemo) {
         for (const SimEvent& event : g_state->events) audio::onEvent(event);
     }
     worldview::consumeEvents(*g_state);
+    effects::consumeEvents(*g_state, g_inDemo);
     g_state->events.clear();
+
+    // Particles and numbers wait with the world behind a menu or a hit pause. On the
+    // game over screen they carry on, so a last explosion finishes behind the panel.
+    effects::update(dtReal, !paused && (g_inDemo || g_screen == Screen::Playing || g_screen == Screen::Over));
+    watchFrameRate(rawDt);
 
     // A run that just ended goes to its summary.
     if (!g_inDemo && g_screen == Screen::Playing && (g_state->run.phase == RunPhase::Dead || g_state->run.phase == RunPhase::Won)) finishRun();
@@ -545,13 +586,49 @@ void debugCommand(int command, int value) {
     GameState& s = *g_state;
     // Any other debug command hands control back to the simulation, except the ones
     // that only move the camera or the clock, which also work while it is held still.
-    const bool keepsShowcase = command == kSetTime || command == kMovePlayerX || command == kMovePlayerY || command == kSetQuality;
+    const bool keepsShowcase = command == kSetTime || command == kMovePlayerX || command == kMovePlayerY || command == kSetQuality || command == kSetShake ||
+                               command == kSetFlash || command == kSetDamageNumbers || command == kSetReducedMotion || command == kPushEvent || command == kResetFxCounters;
     if (!keepsShowcase) g_showcase = command == kShowcase;
     switch (command) {
         case kShowcase: worldview::setupShowcase(s, value); break;
         case kMovePlayerX: s.player.pos.x = s.player.prevPos.x = static_cast<float>(value); break;
         case kMovePlayerY: s.player.pos.y = s.player.prevPos.y = static_cast<float>(value); break;
-        case kSetQuality: worldview::setQuality(value); break;
+        case kSetQuality:
+            worldview::setQuality(value);
+            effects::setQuality(value);
+            g_qualityPinned = true;
+            break;
+        case kSetShake:
+            save::current().settings.screenShake = static_cast<float>(value) / 100.0f;
+            applySettings();
+            break;
+        case kSetFlash:
+            save::current().settings.flashIntensity = static_cast<float>(value) / 100.0f;
+            applySettings();
+            break;
+        case kSetDamageNumbers:
+            save::current().settings.damageNumbers = value != 0;
+            applySettings();
+            break;
+        case kSetReducedMotion:
+            save::current().settings.reducedMotion = value != 0;
+            applySettings();
+            break;
+        case kPushEvent: {
+            const auto type = static_cast<EventType>(value);
+            const float size = type == EventType::Explosion ? 120.0f : (type == EventType::BombBlast ? balance::kBombRadius : 0.0f);
+            pushEvent(s, type, s.player.pos, size);
+            break;
+        }
+        case kResetFxCounters: effects::resetDebugCounters(); break;
+        case kRunSteps:
+            for (int i = 0; i < value; ++i) {
+                sim::step(s, InputFrame{});
+                effects::consumeEvents(s, false);
+                effects::update(kDt, true);
+                s.events.clear();
+            }
+            break;
         case kStressEnemies: sim::setStressTargets(s, value, s.run.debugProjectileTarget); break;
         case kStressProjectiles: sim::setStressTargets(s, s.run.debugEnemyTarget, value); break;
         case kSetSeed:
@@ -625,5 +702,7 @@ void debugCommand(int command, int value) {
 extern "C" {
 // Test hook: what the screens look like and where their buttons are.
 EMSCRIPTEN_KEEPALIVE const char* ls_query_ui() { return ls::app::queryUi(); }
+// Test hook: counters that prove each effect and setting really changes behavior.
+EMSCRIPTEN_KEEPALIVE const char* ls_query_effects() { return ls::effects::debugJson(); }
 }
 #endif

@@ -2,6 +2,7 @@
 
 #include "components/Enemies/Boss/Boss.h"
 #include "components/Enemies/Charger/Charger.h"
+#include "components/Effects/Effects.h"
 #include "data/Balance.h"
 #include "data/Theme.h"
 
@@ -91,7 +92,8 @@ ZombieLook lookOf(const GameState& state, const Enemy& enemy, const ScreenPoint&
         if (enemy.state == enemies::kChargerTelegraph) {
             pose = (tick >> 2) & 1u ? kPoseBraceA : kPoseBraceB;
             toward = enemy.dir;
-            flashing = ((tick >> 2) & 1u) != 0u;
+            // Where flicker is off, the warning color just stays on.
+            flashing = !effects::flickerAllowed() || ((tick >> 2) & 1u) != 0u;
         } else if (enemy.state == enemies::kChargerDash) {
             pose = (tick >> 2) & 1u ? kPoseDashA : kPoseDashB;
             toward = enemy.dir;
@@ -103,7 +105,7 @@ ZombieLook lookOf(const GameState& state, const Enemy& enemy, const ScreenPoint&
         if (enemy.state == enemies::kBossRingCharge || enemy.state == enemies::kBossDashCharge) {
             pose = (tick >> 3) & 1u ? kPoseBraceA : kPoseBraceB;
             if (enemy.state == enemies::kBossDashCharge) toward = enemy.dir;
-            flashing = ((tick >> 2) & 1u) != 0u;
+            flashing = !effects::flickerAllowed() || ((tick >> 2) & 1u) != 0u;
         } else if (enemy.state == enemies::kBossDash) {
             pose = kPoseDashA;
             toward = enemy.dir;
@@ -125,11 +127,6 @@ ZombieLook lookOf(const GameState& state, const Enemy& enemy, const ScreenPoint&
         look.row = outfitRow(enemy.id);
     }
     if (flashing && enemy.type != EnemyType::Boss) look.row = kRowHot;
-    // The clock stops on menus and at the end of a run, so a flash would stay stuck.
-    if (enemy.flash > 0.0f && state.run.phase == RunPhase::Playing) {
-        look.row = kRowFlash;
-        look.grade = 0;
-    }
     return look;
 }
 
@@ -155,6 +152,15 @@ float figureHalfWidth(const Enemy& enemy) {
     return kHalfWidths[static_cast<int>(enemy.type)] * (enemy.elite ? 1.7f : 1.3f);
 }
 
+bool figureTouchesTarget(const View& view, const GameState& state, const Enemy& enemy, const ScreenPoint& feet) {
+    const ZombieLook zombie = lookOf(state, enemy, feet);
+    const int x = roundToInt(feet.x);
+    const int y = roundToInt(feet.y);
+    const int left = zombie.mirror ? x - (zombie.sprite->w - zombie.sprite->footX) : x - zombie.sprite->footX;
+    const int top = y - zombie.sprite->footY;
+    return left < view.width && left + zombie.sprite->w > 0 && top < view.height && top + zombie.sprite->h > 0;
+}
+
 void drawZombieShadow(const Enemy& enemy, const ScreenPoint& feet) {
     const SpriteRef& shadow = itemSprite(enemy.elite ? Item::ShadowHuge : shadowFor(enemy));
     spriteQuad(shadow, roundToInt(feet.x), roundToInt(feet.y), false, kRowShadow, 0);
@@ -168,7 +174,12 @@ void drawZombieLongShadow(const GameState& state, const Enemy& enemy, const Scre
 
 void drawZombie(const GameState& state, const Enemy& enemy, const ScreenPoint& feet) {
     const ZombieLook zombie = lookOf(state, enemy, feet);
-    spriteQuad(*zombie.sprite, roundToInt(feet.x), roundToInt(feet.y), zombie.mirror, zombie.row, zombie.grade);
+    // The clock stops on menus and at the end of a run, so a flash would stay stuck.
+    uint8_t flash = 0;
+    if (enemy.flash > 0.0f && state.run.phase == RunPhase::Playing) {
+        flash = effects::zombieFlash(enemy.flash, enemy.id, enemy.elite || enemy.type == EnemyType::Boss, enemy.type == EnemyType::Boss);
+    }
+    spriteQuad(*zombie.sprite, roundToInt(feet.x), roundToInt(feet.y), zombie.mirror, zombie.row, zombie.grade, 255, flash);
 }
 
 bool hasOverlay(const Enemy& enemy) {
@@ -200,7 +211,7 @@ void drawZombieOverlay(const View& view, const GameState& state, const Enemy& en
         const Vec2 end = worldFeet + enemy.dir * kChargerDashLength;
         const ScreenPoint a = project(view, start);
         const ScreenPoint b = project(view, end);
-        const bool flash = ((tick >> 2) & 1u) != 0u;
+        const bool flash = !effects::flickerAllowed() || ((tick >> 2) & 1u) != 0u;
         const Vec2 from{a.x, a.y};
         const Vec2 to{b.x, b.y};
         thickLine(from, to, 5.0f, fade(theme::kHostileDark, 0.75f));
@@ -226,7 +237,8 @@ void drawZombieOverlay(const View& view, const GameState& state, const Enemy& en
             const ScreenPoint a = project(view, worldFeet);
             const ScreenPoint b = project(view, worldFeet + enemy.dir * balance::kBossDashSpeed * balance::kBossDashSeconds);
             thickLine(Vec2{a.x, a.y}, Vec2{b.x, b.y}, 7.0f, fade(theme::kHostileDark, 0.75f));
-            thickLine(Vec2{a.x, a.y}, Vec2{b.x, b.y}, 5.0f, fade(theme::kChargerLine, ((tick >> 2) & 1u) != 0u ? 1.0f : 0.65f));
+            const bool flash = !effects::flickerAllowed() || ((tick >> 2) & 1u) != 0u;
+            thickLine(Vec2{a.x, a.y}, Vec2{b.x, b.y}, 5.0f, fade(theme::kChargerLine, flash ? 1.0f : 0.65f));
         }
     }
 }
@@ -350,16 +362,19 @@ void drawSoldier(const GameState& state, const ScreenPoint& feet, uint8_t streng
         return;
     }
     const bool playing = state.run.phase == RunPhase::Playing;
-    // A blink while hits can't land, so that safe moment can be seen.
-    if (playing && player.invulnerable > 0.0f && ((tick >> 2) & 1u) != 0u) return;
+    const bool safe = playing && player.invulnerable > 0.0f;
+    // A blink while hits can't land, so that safe moment can be seen. Where flicker is
+    // off, he goes a little see-through for that moment instead.
+    if (safe && effects::flickerAllowed() && ((tick >> 2) & 1u) != 0u) return;
+    if (safe && !effects::flickerAllowed()) strength = static_cast<uint8_t>(strength / 2 + strength / 4);
 
-    const bool flash = playing && player.hitFlash > 0.0f;
-    const uint8_t row = flash ? kRowFlash : kRowBase;
-    const uint8_t grade = flash ? 0 : 150;
+    const uint8_t flash = playing && player.hitFlash > 0.0f ? effects::soldierFlash(player.hitFlash) : 0;
+    const uint8_t row = kRowBase;
+    const uint8_t grade = 150;
     const SpriteRef& body = soldierBody(heading.facing, bodyPose(tick));
 
     const WeaponId gun = heldGun(state);
-    const uint8_t gunRow = flash ? kRowFlash : (gunEvolved(state, gun) ? kRowEvolved : kRowBase);
+    const uint8_t gunRow = gunEvolved(state, gun) ? kRowEvolved : kRowBase;
     const bool isReloading = reloading(state, gun);
 
     const Vec2 aim = player.aim;
@@ -376,13 +391,16 @@ void drawSoldier(const GameState& state, const ScreenPoint& feet, uint8_t streng
     const bool gunMirror = isReloading ? heading.mirror : aim.x < 0.0f;
     // Aiming up the screen, the gun is on the far side of his body.
     const bool gunBehind = !isReloading && angleIndex <= 2;
-    if (gunBehind) spriteQuad(gunSprite, gunX, gunY, gunMirror, gunRow, grade, strength);
-    spriteQuad(body, x, y, heading.mirror, row, grade, strength);
-    if (!gunBehind) spriteQuad(gunSprite, gunX, gunY, gunMirror, gunRow, grade, strength);
+    if (gunBehind) spriteQuad(gunSprite, gunX, gunY, gunMirror, gunRow, grade, strength, flash);
+    spriteQuad(body, x, y, heading.mirror, row, grade, strength, flash);
+    if (!gunBehind) spriteQuad(gunSprite, gunX, gunY, gunMirror, gunRow, grade, strength, flash);
 }
 
 void drawMuzzleFlash(const GameState& state, const ScreenPoint& feet) {
     if (g_soldierState.sinceFired > kFlashSeconds || state.run.phase == RunPhase::Dead) return;
+    // With rapid fire this is a strobe, however small, so it is the first thing to go.
+    const float light = effects::flashScale();
+    if (effects::reducedMotion() || light <= 0.0f) return;
     const WeaponId gun = heldGun(state);
     if (gun == WeaponId::Flamethrower || gun == WeaponId::Tesla) return;
     if (reloading(state, gun)) return;
@@ -394,7 +412,9 @@ void drawMuzzleFlash(const GameState& state, const ScreenPoint& feet) {
     const int x = roundToInt(feet.x + aim.x / aimLength * length);
     const int y = roundToInt(feet.y - kShoulderHeight + aimY / aimLength * length);
     const bool big = gun == WeaponId::Shotgun || gun == WeaponId::Sniper || gun == WeaponId::Rockets || gun == WeaponId::GrenadeLauncher;
-    spriteQuad(itemSprite(big ? Item::MuzzleBig : Item::MuzzleSmall), x, y, false, gunEvolved(state, gun) ? kRowEvolved : kRowBase, 0);
+    const bool evolved = gunEvolved(state, gun);
+    spriteQuad(itemSprite(big ? Item::MuzzleBig : Item::MuzzleSmall), x, y, false, evolved ? kRowEvolved : kRowBase, 0, static_cast<uint8_t>(255.0f * light));
+    effects::queueGlowSpot(static_cast<float>(x), static_cast<float>(y), big ? 34.0f : 22.0f, evolved ? theme::kFxGlowEvolved : theme::kFxGlowMuzzle, (big ? 0.8f : 0.6f) * light);
 }
 
 // --- Corpses ------------------------------------------------------------------

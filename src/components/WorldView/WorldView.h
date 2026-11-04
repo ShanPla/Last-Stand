@@ -20,9 +20,6 @@ void consumeEvents(const GameState& state);
 // Fast mode draws fewer full-detail figures, for weak devices.
 void setFastMode(bool enabled);
 
-// Freezes flicker and blinking lights, but the day cycle keeps moving.
-void setReducedMotion(bool enabled);
-
 // 0 is for weak devices: half-resolution ground, with no lamps or flicker. 1 is normal.
 void setQuality(int quality);
 
