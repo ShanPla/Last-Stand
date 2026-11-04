@@ -87,6 +87,14 @@ EM_JS(int, ls_js_prefers_reduced_motion, (), {
     try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 1 : 0; } catch (error) { return 0; }
 });
 
+EM_JS(int, ls_js_touch_is_only_pointer, (), {
+    try {
+        return window.matchMedia('(any-pointer: coarse)').matches && !window.matchMedia('(any-pointer: fine)').matches ? 1 : 0;
+    } catch (error) {
+        return 0;
+    }
+});
+
 // Returns the text length, or a negative number when there is nothing usable.
 // Storage can be blocked by browser settings, so every access is guarded.
 EM_JS(int, ls_js_storage_read, (char* buffer, int capacity), {
@@ -278,6 +286,14 @@ float pixelRatio() {
 bool prefersReducedMotion() {
 #ifdef __EMSCRIPTEN__
     return ls_js_prefers_reduced_motion() != 0;
+#else
+    return false;
+#endif
+}
+
+bool touchIsOnlyPointer() {
+#ifdef __EMSCRIPTEN__
+    return ls_js_touch_is_only_pointer() != 0;
 #else
     return false;
 #endif

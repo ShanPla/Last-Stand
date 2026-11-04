@@ -44,6 +44,10 @@ float pixelRatio();
 // The system "reduce motion" preference. False where the system has none.
 bool prefersReducedMotion();
 
+// True on a device whose only pointer is a finger: a coarse pointer and no fine one.
+// A laptop with a touch screen still has a mouse, so it stays false there.
+bool touchIsOnlyPointer();
+
 // Save storage: browser localStorage, or a file next to the program on native.
 // Both fail quietly (for example when storage is blocked), and return false.
 bool readSave(std::string* text);

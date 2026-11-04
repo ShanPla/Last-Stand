@@ -311,6 +311,8 @@ void init() {
     audio::init();
     loadSave();
     startDemo();
+    // A phone has no keyboard to hint at, so its prompts are right from the first frame.
+    if (platform::touchIsOnlyPointer()) g_input.lastDevice = input::Device::Touch;
 }
 
 // WORLD PASS. Draws the game world from the simulation state, and nothing else. The
