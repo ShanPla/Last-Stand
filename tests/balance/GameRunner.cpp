@@ -67,6 +67,9 @@ void readEvents(const GameState& state, RunResult& result, int hitSource) {
                 if (!result.bossReached) {
                     result.bossReached = true;
                     result.bossSpawnSeconds = state.timeSeconds();
+                    for (const Enemy& enemy : state.enemies) {
+                        if (enemy.type == EnemyType::Boss) result.bossMaxHp = enemy.maxHp;
+                    }
                 }
                 break;
             case EventType::BossKilled: result.bossKilled = true; break;

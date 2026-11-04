@@ -41,6 +41,7 @@ struct RunResult {
     int favoriteWeapon = -1;  // The weapon a focus run was built around, or -1.
 
     bool bossReached = false;
+    float bossMaxHp = 0.0f;
     float bossSpawnSeconds = 0.0f;
     bool bossKilled = false;
     float bossFightSeconds = 0.0f;  // From the boss arriving to the run ending.

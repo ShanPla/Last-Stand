@@ -217,6 +217,29 @@ inline constexpr float kBossAddsPerSecond = 0.2f;           // Walkers during th
 inline constexpr float kBossAmmoCrateSeconds = 12.0f;       // A crate lands this often, so guns can't stay empty.
 inline constexpr float kBossAmmoCrateDistance = 50.0f;      // How far from the player it lands.
 
+// Boss HP is set from the player's build when the boss arrives, so a weak build
+// isn't stuck in an endless fight and a strong build isn't done in seconds. The power
+// is below 1, so a stronger build still kills the boss faster, and building well pays.
+inline constexpr float kBossHpAtReferenceDps = 46000.0f;    // HP for a build with kBossReferenceDps.
+inline constexpr float kBossReferenceDps = 1000.0f;         // Estimated damage per second on one target.
+inline constexpr float kBossHpScalePower = 0.75f;
+inline constexpr float kBossHpMin = 15000.0f;
+inline constexpr float kBossHpMax = 120000.0f;
+// How much of each weapon's on-paper damage really lands on one big moving target.
+// Short-range and ground weapons land less, since the boss rarely stays in reach.
+inline constexpr float kBossDamageShare[static_cast<int>(WeaponId::Count)] = {
+    /* Rifle           */ 0.85f,
+    /* Shotgun         */ 0.5f,
+    /* Smg             */ 0.8f,
+    /* Sniper          */ 0.9f,
+    /* Flamethrower    */ 0.4f,
+    /* GrenadeLauncher */ 0.7f,
+    /* Rockets         */ 0.8f,
+    /* Landmines       */ 0.3f,
+    /* Tesla           */ 1.0f,
+    /* Blades          */ 0.4f,
+};
+
 // --- Boss --------------------------------------------------------------------
 inline constexpr float kBossPhase2HpFraction = 0.66f;
 inline constexpr float kBossPhase3HpFraction = 0.33f;

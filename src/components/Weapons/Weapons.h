@@ -19,6 +19,10 @@ void refill(GameState& state, WeaponSlot& slot);
 // Ammo crate: adds this fraction of the maximum reserve to every gun that uses ammo.
 void addAmmoFraction(GameState& state, float fraction);
 
+// About how much damage per second this build can put on one big target. On-paper
+// numbers from the weapon tables, not a measurement, so it's the same for any seed.
+float estimatedBossDps(const GameState& state);
+
 // A weapon's numbers after passives and its evolution are applied.
 balance::WeaponLevel effectiveStats(const GameState& state, const WeaponSlot& slot);
 

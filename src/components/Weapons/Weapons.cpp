@@ -321,6 +321,21 @@ void addAmmoFraction(GameState& state, float fraction) {
     }
 }
 
+float estimatedBossDps(const GameState& state) {
+    const Player& player = state.player;
+    float total = 0.0f;
+    for (int i = 0; i < player.weaponCount; ++i) {
+        const WeaponSlot& slot = player.weapons[i];
+        const balance::WeaponLevel stats = effectiveStats(state, slot);
+        // Lightning jumps away and only a blade pass counts, so these hit one target once
+        // per cycle. For every other weapon, each bullet in a trigger pull can land.
+        const bool singleHit = slot.id == WeaponId::Tesla || slot.id == WeaponId::Blades;
+        const float hits = singleHit ? 1.0f : static_cast<float>(stats.count);
+        total += stats.damage * hits / stats.cooldown * balance::kBossDamageShare[static_cast<int>(slot.id)];
+    }
+    return total;
+}
+
 balance::WeaponLevel effectiveStats(const GameState& state, const WeaponSlot& slot) {
     balance::WeaponLevel stats = balance::kWeaponLevels[static_cast<int>(slot.id)][slot.level - 1];
     if (slot.evolved) {

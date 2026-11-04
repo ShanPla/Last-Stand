@@ -78,6 +78,12 @@ void printOutcome(std::FILE* out, const std::vector<RunResult>& runs) {
     std::fprintf(out, "Boss reached: %d of %d (%s) | boss killed: %d\n", reached, total, percent(reached, total).c_str(), bossKills);
     const auto killTimes = collectIf(runs, [](const RunResult& r) { return r.bossKilled; },
                                      [](const RunResult& r) { return static_cast<double>(r.bossFightSeconds); });
+    const auto bossHp = collectIf(runs, [](const RunResult& r) { return r.bossReached; },
+                                  [](const RunResult& r) { return static_cast<double>(r.bossMaxHp); });
+    if (!bossHp.empty()) {
+        std::fprintf(out, "Boss HP set from build, p10 / median / p90: %.0f / %.0f / %.0f\n", percentile(bossHp, 10.0),
+                     percentile(bossHp, 50.0), percentile(bossHp, 90.0));
+    }
     if (!killTimes.empty()) {
         std::fprintf(out, "Boss kill time p10 / median / p90: %s seconds   (mean %.0f)\n", spread(killTimes, false).c_str(),
                      mean(killTimes));

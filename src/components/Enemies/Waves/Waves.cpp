@@ -2,8 +2,11 @@
 
 #include "components/Enemies/Enemies.h"
 #include "components/Pickups/Pickups.h"
+#include "components/Weapons/Weapons.h"
 #include "data/Balance.h"
 
+#include <algorithm>
+#include <cmath>
 #include <iterator>
 
 namespace ls::waves {
@@ -15,6 +18,12 @@ Vec2 spawnPoint(GameState& state) {
 }
 
 }  // namespace
+
+float bossHpForBuild(const GameState& state) {
+    const float strength = weapons::estimatedBossDps(state) / balance::kBossReferenceDps;
+    const float hp = balance::kBossHpAtReferenceDps * std::pow(strength, balance::kBossHpScalePower);
+    return clampf(hp, balance::kBossHpMin, balance::kBossHpMax);
+}
 
 float rowRate(int rowIndex, float seconds) {
     const balance::WaveRow& row = balance::kWaves[rowIndex];
@@ -56,7 +65,9 @@ void update(GameState& state) {
         state.enemies.clear();
         pushEvent(state, EventType::BombBlast, state.player.pos, balance::kBombRadius);
         const Vec2 pos = spawnPoint(state);
-        if (enemies::spawn(state, EnemyType::Boss, pos, false)) {
+        if (Enemy* boss = enemies::spawn(state, EnemyType::Boss, pos, false)) {
+            boss->maxHp = bossHpForBuild(state);
+            boss->hp = boss->maxHp;
             run.bossSpawned = true;
             run.bossPhase = 0;
             run.bossHpFraction = 1.0f;
