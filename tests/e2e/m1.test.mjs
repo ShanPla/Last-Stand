@@ -34,8 +34,9 @@ test('keyboard moves the player, and enemies and shots appear', async () => {
   await page.waitForTimeout(2500);
   const later = await readState(page);
   assert.ok(later.enemies > 0, 'enemies should spawn');
-  // The player's outline must really be on screen, in its theme color.
-  assert.ok(await countColorNearCenter(page, [95, 244, 255]) > 20, 'player should be visible at the center');
+  // The soldier's helmet must really be on screen, in its palette's olive tones. Time
+  // of day tints it a little, but his ground ring and helmet stay near these values.
+  assert.ok(await countColorNearCenter(page, [96, 112, 56]) > 20, 'the soldier should be visible at the center');
   assert.deepEqual(problems, []);
   await context.close();
 });

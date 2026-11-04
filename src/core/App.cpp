@@ -56,6 +56,9 @@ enum DebugCommand {
     kFakeDamage = 15,    // Fills the damage list, for the game over screenshot.
     kLevelUp = 16,       // Gives exactly the XP needed for the next level, so cards open at once.
     kShowcase = 17,  // Places one of every world object, for visual checks.
+    kMovePlayerX = 18,
+    kMovePlayerY = 19,
+    kSetQuality = 20,
 };
 
 // Which screen is showing. Level-up is not here: it is a phase of a running game.
@@ -118,6 +121,7 @@ void persist() {
 
 void applyAudioSettings() {
     const Settings& settings = save::current().settings;
+    worldview::setReducedMotion(settings.reducedMotion);
     audio::setMusicVolume(settings.musicVolume);
     audio::setEffectsVolume(settings.effectsVolume);
 }
@@ -145,6 +149,7 @@ void setScreen(Screen screen) {
 // in circles, enemies kept topped up, and no way to be hurt. It is never saved and
 // never makes sound, because only a real run sends events to audio.
 void startDemo() {
+    worldview::setFixedDayTime(theme::kDuskSeconds);
     sim::newRun(*g_state, kDemoSeed);
     for (WeaponId id : {WeaponId::Shotgun, WeaponId::Smg, WeaponId::Flamethrower, WeaponId::Tesla, WeaponId::Blades}) {
         weapons::grant(*g_state, id);
@@ -160,6 +165,7 @@ void startDemo() {
 }
 
 void startRun(uint64_t seed) {
+    worldview::setFixedDayTime(-1.0f);
     sim::newRun(*g_state, seed != 0 ? seed : pickSeed());
     g_inDemo = false;
     g_accumulator = 0.0f;
@@ -299,6 +305,7 @@ void init() {
     // This is a 2D game, and shapes are not all wound the same way.
     rlDisableBackfaceCulling();
     font::init();
+    worldview::init();
     g_state = new GameState();
     g_debug = platform::debugEnabled();
     audio::init();
@@ -310,8 +317,7 @@ void init() {
 // renderer owns what happens inside, so it can draw to a low-resolution target and
 // scale it up. The UI pass below always draws afterward, at full screen resolution.
 static void drawWorldPass(float alpha) {
-    const Camera2D camera = worldview::makeCamera(*g_state, alpha);
-    worldview::draw(*g_state, alpha, camera);
+    worldview::draw(*g_state, alpha);
 }
 
 // UI PASS. Every screen, the HUD and the touch joystick, drawn on top of the world at
@@ -535,10 +541,15 @@ const char* queryUi() {
 void debugCommand(int command, int value) {
     if (!g_debug) return;
     GameState& s = *g_state;
-    // Any other debug command hands control back to the simulation.
-    g_showcase = command == kShowcase;
+    // Any other debug command hands control back to the simulation, except the ones
+    // that only move the camera or the clock, which also work while it is held still.
+    const bool keepsShowcase = command == kSetTime || command == kMovePlayerX || command == kMovePlayerY || command == kSetQuality;
+    if (!keepsShowcase) g_showcase = command == kShowcase;
     switch (command) {
         case kShowcase: worldview::setupShowcase(s, value); break;
+        case kMovePlayerX: s.player.pos.x = s.player.prevPos.x = static_cast<float>(value); break;
+        case kMovePlayerY: s.player.pos.y = s.player.prevPos.y = static_cast<float>(value); break;
+        case kSetQuality: worldview::setQuality(value); break;
         case kStressEnemies: sim::setStressTargets(s, value, s.run.debugProjectileTarget); break;
         case kStressProjectiles: sim::setStressTargets(s, s.run.debugEnemyTarget, value); break;
         case kSetSeed:

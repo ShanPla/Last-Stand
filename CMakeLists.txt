@@ -66,7 +66,13 @@ file(GLOB_RECURSE LS_GAME_SOURCES CONFIGURE_DEPENDS
   src/components/Input/*.cpp
   src/components/Ui/*.cpp
   src/components/WorldView/*.cpp
+  src/components/Maps/*.cpp
 )
+if(EMSCRIPTEN)
+  # Art is painted in code. It runs rarely, so it is built for download size, not speed.
+  file(GLOB_RECURSE LS_ART_SOURCES CONFIGURE_DEPENDS src/components/WorldView/*Art.cpp src/components/Maps/*.cpp)
+  set_source_files_properties(${LS_ART_SOURCES} PROPERTIES COMPILE_OPTIONS "-Oz")
+endif()
 list(FILTER LS_GAME_SOURCES EXCLUDE REGEX "/components/Audio/[^/]+/")
 file(GLOB LS_APP_SOURCE CONFIGURE_DEPENDS src/core/App.cpp)
 

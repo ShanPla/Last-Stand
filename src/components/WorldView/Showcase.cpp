@@ -2,13 +2,16 @@
 #include "components/Enemies/Charger/Charger.h"
 #include "components/Enemies/Enemies.h"
 #include "components/Weapons/Weapons.h"
-#include "components/WorldView/Characters.h"
+#include "core/Math.h"
+#include "components/WorldView/Showcase.h"
 #include "components/WorldView/WorldView.h"
+#include "components/WorldView/Draw.h"
 #include "data/Balance.h"
 
 #include "raylib.h"
 
 #include <cmath>
+#include <initializer_list>
 
 // Debug only. The real weapons and zombies aren't needed to see every shape: this
 // writes them straight into the pools, then holds the simulation still. Nothing
@@ -18,9 +21,11 @@ namespace ls::worldview {
 namespace {
 
 constexpr uint32_t kGunChangeTicks = 80;
+bool g_clockStopped = false;  // For comparing pictures of the ground.
+int g_sheetPage = -1;         // Which sprite sheet is showing, if any.
 constexpr WeaponId kGuns[] = {WeaponId::Rifle, WeaponId::Shotgun, WeaponId::Smg, WeaponId::Sniper,
                               WeaponId::Flamethrower, WeaponId::GrenadeLauncher, WeaponId::Rockets, WeaponId::Tesla};
-constexpr int kGunCount = static_cast<int>(sizeof(kGuns) / sizeof(kGuns[0]));
+constexpr int kShownGunCount = static_cast<int>(sizeof(kGuns) / sizeof(kGuns[0]));
 
 // Positions that fill rows from a start corner.
 struct Rows {
@@ -56,7 +61,7 @@ Layout wideLayout() {
         Vec2{-450.0f, 230.0f},
         Vec2{1.0f, 0.05f},
         Rows{-190.0f, 170.0f, 75.0f, 70.0f, 8},
-        Vec2{500.0f, -30.0f}, Vec2{500.0f, 110.0f},
+        Vec2{-150.0f, -470.0f}, Vec2{160.0f, -470.0f},
         Vec2{30.0f, 310.0f}, Vec2{390.0f, 310.0f},
         Vec2{30.0f, 390.0f}, Vec2{200.0f, 360.0f}, Vec2{390.0f, 390.0f},
         Vec2{-100.0f, 385.0f},
@@ -68,17 +73,17 @@ Layout wideLayout() {
 
 Layout tallLayout() {
     return Layout{
-        Rows{-236.0f, -180.0f, 118.0f, -130.0f, 5},
+        Rows{-192.0f, -150.0f, 96.0f, -130.0f, 5},
         Vec2{0.0f, -585.0f},
         Vec2{-1.0f, -0.2f},
-        Rows{-240.0f, 290.0f, 80.0f, 70.0f, 7},
-        Vec2{-190.0f, 550.0f}, Vec2{-20.0f, 550.0f},
-        Vec2{-270.0f, 670.0f}, Vec2{270.0f, 670.0f},
-        Vec2{-270.0f, 720.0f}, Vec2{0.0f, 700.0f}, Vec2{270.0f, 720.0f},
-        Vec2{170.0f, 570.0f},
-        Vec2{-280.0f, 780.0f}, Vec2{280.0f, 830.0f},
-        Rows{-120.0f, 155.0f, 60.0f, 0.0f, 5},
-        Rows{-100.0f, 225.0f, 66.0f, 0.0f, 4},
+        Rows{-192.0f, 290.0f, 64.0f, 70.0f, 7},
+        Vec2{-110.0f, 480.0f}, Vec2{70.0f, 480.0f},
+        Vec2{-190.0f, 560.0f}, Vec2{190.0f, 560.0f},
+        Vec2{-190.0f, 620.0f}, Vec2{0.0f, 600.0f}, Vec2{190.0f, 620.0f},
+        Vec2{130.0f, 500.0f},
+        Vec2{-190.0f, 660.0f}, Vec2{190.0f, 690.0f},
+        Rows{-120.0f, 130.0f, 60.0f, 0.0f, 5},
+        Rows{-100.0f, 200.0f, 66.0f, 0.0f, 4},
     };
 }
 
@@ -184,6 +189,15 @@ void placeShots(GameState& state, Layout& layout) {
     placeShot(state, ProjectileKind::Mine, shots.next(), Vec2{}, 0.0f, balance::kMineTriggerRadius, 7.0f, WeaponId::Landmines, false);
     placeShot(state, ProjectileKind::Mine, shots.next(), Vec2{}, 0.0f, balance::kMineTriggerRadius, 7.0f, WeaponId::Landmines, true);
     for (int i = 0; i < 3; ++i) placeBullet(state, shots.next());
+
+    // A stream of flames leaving the soldier, each older than the last.
+    constexpr int kStream = 12;
+    for (int i = 0; i < kStream; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(kStream);
+        const Vec2 dir = normalizedOr(Vec2{-1.0f, 0.25f}, right);
+        const Vec2 pos = dir * (40.0f + 170.0f * t) + Vec2{static_cast<float>(i % 3) * 6.0f, static_cast<float>(i % 2) * 10.0f};
+        placeShot(state, ProjectileKind::Flame, pos, dir, 340.0f, balance::kFlameRadius, flameLife * (1.0f - t), WeaponId::Flamethrower, i > 7);
+    }
 }
 
 void placeZones(GameState& state, const Layout& layout) {
@@ -219,6 +233,93 @@ void placeRewards(GameState& state, Layout& layout) {
 
 }  // namespace
 
+// Debug only: lays out frames of the atlas, to judge the pixels of every figure.
+void drawSpriteSheet() {
+    if (g_sheetPage < 0) return;
+    constexpr uint8_t kOutfit[6] = {kRowOutfits + 1, kRowOutfits + 6, kRowOutfits + 11, kRowOutfits + 16, kRowOutfits + 21, kRowOutfits + 26};
+    if (g_sheetPage == 0) {
+        // Every zombie type: side walk, then three frames each from the front and back.
+        constexpr int kRowSteps[7] = {44, 38, 56, 54, 50, 26, 46};
+        int y = 2;
+        for (int f = 0; f < 7; ++f) {
+            y += kRowSteps[f];
+            int x = 26;
+            for (int facing = 0; facing < kFacingCount; ++facing) {
+                const int count = facing == kFacingSide ? kWalkFrames : 3;
+                for (int pose = 0; pose < count; ++pose) {
+                    const int shown = facing == kFacingSide ? pose : pose * 2;
+                    spriteQuad(figureSprite(static_cast<Figure>(f), 2, facing, shown), x, y, false, kOutfit[(pose + f) % 6]);
+                    x += f == 2 || f == 4 ? 52 : 44;
+                }
+            }
+        }
+    } else if (g_sheetPage == 1) {
+        // Special poses, elites and corpses.
+        int x = 26;
+        for (int pose = kPoseSpecial; pose < kPoseSpecial + 2; ++pose) {
+            for (int facing = 0; facing < kFacingCount; ++facing) {
+                spriteQuad(figureSprite(Figure::Spitter, 2, facing, pose), x, 50, false, kOutfit[2]);
+                x += 32;
+            }
+        }
+        x = 26;
+        for (int pose = kPoseSpecial; pose < kPoseCount; ++pose) {
+            spriteQuad(figureSprite(Figure::Charger, 2, kFacingSide, pose), x, 100, false, kOutfit[3]);
+            spriteQuad(figureSprite(Figure::Charger, 2, kFacingFront, pose), x + 36, 100, false, kOutfit[3]);
+            spriteQuad(figureSprite(Figure::Charger, 2, kFacingBack, pose), x + 72, 100, pose == kPoseBraceB, kRowHot);
+            x += 108;
+        }
+        x = 26;
+        for (int f : {0, 2, 3, 4, 6}) {
+            spriteQuad(figureSprite(static_cast<Figure>(f), 5, kFacingSide, 1), x, 170, false, kRowElite + static_cast<uint8_t>(f));
+            spriteQuad(figureSprite(static_cast<Figure>(f), 5, kFacingFront, 1), x + 56, 170, false, kRowElite + static_cast<uint8_t>(f));
+            x += 112;
+        }
+        x = 26;
+        for (int f = 0; f < 7; ++f) {
+            for (int frame = 0; frame < kCorpseFrames; ++frame) {
+                spriteQuad(corpseSprite(static_cast<Figure>(f), 2, frame), x, 214 + (f % 2) * 30, false, kOutfit[f % 6]);
+                x += 30;
+            }
+        }
+        x = 26;
+        for (int step = 0; step <= kStepNormalLast; ++step) {
+            spriteQuad(figureSprite(Figure::Walker, step, kFacingFront, 0), x, 330, false, kOutfit[0]);
+            spriteQuad(figureSprite(Figure::Walker, step, kFacingSide, 0), x + 30, 330, false, kOutfit[1]);
+            spriteQuad(figureSprite(Figure::Brute, step, kFacingFront, 0), x + 76, 330, false, kOutfit[2]);
+            x += 124;
+        }
+    } else if (g_sheetPage == 2) {
+        // The boss: each phase from each side, then its special poses.
+        for (int phase = 0; phase < 3; ++phase) {
+            const Figure figure = static_cast<Figure>(static_cast<int>(Figure::Boss1) + phase);
+            const int y = 112 + phase * 118;
+            const uint8_t row = static_cast<uint8_t>(kRowBoss + phase);
+            spriteQuad(figureSprite(figure, 2, kFacingSide, 0), 62, y, false, row);
+            spriteQuad(figureSprite(figure, 2, kFacingFront, 1), 186, y, false, row);
+            spriteQuad(figureSprite(figure, 2, kFacingBack, 2), 316, y, false, row);
+            spriteQuad(figureSprite(figure, 2, kFacingFront, kPoseBraceA), 446, y, false, kRowBossCharge);
+            spriteQuad(figureSprite(figure, 2, kFacingSide, kPoseDashA), 576, y, false, row);
+        }
+    } else if (g_sheetPage == 3) {
+        // The soldier: walk in all three views, then each gun at a few angles.
+        for (int facing = 0; facing < kFacingCount; ++facing) {
+            for (int pose = 0; pose < kSoldierPoses; ++pose) {
+                spriteQuad(soldierBody(facing, pose), 22 + pose * 28, 44 + facing * 44, false, kRowBase, 0);
+            }
+        }
+        for (int gun = 0; gun < kGunCount; ++gun) {
+            const int y = 170 + (gun / 5) * 90;
+            const int x = 30 + (gun % 5) * 124;
+            spriteQuad(soldierBody(kFacingSide, 0), x, y, false, kRowBase, 0);
+            spriteQuad(soldierGun(static_cast<WeaponId>(gun), 4), x, y - 18, false, kRowBase, 0);
+            spriteQuad(soldierBody(kFacingFront, 0), x + 44, y, false, kRowBase, 0);
+            spriteQuad(soldierGun(static_cast<WeaponId>(gun), 7), x + 44, y - 18, false, kRowBase, 0);
+            spriteQuad(soldierReload(static_cast<WeaponId>(gun), 0), x + 76, y - 18, false, kRowBase, 0);
+        }
+    }
+}
+
 void setupShowcase(GameState& state, int extraZombies) {
     state.enemies.clear();
     state.projectiles.clear();
@@ -250,6 +351,9 @@ void setupShowcase(GameState& state, int extraZombies) {
     weapons::grant(state, WeaponId::Tesla);
     player.weapons[0].level = 3;
 
+    g_clockStopped = extraZombies < 0;
+    g_sheetPage = extraZombies <= -2 ? -2 - extraZombies : -1;
+    if (extraZombies < 0) return;
     if (extraZombies > 0) {
         addMixedCrowd(state, extraZombies);
         return;
@@ -262,6 +366,7 @@ void setupShowcase(GameState& state, int extraZombies) {
 }
 
 void tickShowcase(GameState& state) {
+    if (g_clockStopped) return;
     RunState& run = state.run;
     run.tick++;
     run.bladeAngle += balance::kWeaponLevels[static_cast<int>(WeaponId::Blades)][0].speed * kDt;
@@ -281,7 +386,7 @@ void tickShowcase(GameState& state) {
     // Steps through each gun, turning the aim and reloading now and then, so that
     // screenshots taken at different times show all of the soldier's looks.
     const uint32_t beat = run.tick / kGunChangeTicks;
-    const WeaponId gun = kGuns[beat % static_cast<uint32_t>(kGunCount)];
+    const WeaponId gun = kGuns[beat % static_cast<uint32_t>(kShownGunCount)];
     const float aimAngle = kTau * static_cast<float>(beat % 8u) / 8.0f + 0.3f;
     state.player.aim = fromAngle(aimAngle);
     if (run.tick % 8u == 0u) pushEvent(state, EventType::WeaponFired, state.player.pos, 0.0f, static_cast<uint8_t>(gun));

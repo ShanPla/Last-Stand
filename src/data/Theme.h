@@ -7,103 +7,302 @@
 // white core, so they stay readable against everything else.
 namespace ls::theme {
 
-inline constexpr Color kBackground{5, 6, 15, 255};
-inline constexpr Color kGridLine{26, 42, 84, 255};
-inline constexpr Color kGridLineMajor{44, 70, 128, 255};
-inline constexpr Color kGridGlow{40, 80, 170, 34};
-inline constexpr Color kShadow{0, 0, 0, 150};
+// --- World -------------------------------------------------------------------
+inline constexpr Color kBackground{22, 20, 24, 255};
+inline constexpr Color kShadow{8, 6, 14, 120};
 
-// Player and rewards (cool).
-inline constexpr Color kPlayer{95, 244, 255, 255};
-inline constexpr Color kPlayerFill{10, 40, 56, 255};
-inline constexpr Color kPlayerVisor{215, 253, 255, 255};
-inline constexpr Color kPlayerPack{40, 120, 170, 255};
-inline constexpr Color kPlayerHit{255, 255, 255, 255};
-inline constexpr Color kPlayerRing{95, 244, 255, 90};
-inline constexpr Color kGunFill{12, 28, 46, 255};
-inline constexpr Color kGunPart{150, 215, 255, 255};
-inline constexpr Color kMuzzleFlash{150, 240, 255, 255};
-inline constexpr Color kMuzzleCore{255, 255, 255, 255};
-inline constexpr Color kEvolvedAccent{190, 140, 255, 255};
+// --- Player marker -----------------------------------------------------------
+inline constexpr Color kPlayer{120, 220, 255, 255};
+inline constexpr Color kPlayerRing{120, 220, 255, 170};
+inline constexpr Color kPlayerRingFaint{120, 220, 255, 60};
+inline constexpr Color kEvolvedAccent{196, 140, 255, 255};
 
-inline constexpr Color kPlayerShot{120, 240, 255, 255};
-inline constexpr Color kShotCore{240, 255, 255, 255};
-inline constexpr Color kPellet{170, 215, 255, 255};
-inline constexpr Color kFlame{70, 170, 255, 255};
-inline constexpr Color kFlameCore{205, 245, 255, 255};
-inline constexpr Color kFlameEvolved{165, 110, 255, 255};
-inline constexpr Color kGrenade{120, 230, 255, 255};
-inline constexpr Color kGrenadeFill{10, 34, 52, 255};
-inline constexpr Color kRocketBody{180, 225, 255, 255};
-inline constexpr Color kRocketFill{16, 36, 64, 255};
-inline constexpr Color kRocketTrail{100, 150, 255, 255};
-inline constexpr Color kRocketTrailCore{215, 240, 255, 255};
-inline constexpr Color kMine{95, 244, 255, 255};
-inline constexpr Color kMineFill{8, 30, 44, 255};
-inline constexpr Color kMineLight{235, 255, 255, 255};
-inline constexpr Color kBlast{115, 215, 255, 255};
-inline constexpr Color kBlastEvolved{185, 135, 255, 255};
-inline constexpr Color kBeam{140, 235, 255, 255};
+// --- Shots and blasts: the only things in the world allowed to glow ----------
+inline constexpr Color kPlayerShot{255, 226, 130, 255};
+inline constexpr Color kShotCore{255, 252, 228, 255};
+inline constexpr Color kPellet{255, 196, 110, 255};
+inline constexpr Color kFlameEvolvedOuter{104, 70, 230, 255};
+inline constexpr Color kFlameEvolvedMiddle{150, 120, 255, 255};
+inline constexpr Color kFlameEvolvedCore{226, 214, 255, 255};
+inline constexpr Color kSmoke{78, 74, 72, 255};
+inline constexpr Color kSmokeLight{120, 114, 108, 255};
+inline constexpr Color kBlastWhite{255, 248, 210, 255};
+inline constexpr Color kBlastYellow{255, 200, 80, 255};
+inline constexpr Color kBlastOrange{240, 120, 36, 255};
+inline constexpr Color kBlastRed{150, 44, 24, 255};
+inline constexpr Color kBlastEvolvedOuter{120, 80, 240, 255};
+inline constexpr Color kGlowWarm{120, 70, 24, 255};
+inline constexpr Color kGlowEvolved{70, 40, 130, 255};
+inline constexpr Color kBeam{170, 230, 255, 255};
 inline constexpr Color kBeamCore{255, 255, 255, 255};
-inline constexpr Color kTesla{130, 175, 255, 255};
-inline constexpr Color kTeslaCore{240, 247, 255, 255};
-inline constexpr Color kBlade{140, 255, 230, 255};
-inline constexpr Color kBladeFill{8, 48, 52, 255};
-inline constexpr Color kBladeCore{225, 255, 250, 255};
+inline constexpr Color kTesla{120, 170, 255, 255};
+inline constexpr Color kTeslaCore{236, 244, 255, 255};
+inline constexpr Color kBladeTrail{190, 240, 255, 255};
 
-inline constexpr Color kGem{90, 255, 190, 255};
-inline constexpr Color kGemFill{8, 48, 44, 255};
-inline constexpr Color kGemLarge{120, 190, 255, 255};
-inline constexpr Color kGemHuge{190, 165, 255, 255};
-inline constexpr Color kGemShine{235, 255, 250, 255};
-
-inline constexpr Color kPickupFill{8, 26, 44, 255};
-inline constexpr Color kPickupIcon{240, 252, 255, 255};
-inline constexpr Color kPickupHeal{90, 255, 170, 255};
-inline constexpr Color kPickupMagnet{105, 165, 255, 255};
-inline constexpr Color kPickupBomb{185, 150, 255, 255};
-inline constexpr Color kPickupAmmo{110, 235, 255, 255};
-
-// Threats (warm). Each zombie type has its own hue, on top of its own silhouette.
-inline constexpr Color kEnemyWalker{255, 96, 72, 255};
-inline constexpr Color kEnemyRunner{255, 170, 40, 255};
-inline constexpr Color kEnemyBrute{255, 52, 52, 255};
-inline constexpr Color kEnemySpitter{255, 92, 176, 255};
-inline constexpr Color kEnemyBloater{240, 210, 70, 255};
-inline constexpr Color kEnemyCrawler{255, 128, 92, 255};
-inline constexpr Color kEnemyCharger{255, 72, 112, 255};
-inline constexpr Color kEnemyFill{44, 10, 12, 255};
-inline constexpr Color kEnemyEye{255, 240, 150, 255};
-inline constexpr Color kEnemyGland{255, 150, 205, 255};
-inline constexpr Color kEnemyHorn{255, 214, 130, 255};
-inline constexpr Color kEnemyHitFlash{255, 255, 255, 255};
-inline constexpr Color kEnemyHitFill{190, 84, 70, 255};
-
-inline constexpr Color kEliteOutline{255, 222, 60, 255};
-inline constexpr Color kEliteRing{255, 222, 60, 120};
-inline constexpr Color kEliteBarBack{40, 14, 10, 230};
-inline constexpr Color kEliteBarFill{255, 222, 60, 255};
-
-inline constexpr Color kChargerFlash{255, 245, 200, 255};
-inline constexpr Color kChargerFlashFill{150, 30, 20, 255};
+// --- Threat telegraphs: the same warm warning at every time of day ------------
+inline constexpr Color kHostileEdge{255, 96, 34, 255};
+inline constexpr Color kHostileFill{255, 70, 24, 255};
+inline constexpr Color kHostileFront{255, 214, 80, 255};
+inline constexpr Color kHostileDark{40, 8, 4, 255};
 inline constexpr Color kChargerLine{255, 150, 40, 255};
+inline constexpr Color kBossChargeRing{255, 170, 60, 255};
+inline constexpr Color kEliteBarBack{24, 10, 8, 235};
+inline constexpr Color kEliteBarFill{255, 214, 70, 255};
 
-inline constexpr Color kBossPhase1{255, 58, 90, 255};
-inline constexpr Color kBossPhase2{255, 110, 40, 255};
-inline constexpr Color kBossPhase3{255, 225, 90, 255};
-inline constexpr Color kBossFill{50, 8, 16, 255};
-inline constexpr Color kBossFillPhase3{78, 14, 12, 255};
-inline constexpr Color kBossCore{255, 240, 190, 255};
-inline constexpr Color kBossCharge{255, 245, 210, 255};
-inline constexpr Color kBossChargeRing{255, 140, 40, 255};
+// --- Sprite palettes ----------------------------------------------------------
+// Sprites hold palette positions, not colors. Each material has a ramp, from its
+// darkest tone to its lightest. A zombie's outfit is just a row of ramps picked
+// from these tables, so crowds vary without any extra texture memory.
+struct Ramp4 {
+    Color tone[4];
+};
+struct Ramp3 {
+    Color tone[3];
+};
+struct Ramp2 {
+    Color tone[2];
+};
 
-inline constexpr Color kHostileZone{255, 84, 44, 255};
-inline constexpr Color kHostileFill{255, 70, 30, 255};
-inline constexpr Color kHostileTeeth{255, 195, 60, 255};
+inline constexpr Color kNoColor{0, 0, 0, 0};
+inline constexpr Color kOutline{20, 16, 22, 255};
+inline constexpr Color kFlashWhite{255, 255, 255, 255};
+inline constexpr Color kFlashHot{255, 196, 90, 255};
+inline constexpr Color kSpriteShadow{10, 8, 16, 118};
 
-inline constexpr Color kEnemyBullet{255, 60, 170, 255};
-inline constexpr Color kEnemyBulletCore{255, 245, 248, 255};
-inline constexpr Color kEnemyBulletHalo{40, 0, 26, 220};
+inline constexpr Ramp4 kZombieSkins[] = {
+    {{{52, 82, 50, 255}, {84, 120, 66, 255}, {122, 154, 84, 255}, {166, 190, 116, 255}}},    // Sick green.
+    {{{58, 76, 66, 255}, {92, 112, 96, 255}, {130, 148, 124, 255}, {172, 186, 160, 255}}},   // Grey green.
+    {{{68, 68, 76, 255}, {104, 104, 110, 255}, {142, 142, 140, 255}, {186, 184, 174, 255}}},  // Ash grey.
+    {{{80, 82, 44, 255}, {120, 120, 60, 255}, {160, 156, 84, 255}, {198, 192, 122, 255}}},   // Jaundiced.
+};
+inline constexpr Ramp2 kZombieRot[] = {
+    {{{36, 58, 38, 255}, {58, 44, 44, 255}}},
+    {{{42, 52, 48, 255}, {64, 46, 50, 255}}},
+    {{{46, 46, 54, 255}, {70, 46, 50, 255}}},
+    {{{56, 56, 32, 255}, {76, 50, 40, 255}}},
+};
+inline constexpr Ramp4 kZombieShirts[] = {
+    {{{84, 42, 28, 255}, {132, 66, 38, 255}, {172, 94, 52, 255}, {204, 130, 80, 255}}},      // Rust.
+    {{{82, 32, 38, 255}, {128, 50, 52, 255}, {162, 76, 72, 255}, {192, 110, 100, 255}}},     // Faded red.
+    {{{100, 78, 24, 255}, {152, 120, 38, 255}, {194, 158, 60, 255}, {224, 194, 100, 255}}},  // Mustard.
+    {{{26, 66, 70, 255}, {42, 98, 100, 255}, {68, 132, 126, 255}, {110, 166, 150, 255}}},    // Teal.
+    {{{38, 50, 82, 255}, {58, 80, 120, 255}, {88, 112, 150, 255}, {130, 150, 180, 255}}},    // Denim.
+    {{{48, 48, 54, 255}, {78, 78, 84, 255}, {108, 106, 110, 255}, {144, 142, 140, 255}}},    // Dirty grey.
+    {{{104, 94, 78, 255}, {146, 134, 112, 255}, {184, 172, 146, 255}, {214, 206, 182, 255}}},  // Stained cream.
+    {{{64, 34, 66, 255}, {96, 54, 96, 255}, {128, 80, 124, 255}, {160, 116, 150, 255}}},     // Washed purple.
+};
+inline constexpr Ramp4 kZombiePants[] = {
+    {{{26, 36, 66, 255}, {42, 58, 98, 255}, {62, 84, 128, 255}, {94, 118, 158, 255}}},      // Blue jeans.
+    {{{78, 66, 44, 255}, {114, 98, 66, 255}, {146, 130, 92, 255}, {174, 160, 120, 255}}},   // Khaki.
+    {{{24, 24, 30, 255}, {40, 40, 48, 255}, {58, 58, 68, 255}, {82, 82, 92, 255}}},         // Black.
+    {{{50, 34, 26, 255}, {78, 54, 38, 255}, {106, 76, 54, 255}, {134, 102, 74, 255}}},      // Brown.
+    {{{40, 56, 44, 255}, {58, 78, 58, 255}, {80, 100, 76, 255}, {106, 124, 98, 255}}},      // Work green.
+};
+inline constexpr Ramp3 kZombieHair[] = {
+    {{{22, 20, 24, 255}, {38, 34, 38, 255}, {60, 54, 56, 255}}},     // Black.
+    {{{46, 30, 20, 255}, {72, 48, 30, 255}, {100, 70, 44, 255}}},    // Brown.
+    {{{82, 82, 84, 255}, {120, 120, 120, 255}, {156, 156, 152, 255}}},  // Grey.
+    {{{96, 44, 20, 255}, {136, 66, 28, 255}, {170, 96, 44, 255}}},   // Ginger.
+};
+inline constexpr Ramp2 kZombieShoes[] = {
+    {{{28, 24, 24, 255}, {52, 46, 42, 255}}},
+    {{{50, 36, 26, 255}, {80, 60, 42, 255}}},
+    {{{70, 70, 74, 255}, {110, 108, 108, 255}}},
+};
+inline constexpr Ramp3 kBloodRamp{{{58, 10, 16, 255}, {102, 18, 22, 255}, {146, 32, 28, 255}}};
+inline constexpr Color kSocket{18, 12, 16, 255};
+inline constexpr Color kEyeGlint{226, 214, 150, 255};
+inline constexpr Color kMouthDark{34, 10, 14, 255};
+inline constexpr Color kTeeth{216, 208, 170, 255};
+inline constexpr Ramp4 kMetalRamp{{{36, 38, 44, 255}, {70, 74, 82, 255}, {110, 114, 122, 255}, {160, 164, 170, 255}}};
+inline constexpr Ramp4 kBoneRamp{{{120, 104, 76, 255}, {168, 150, 112, 255}, {206, 192, 150, 255}, {238, 228, 194, 255}}};
+inline constexpr Ramp4 kBileRamp{{{70, 100, 20, 255}, {120, 160, 30, 255}, {176, 214, 52, 255}, {224, 246, 120, 255}}};
+
+// Elites keep their figure, and get a strong accent on the outfit and outline.
+inline constexpr Color kEliteOutline{255, 206, 60, 255};
+inline constexpr Ramp4 kEliteShirt{{{112, 70, 10, 255}, {176, 116, 18, 255}, {226, 170, 40, 255}, {255, 218, 96, 255}}};
+inline constexpr Ramp4 kElitePants{{{40, 26, 22, 255}, {64, 42, 30, 255}, {90, 62, 40, 255}, {120, 86, 56, 255}}};
+
+// The boss's three looks. Each phase is hotter than the last.
+struct BossPalette {
+    Ramp4 skin;
+    Ramp4 cloth;
+    Ramp4 pants;
+    Ramp4 glow;
+    Color outline;
+};
+inline constexpr BossPalette kBossPhases[3] = {
+    {{{{50, 66, 48, 255}, {80, 104, 68, 255}, {116, 138, 88, 255}, {156, 172, 118, 255}}},
+     {{{70, 40, 40, 255}, {104, 60, 54, 255}, {136, 88, 70, 255}, {166, 118, 92, 255}}},
+     {{{34, 38, 56, 255}, {52, 58, 82, 255}, {74, 80, 108, 255}, {102, 106, 134, 255}}},
+     {{{120, 20, 20, 255}, {180, 40, 30, 255}, {232, 90, 50, 255}, {255, 170, 110, 255}}},
+     {16, 10, 16, 255}},
+    {{{{56, 56, 60, 255}, {88, 86, 88, 255}, {122, 118, 114, 255}, {160, 154, 144, 255}}},
+     {{{44, 46, 52, 255}, {76, 80, 88, 255}, {116, 120, 128, 255}, {168, 172, 176, 255}}},
+     {{{34, 30, 34, 255}, {54, 48, 50, 255}, {78, 70, 70, 255}, {106, 96, 92, 255}}},
+     {{{170, 60, 10, 255}, {236, 110, 20, 255}, {255, 170, 40, 255}, {255, 226, 120, 255}}},
+     {14, 10, 12, 255}},
+    {{{{82, 28, 28, 255}, {128, 44, 40, 255}, {170, 72, 56, 255}, {208, 112, 86, 255}}},
+     {{{48, 18, 22, 255}, {78, 28, 30, 255}, {110, 44, 40, 255}, {146, 66, 52, 255}}},
+     {{{30, 16, 20, 255}, {50, 24, 28, 255}, {72, 34, 36, 255}, {98, 48, 46, 255}}},
+     {{{200, 110, 10, 255}, {255, 180, 30, 255}, {255, 226, 90, 255}, {255, 250, 190, 255}}},
+     {24, 6, 8, 255}},
+};
+inline constexpr Color kBossChargeOutline{255, 226, 120, 255};
+
+// Soldier.
+inline constexpr Ramp4 kSoldierHelmet{{{40, 50, 28, 255}, {66, 80, 40, 255}, {96, 112, 56, 255}, {134, 150, 80, 255}}};
+inline constexpr Ramp2 kSoldierCamo{{{32, 38, 22, 255}, {112, 98, 58, 255}}};
+inline constexpr Ramp4 kSoldierVest{{{50, 48, 30, 255}, {80, 76, 46, 255}, {112, 106, 66, 255}, {146, 140, 92, 255}}};
+inline constexpr Ramp4 kSoldierPants{{{42, 50, 30, 255}, {66, 76, 42, 255}, {92, 102, 58, 255}, {120, 130, 78, 255}}};
+inline constexpr Ramp3 kSoldierBoots{{{22, 20, 20, 255}, {42, 38, 34, 255}, {70, 64, 54, 255}}};
+inline constexpr Ramp2 kSoldierGloves{{{30, 28, 26, 255}, {60, 56, 48, 255}}};
+inline constexpr Ramp4 kSoldierFace{{{122, 78, 54, 255}, {174, 120, 86, 255}, {214, 162, 122, 255}, {240, 200, 160, 255}}};
+inline constexpr Ramp2 kSoldierStrap{{{28, 28, 24, 255}, {56, 52, 40, 255}}};
+inline constexpr Ramp3 kGunRamp{{{26, 28, 32, 255}, {56, 60, 68, 255}, {100, 106, 114, 255}}};
+inline constexpr Ramp2 kGunWood{{{70, 44, 26, 255}, {112, 74, 44, 255}}};
+inline constexpr Color kGunAccent{70, 180, 220, 255};
+inline constexpr Color kGunAccentEvolved{196, 140, 255, 255};
+inline constexpr Color kGunTank{196, 76, 40, 255};
+
+// Rewards and small items: round and cool.
+inline constexpr Ramp4 kGemSmall{{{20, 96, 110, 255}, {40, 170, 170, 255}, {100, 230, 210, 255}, {214, 255, 244, 255}}};
+inline constexpr Ramp4 kGemLarge{{{30, 62, 150, 255}, {60, 110, 220, 255}, {110, 170, 255, 255}, {214, 234, 255, 255}}};
+inline constexpr Ramp4 kGemHuge{{{70, 44, 150, 255}, {122, 84, 226, 255}, {172, 140, 255, 255}, {236, 222, 255, 255}}};
+inline constexpr Color kBadgeEdge{226, 244, 255, 255};
+inline constexpr Color kBadgeShade{120, 170, 200, 255};
+inline constexpr Color kBadgeFill{20, 44, 62, 255};
+inline constexpr Color kPickupHeal{90, 240, 150, 255};
+inline constexpr Color kPickupMagnet{110, 170, 255, 255};
+inline constexpr Color kPickupBomb{186, 150, 255, 255};
+inline constexpr Color kPickupAmmo{110, 226, 255, 255};
+inline constexpr Color kPickupIcon{246, 252, 255, 255};
+inline constexpr Ramp3 kCrateWood{{{84, 62, 38, 255}, {132, 100, 60, 255}, {176, 140, 88, 255}}};
+inline constexpr Color kBulletBrass{246, 206, 96, 255};
+inline constexpr Ramp3 kMineBody{{{26, 30, 34, 255}, {54, 62, 66, 255}, {96, 106, 110, 255}}};
+inline constexpr Color kMineLightOn{120, 240, 255, 255};
+inline constexpr Color kMineLightOff{36, 80, 96, 255};
+inline constexpr Color kMineLightOnEvolved{206, 160, 255, 255};
+inline constexpr Ramp3 kGrenadeBody{{{36, 48, 28, 255}, {66, 86, 44, 255}, {108, 130, 70, 255}}};
+inline constexpr Ramp3 kRocketBody{{{70, 74, 78, 255}, {140, 146, 150, 255}, {212, 216, 216, 255}}};
+inline constexpr Color kRocketNose{216, 70, 44, 255};
+inline constexpr Ramp3 kBladeSteel{{{96, 130, 150, 255}, {176, 216, 232, 255}, {255, 255, 255, 255}}};
+inline constexpr Ramp3 kBladeSteelEvolved{{{110, 76, 190, 255}, {180, 140, 255, 255}, {255, 244, 255, 255}}};
+inline constexpr Ramp3 kMuzzleRamp{{{255, 170, 60, 255}, {255, 226, 130, 255}, {255, 255, 236, 255}}};
+inline constexpr Ramp3 kMuzzleRampEvolved{{{150, 96, 255, 255}, {206, 170, 255, 255}, {255, 246, 255, 255}}};
+
+// Enemy bullets: a hot color with a white core and a dark rim, drawn last of all.
+inline constexpr Color kEnemyBulletRim{36, 0, 22, 255};
+inline constexpr Color kEnemyBullet{255, 44, 130, 255};
+inline constexpr Color kEnemyBulletHot{255, 150, 190, 255};
+inline constexpr Color kEnemyBulletCore{255, 255, 255, 255};
+
+// --- City map palette --------------------------------------------------------
+// Muted and close together on purpose: the ground must always read behind the
+// characters, bullets and telegraphs.
+inline constexpr Color kAsphalt[3] = {{56, 54, 56, 255}, {62, 60, 62, 255}, {68, 66, 66, 255}};
+inline constexpr Color kAsphaltPatch{50, 49, 52, 255};
+inline constexpr Color kAsphaltCrack{36, 34, 37, 255};
+inline constexpr Color kAsphaltCrackEdge{76, 73, 72, 255};
+inline constexpr Color kPothole{32, 30, 33, 255};
+inline constexpr Color kPotholeEdge{78, 75, 73, 255};
+inline constexpr Color kPaintWhite{140, 136, 124, 255};
+inline constexpr Color kPaintYellow{150, 124, 66, 255};
+inline constexpr Color kSidewalk[3] = {{94, 90, 84, 255}, {100, 96, 90, 255}, {106, 102, 94, 255}};
+inline constexpr Color kSidewalkJoint{72, 69, 66, 255};
+inline constexpr Color kCurbLight{122, 118, 108, 255};
+inline constexpr Color kCurbShade{44, 42, 44, 255};
+inline constexpr Color kDirt[3] = {{84, 72, 58, 255}, {90, 78, 62, 255}, {96, 84, 66, 255}};
+inline constexpr Color kDirtDark{68, 58, 48, 255};
+inline constexpr Color kGravel{112, 104, 92, 255};
+inline constexpr Color kDeadGrass[3] = {{76, 80, 50, 255}, {84, 88, 54, 255}, {94, 94, 58, 255}};
+inline constexpr Color kWeed[3] = {{58, 74, 40, 255}, {76, 94, 48, 255}, {98, 112, 58, 255}};
+inline constexpr Color kConcreteFloor[3] = {{88, 86, 82, 255}, {94, 92, 86, 255}, {100, 98, 92, 255}};
+inline constexpr Color kFloorStain{68, 66, 64, 255};
+inline constexpr Color kTileA{96, 100, 98, 255};
+inline constexpr Color kTileB{82, 84, 84, 255};
+inline constexpr Color kPlank[3] = {{74, 62, 50, 255}, {80, 67, 54, 255}, {86, 72, 58, 255}};
+inline constexpr Color kPlankGap{62, 52, 44, 255};
+inline constexpr Color kBrick[3] = {{112, 66, 52, 255}, {124, 74, 58, 255}, {136, 84, 64, 255}};
+inline constexpr Color kBrickMortar{78, 62, 56, 255};
+inline constexpr Color kBrickTop{148, 118, 98, 255};
+inline constexpr Color kPlaster[3] = {{132, 122, 106, 255}, {142, 132, 114, 255}, {152, 142, 122, 255}};
+inline constexpr Color kPlasterStain{106, 96, 84, 255};
+inline constexpr Color kPlasterTop{164, 154, 134, 255};
+inline constexpr Color kWallShade{30, 26, 30, 110};
+inline constexpr Color kWindowDark{36, 34, 40, 255};
+inline constexpr Color kBeamWood[3] = {{52, 38, 28, 255}, {70, 52, 36, 255}, {90, 68, 46, 255}};
+inline constexpr Color kRebar{82, 58, 48, 255};
+inline constexpr Color kRubble[4] = {{80, 72, 66, 255}, {104, 94, 84, 255}, {126, 90, 72, 255}, {138, 128, 112, 255}};
+inline constexpr Color kPropShadow{20, 18, 24, 96};
+inline constexpr Color kRust[3] = {{82, 44, 28, 255}, {112, 62, 36, 255}, {142, 84, 48, 255}};
+inline constexpr Color kBarrelBand{54, 40, 32, 255};
+inline constexpr Color kMetalProp[3] = {{62, 64, 68, 255}, {92, 94, 96, 255}, {122, 124, 122, 255}};
+inline constexpr Color kFenceMesh{118, 118, 112, 150};
+inline constexpr Color kFencePost{92, 94, 92, 255};
+inline constexpr Color kSignRed{130, 52, 44, 255};
+inline constexpr Color kSignRedDark{92, 38, 34, 255};
+inline constexpr Color kSignWhite{164, 158, 144, 255};
+inline constexpr Color kSignBlue{58, 78, 106, 255};
+inline constexpr Color kLampHead{120, 120, 112, 255};
+inline constexpr Color kLampGlass{170, 162, 120, 255};
+inline constexpr Color kCarPaints[4][3] = {
+    {{70, 46, 38, 255}, {98, 62, 46, 255}, {124, 82, 58, 255}},
+    {{54, 62, 72, 255}, {76, 86, 96, 255}, {100, 110, 118, 255}},
+    {{84, 76, 50, 255}, {112, 102, 66, 255}, {138, 126, 84, 255}},
+    {{74, 42, 44, 255}, {102, 56, 54, 255}, {128, 76, 68, 255}},
+};
+inline constexpr Color kCarGlass{40, 46, 54, 255};
+inline constexpr Color kCarGlassShine{80, 92, 100, 255};
+inline constexpr Color kTire{28, 26, 28, 255};
+inline constexpr Color kTentFabric[3][3] = {
+    {{62, 72, 56, 255}, {84, 94, 70, 255}, {106, 114, 86, 255}},
+    {{86, 72, 50, 255}, {112, 96, 66, 255}, {136, 118, 84, 255}},
+    {{56, 66, 84, 255}, {76, 88, 106, 255}, {98, 110, 124, 255}},
+};
+inline constexpr Color kTentDark{30, 28, 30, 255};
+inline constexpr Color kAsh{58, 54, 52, 255};
+inline constexpr Color kCoal{32, 26, 26, 255};
+inline constexpr Color kSandbag[3] = {{98, 88, 66, 255}, {118, 108, 82, 255}, {138, 128, 98, 255}};
+inline constexpr Color kCloth[3] = {{92, 60, 54, 255}, {62, 76, 88, 255}, {98, 92, 66, 255}};
+inline constexpr Color kPuddle{50, 58, 68, 255};
+inline constexpr Color kPuddleShine{78, 90, 100, 255};
+inline constexpr Color kTreeBark[3] = {{44, 34, 28, 255}, {62, 48, 38, 255}, {82, 66, 50, 255}};
+
+// Small live lights on the map.
+inline constexpr Color kLampLight{230, 196, 120, 255};  // How much a light brightens the ground at its center.
+inline constexpr Color kFireLight{240, 130, 60, 255};
+inline constexpr Color kPlayerLight{120, 130, 150, 255};  // His own small pool of light at night.
+inline constexpr Color kFireFlame[3] = {{226, 90, 30, 255}, {250, 160, 50, 255}, {255, 232, 150, 255}};
+
+// --- Day cycle ---------------------------------------------------------------
+// The run moves from golden afternoon, through dusk and night, to a blood-red sky
+// for the boss. The ground is graded strongly, characters only gently, so threats
+// stay readable at the darkest moment. Colors are multipliers, shown as 0-255 of
+// a range from 0 to 1.25, so that a warm light can also brighten.
+struct DayKey {
+    float seconds;
+    Color groundTint;
+    float groundSaturation;
+    Color groundLift;
+    Color spriteTint;
+    float lampLevel;      // 0 means off, 1 means fully on.
+    float shadowLength;   // Sun shadow length, in figure heights.
+    float vignette;
+};
+inline constexpr DayKey kDayKeys[] = {
+    //  time  ground tint             sat    ground lift       sprite tint           lamp   shadow  vignette
+    {0.0f, {255, 216, 160, 255}, 1.05f, {12, 6, 0, 255}, {255, 240, 214, 255}, 0.00f, 1.30f, 0.20f},   // Golden afternoon.
+    {120.0f, {250, 186, 140, 255}, 1.00f, {12, 4, 2, 255}, {255, 228, 204, 255}, 0.00f, 1.70f, 0.26f},  // Low sun.
+    {210.0f, {186, 136, 126, 255}, 0.85f, {8, 3, 8, 255}, {244, 216, 206, 255}, 0.10f, 1.60f, 0.34f},  // Dusk.
+    {300.0f, {116, 102, 142, 255}, 0.70f, {4, 2, 12, 255}, {214, 202, 218, 255}, 0.55f, 0.80f, 0.42f},  // Late dusk.
+    {370.0f, {74, 84, 134, 255}, 0.55f, {2, 4, 14, 255}, {176, 184, 218, 255}, 1.00f, 0.00f, 0.50f},   // Night.
+    {500.0f, {56, 64, 112, 255}, 0.50f, {2, 2, 12, 255}, {176, 182, 220, 255}, 1.00f, 0.00f, 0.55f},   // Deep night.
+    {590.0f, {110, 38, 46, 255}, 0.60f, {10, 0, 2, 255}, {240, 192, 186, 255}, 1.00f, 0.00f, 0.60f},   // Blood-red sky.
+    {600.0f, {122, 36, 42, 255}, 0.60f, {12, 0, 2, 255}, {244, 192, 186, 255}, 1.00f, 0.00f, 0.60f},
+};
+inline constexpr float kDayTintRange = 1.25f;
+inline constexpr float kDuskSeconds = 240.0f;  // Used for the title screen demo.
 
 // Interface.
 inline constexpr Color kText{230, 247, 255, 255};
