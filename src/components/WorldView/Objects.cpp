@@ -1,5 +1,7 @@
 #include "components/WorldView/Objects.h"
 
+#include "components/Weapons/Blades/Blades.h"
+
 #include "components/Weapons/Weapons.h"
 #include "data/Balance.h"
 #include "data/Theme.h"
@@ -359,18 +361,17 @@ void drawBlades(const GameState& state, float alpha) {
 
     const balance::WeaponLevel stats = weapons::effectiveStats(state, *blades);
     const int count = std::max(1, stats.count);
-    const float orbit = stats.area;
     // The angle is the latest step's, so step it back to match interpolated positions.
     const float angle = state.run.bladeAngle - stats.speed * kDt * (1.0f - alpha);
     const Vec2 center = lerp(player.prevPos, player.pos, alpha);
     const Color color = blades->evolved ? theme::kEvolvedAccent : theme::kBlade;
     const Vec2 lift{0.0f, -kBladeHeight};
 
-    if (blades->evolved) groundRing(project(center), orbit, 3.0f, 2, fade(color, 0.35f));
+    if (blades->evolved) groundRing(project(center), stats.area, 3.0f, 2, fade(color, 0.35f));
     for (int i = 0; i < count; ++i) {
         const float bladeAngle = angle + kTau * static_cast<float>(i) / static_cast<float>(count);
         const Vec2 unit = fromAngle(bladeAngle);
-        const Vec2 ground = project(center + unit * orbit);
+        const Vec2 ground = project(center + unit * weapons::bladeOrbitRadius(i, stats));
         const Vec2 view = ground + lift;
         const Vec2 tangent = normalizedOr(project(Vec2{-unit.y, unit.x}), Vec2{1.0f, 0.0f});
         const Vec2 side = perpendicular(tangent);

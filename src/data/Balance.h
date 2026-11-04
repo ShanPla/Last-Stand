@@ -93,6 +93,9 @@ inline constexpr float kRocketRadius = 6.0f;
 inline constexpr float kRocketTurnRate = 7.0f;
 inline constexpr float kMineTriggerRadius = 26.0f;
 inline constexpr float kBladeRadius = 15.0f;
+// Every second blade spins on this smaller circle, so zombies right next to the
+// player get cut too. The outer circle alone passes over their heads.
+inline constexpr float kBladeInnerRadiusFraction = 0.38f;
 inline constexpr float kWeaponRange = 720.0f;  // Weapons ignore zombies further than this.
 inline constexpr float kBulletSpreadRadians = 0.14f;   // Between rifle bullets in one trigger pull.
 inline constexpr float kShotgunConeRadians = 0.62f;    // Full width of the pellet cone.

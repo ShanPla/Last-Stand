@@ -15,7 +15,7 @@ void updateBlades(GameState& state, const WeaponSlot& slot, const balance::Weapo
     const Vec2 center = state.player.pos;
     for (int blade = 0; blade < stats.count; ++blade) {
         const float angle = run.bladeAngle + kTau * static_cast<float>(blade) / static_cast<float>(stats.count);
-        const Vec2 offset = fromAngle(angle) * stats.area;
+        const Vec2 offset = fromAngle(angle) * bladeOrbitRadius(blade, stats);
         const Vec2 pos = center + offset;
         state.enemyGrid.query(pos, balance::kBladeRadius + balance::kLargestEnemyRadius, [&](int index) {
             Enemy& enemy = state.enemies[index];
