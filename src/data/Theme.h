@@ -117,4 +117,60 @@ inline constexpr Color kBarBack{22, 30, 56, 255};
 inline constexpr Color kXpFill{90, 255, 190, 255};
 inline constexpr Color kDebugText{255, 240, 120, 255};
 
+// --- Screens ---
+// Menus, HUD and overlays: a muted dusk palette of dark slate, sand and rust, with
+// one strong gold accent for selection. Warm red and orange mark danger, cool teal and
+// blue mark the player and rewards, and dusk violet marks evolutions. Screens use only
+// the colors in this section, so the rest of the theme can change without touching them.
+inline constexpr Color kUiText{240, 226, 196, 255};
+inline constexpr Color kUiTextDim{178, 162, 140, 255};
+inline constexpr Color kUiPanel{40, 36, 44, 255};
+inline constexpr Color kUiBorder{128, 108, 92, 255};        // The light tone of a two-tone border.
+inline constexpr Color kUiBorderDark{14, 12, 16, 255};      // The dark tone, on the outside.
+inline constexpr Color kUiAccent{255, 196, 64, 255};        // Selection and primary buttons.
+inline constexpr Color kUiAccentDark{150, 96, 24, 255};
+inline constexpr Color kUiBarBack{26, 24, 30, 255};
+inline constexpr Color kUiHealth{206, 70, 52, 255};
+inline constexpr Color kUiHealthBack{64, 26, 26, 255};
+inline constexpr Color kUiXp{96, 204, 176, 255};
+inline constexpr Color kUiGem{112, 208, 170, 255};          // Rewards and passive icons.
+inline constexpr Color kUiGemBlue{132, 176, 224, 255};
+inline constexpr Color kUiWeapon{150, 200, 224, 255};       // Weapon icons and the player.
+inline constexpr Color kUiWeaponFill{28, 44, 56, 255};
+inline constexpr Color kUiWeaponLight{208, 236, 246, 255};
+inline constexpr Color kLogoRust{214, 92, 60, 255};
+inline constexpr Color kLogoShadow{112, 36, 26, 255};
+inline constexpr Color kZombieSkin{132, 164, 100, 255};
+inline constexpr Color kZombieDark{58, 82, 50, 255};
+
+inline constexpr Color kScreenScrim{10, 10, 14, 205};       // Behind pause, settings and game over.
+inline constexpr Color kTitleShade{12, 10, 14, 235};        // Dark side of the title.
+inline constexpr Color kHudPlate{16, 14, 20, 170};          // Translucent plate under HUD icons.
+inline constexpr Color kButtonFill{48, 42, 50, 255};
+inline constexpr Color kButtonHover{74, 62, 58, 255};
+inline constexpr Color kButtonPrimaryHover{255, 224, 128, 255};
+inline constexpr Color kButtonDisabled{30, 28, 34, 255};
+inline constexpr Color kTextOnPrimary{28, 20, 12, 255};     // Dark text on a gold button.
+inline constexpr Color kTextDisabled{112, 102, 96, 255};
+inline constexpr Color kDivider{78, 66, 64, 255};
+inline constexpr Color kUiShadow{0, 0, 0, 190};
+inline constexpr Color kKeyChipFill{22, 20, 26, 255};
+inline constexpr Color kDefeat{222, 92, 60, 255};           // Game over headline.
+inline constexpr Color kVictory{128, 214, 150, 255};
+inline constexpr Color kNewBest{112, 208, 170, 255};
+inline constexpr Color kBossBar{222, 76, 60, 255};
+inline constexpr Color kBossBarBack{58, 22, 24, 255};
+inline constexpr Color kLowHealth{200, 44, 32, 255};        // Edge pulse when health is low.
+inline constexpr Color kEmptyMark{240, 132, 40, 255};       // The EMPTY tag on a dry weapon.
+inline constexpr Color kAmmoFill{120, 196, 214, 255};
+inline constexpr Color kReload{160, 176, 232, 255};
+inline constexpr Color kEvolution{184, 140, 224, 255};
+inline constexpr Color kEvolutionFill{46, 34, 62, 255};
+inline constexpr Color kIconDim{96, 96, 104, 255};
+inline constexpr Color kJoystick{150, 200, 224, 255};
+inline constexpr Color kFadeFromDark{10, 10, 14, 255};      // Covers the screen for a moment when a run starts.
+// Bars on the game over screen, sorted from most to least damage.
+inline constexpr Color kBarPalette[6] = {{150, 200, 224, 255}, {132, 176, 224, 255}, {112, 208, 170, 255},
+                                         {184, 140, 224, 255}, {240, 196, 120, 255}, {160, 214, 196, 255}};
+
 }  // namespace ls::theme

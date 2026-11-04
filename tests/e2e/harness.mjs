@@ -80,3 +80,76 @@ export async function countColorNearCenter(page, [r, g, b], boxFraction = 0.2) {
     return count;
   }, { base64, r, g, b, boxFraction });
 }
+
+// ---- Helpers for the screens -----------------------------------------------------
+
+// Debug command numbers. They match DebugCommand in src/core/App.cpp.
+export const CMD = {
+  stressEnemies: 1, stressProjectiles: 2, setSeed: 3, grantXp: 4, startRun: 5, forceDeath: 6, forceVictory: 7,
+  showScreen: 8, setSafeArea: 9, giveBuild: 10, setHp: 11, setTime: 12, setKills: 13, setLevel: 14, fakeDamage: 15, levelUp: 16,
+};
+
+export const readState = (page) => page.evaluate(() => JSON.parse(Module.ccall('ls_query_state', 'string', [], [])));
+
+// Screen name, settings, best run, and button rectangles. Rectangles are also given in
+// CSS pixels (cx, cy are the center), because that is what the mouse and touch use.
+export const readUi = (page) => page.evaluate(() => {
+  const ui = JSON.parse(Module.ccall('ls_query_ui', 'string', [], []));
+  const sx = innerWidth / ui.width;
+  const sy = innerHeight / ui.height;
+  for (const b of ui.buttons) { b.cx = (b.x + b.w / 2) * sx; b.cy = (b.y + b.h / 2) * sy; b.cw = b.w * sx; b.ch = b.h * sy; }
+  return ui;
+});
+
+export const debug = (page, command, value = 0) => page.evaluate(([c, v]) => { Module._ls_debug_command(c, v); }, [command, value]);
+
+export async function waitScreen(page, screen, timeout = 8000) {
+  await page.waitForFunction((name) => {
+    try { return JSON.parse(Module.ccall('ls_query_ui', 'string', [], [])).screen === name; } catch { return false; }
+  }, screen, { timeout });
+}
+
+// The button list is from the frame that just drew, so right after a screen change it
+// can still belong to the old screen. This waits a moment for the new one.
+export async function findButton(page, name, timeout = 2000) {
+  const start = Date.now();
+  for (;;) {
+    const ui = await readUi(page);
+    const button = ui.buttons.find((b) => b.n === name);
+    if (button) return button;
+    if (Date.now() - start > timeout) {
+      throw new Error(`no button "${name}" on screen "${ui.screen}": ${ui.buttons.map((b) => b.n).join(', ')}`);
+    }
+    await page.waitForTimeout(40);
+  }
+}
+
+// Waits until the control with keyboard or gamepad focus has this name (or starts with it).
+export async function waitSelected(page, name, timeout = 3000) {
+  try {
+    await page.waitForFunction((wanted) => {
+      try { return JSON.parse(Module.ccall('ls_query_ui', 'string', [], [])).selected.startsWith(wanted); } catch { return false; }
+    }, name, { timeout });
+  } catch {
+    const ui = await readUi(page);
+    throw new Error(`expected "${name}" to be selected on ${ui.screen}, but "${ui.selected}" is`);
+  }
+}
+
+export async function clickButton(page, name) {
+  const b = await findButton(page, name);
+  await page.mouse.click(b.cx, b.cy);
+}
+
+export async function tapButton(page, name) {
+  const b = await findButton(page, name);
+  await page.touchscreen.tap(b.cx, b.cy);
+}
+
+// Waits for the title screen, then presses Enter to start a run.
+export async function startGame(page) {
+  await waitScreen(page, 'title');
+  await page.waitForTimeout(150);
+  await page.keyboard.press('Enter');
+  await waitScreen(page, 'playing');
+}

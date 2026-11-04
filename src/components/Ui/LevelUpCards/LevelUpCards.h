@@ -10,11 +10,10 @@ struct LevelUpChoice {
     bool reroll = false;
 };
 
-// Call each frame while the level-up screen is open. Clears the input delay
-// when the screen closes.
-LevelUpChoice updateLevelUpCards(const GameState& state, const input::Snapshot& snapshot, float dtReal);
-
-void drawLevelUpCards(const GameState& state);
+// Draws the level-up screen and reads its input. Call once per frame while the
+// phase is LevelUp. A short delay after the cards appear ignores presses, so a held
+// key or a fast tap cannot choose by accident.
+LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal);
 
 // Call when the level-up screen closes, so the next one starts with its delay.
 void resetLevelUpCards();

@@ -29,6 +29,7 @@ const gpu = await page.evaluate(() => {
 });
 
 await page.evaluate(([e, s]) => {
+  Module._ls_debug_command(5, 1);  // The game opens on the title, so start a run first.
   Module._ls_debug_command(1, e);
   Module._ls_debug_command(2, s);
 }, [enemies, shots]);
