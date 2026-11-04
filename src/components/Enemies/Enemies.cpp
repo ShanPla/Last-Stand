@@ -102,7 +102,9 @@ void update(GameState& state) {
         enemy.flash = std::max(0.0f, enemy.flash - kDt);
         enemy.bladeCooldown = std::max(0.0f, enemy.bladeCooldown - kDt);
 
-        const Vec2 velocity = behaviourVelocity(state, enemy) + enemy.knock + separation(state, enemy, i);
+        // The crowd moves around the boss. It must not be held back by the zombies it walks through.
+        const Vec2 push = enemy.type == EnemyType::Boss ? Vec2{} : separation(state, enemy, i);
+        const Vec2 velocity = behaviourVelocity(state, enemy) + enemy.knock + push;
         enemy.pos += velocity * kDt;
         enemy.knock *= knockDecay;
         recycleIfFar(state, enemy);
