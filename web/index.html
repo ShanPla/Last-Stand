@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Last Stand</title>
+  <meta name="description" content="A neon survivors game written in C++ and running in your browser.">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#05060f">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="components/GameCanvas/GameCanvas.css">
+  <link rel="stylesheet" href="components/LoadingScreen/LoadingScreen.css">
+  <link rel="stylesheet" href="components/WebGlError/WebGlError.css">
+</head>
+<body>
+  <canvas id="canvas" tabindex="-1" aria-label="Last Stand game"></canvas>
+  <div id="loading-screen" role="status">
+    <div class="loading-title">LAST STAND</div>
+    <div class="loading-track"><div id="loading-bar" class="loading-bar"></div></div>
+    <div id="loading-label" class="loading-label">Loading</div>
+  </div>
+  <div id="webgl-error" role="alert" hidden>
+    <div class="webgl-error-title">This browser can't run Last Stand</div>
+    <p>The game needs WebGL 2, which is off or unavailable here.</p>
+    <p>Try the latest Chrome, Edge, Firefox or Safari, and check that hardware acceleration is on.</p>
+  </div>
+  <script>window.LS_WASM_BYTES = __LS_WASM_BYTES__;</script>
+  <script src="components/WebGlError/WebGlError.js"></script>
+  <script src="components/LoadingScreen/LoadingScreen.js"></script>
+  <script src="components/GameCanvas/GameCanvas.js"></script>
+  {{{ SCRIPT }}}
+</body>
+</html>

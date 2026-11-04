@@ -1,0 +1,32 @@
+#webgl-error {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #05060f;
+  color: #e6f7ff;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 18px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+#webgl-error[hidden] {
+  display: none;
+}
+
+.webgl-error-title {
+  margin-bottom: 8px;
+  font-size: 26px;
+  font-weight: 700;
+  color: #ff9d5c;
+}
+
+#webgl-error p {
+  max-width: 520px;
+  margin: 6px 0;
+}

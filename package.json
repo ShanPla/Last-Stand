@@ -1,0 +1,14 @@
+{
+  "name": "last-stand",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "author": "Shan Platon",
+  "type": "module",
+  "scripts": {
+    "test:e2e": "node --test tests/e2e/*.test.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.64.1"
+  }
+}
