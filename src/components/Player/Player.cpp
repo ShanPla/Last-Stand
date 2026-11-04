@@ -31,7 +31,9 @@ void update(GameState& state, float moveX, float moveY) {
 void damage(GameState& state, float amount) {
     Player& player = state.player;
     if (player.invulnerable > 0.0f || player.hp <= 0.0f) return;
-    const float taken = std::max(balance::kMinDamageTaken, amount - player.stats.armor);
+    // Every hit on the player comes through here, so difficulty needs only this one line.
+    const float scaled = amount * balance::difficultyTuning(state.run.difficulty).enemyDamage;
+    const float taken = std::max(balance::kMinDamageTaken, scaled - player.stats.armor);
     player.hp -= taken;
     player.invulnerable = balance::kPlayerInvulnerableAfterHit;
     player.hitFlash = 0.15f;

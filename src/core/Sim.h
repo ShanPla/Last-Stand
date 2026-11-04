@@ -16,7 +16,7 @@ struct InputFrame {
 
 namespace sim {
 
-void newRun(GameState& state, uint64_t seed);
+void newRun(GameState& state, uint64_t seed, Difficulty difficulty = Difficulty::Normal);
 
 // Advances the run by one fixed step. Same state and input give the same result.
 void step(GameState& state, const InputFrame& input);

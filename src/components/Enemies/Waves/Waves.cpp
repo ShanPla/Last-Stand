@@ -22,7 +22,7 @@ Vec2 spawnPoint(GameState& state) {
 float bossHpForBuild(const GameState& state) {
     const float strength = weapons::estimatedBossDps(state) / balance::kBossReferenceDps;
     const float hp = balance::kBossHpAtReferenceDps * std::pow(strength, balance::kBossHpScalePower);
-    return clampf(hp, balance::kBossHpMin, balance::kBossHpMax);
+    return clampf(hp, balance::kBossHpMin, balance::kBossHpMax) * balance::difficultyTuning(state.run.difficulty).enemyHp;
 }
 
 float rowRate(int rowIndex, float seconds) {
@@ -40,7 +40,7 @@ void update(GameState& state) {
     const int rowCount = static_cast<int>(std::size(balance::kWaves));
     for (int i = 0; i < rowCount; ++i) {
         const balance::WaveRow& row = balance::kWaves[i];
-        run.waveAccumulators[i] += rowRate(i, seconds) * kDt;
+        run.waveAccumulators[i] += rowRate(i, seconds) * balance::difficultyTuning(run.difficulty).spawnRate * kDt;
         while (run.waveAccumulators[i] >= 1.0f) {
             run.waveAccumulators[i] -= 1.0f;
             // A group spawns together at one point, so it arrives as a pack.

@@ -11,6 +11,8 @@ namespace ls::tools {
 
 namespace {
 
+Difficulty g_difficulty = Difficulty::Normal;
+
 // Adds up time spent held, dry and fully dry for this one step.
 void trackWeapons(const GameState& state, RunResult& result) {
     const Player& player = state.player;
@@ -117,9 +119,11 @@ void traceLine(std::FILE* out, const GameState& state) {
 
 }  // namespace
 
+void setGameDifficulty(Difficulty difficulty) { g_difficulty = difficulty; }
+
 RunResult playGame(const BotProfile& profile, uint64_t seed, int favoriteWeapon, std::FILE* trace) {
     auto state = std::make_unique<GameState>();
-    sim::newRun(*state, seed);
+    sim::newRun(*state, seed, g_difficulty);
     // A focus run starts with the favorite next to the Rifle, so every weapon gets the same head start.
     if (favoriteWeapon >= 0) weapons::grant(*state, static_cast<WeaponId>(favoriteWeapon));
     Bot bot(profile, seed, favoriteWeapon);

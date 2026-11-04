@@ -166,9 +166,11 @@ struct Card {
 };
 
 enum class RunPhase : uint8_t { Playing, LevelUp, Won, Dead };
+enum class Difficulty : uint8_t { Easy, Normal, Hard, Count };
 
 struct RunState {
     RunPhase phase = RunPhase::Playing;
+    Difficulty difficulty = Difficulty::Normal;
     uint64_t seed = 0;
     uint32_t tick = 0;       // Steps played. Does not advance during level-up.
     uint32_t nextId = 1;

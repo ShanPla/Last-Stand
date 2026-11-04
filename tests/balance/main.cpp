@@ -40,6 +40,7 @@ void printHelp() {
         "ls_balance: bot games and a solo weapon test for tuning Last Stand.\n\n"
         "  --seeds N            games per profile (default 30)\n"
         "  --first-seed S       first seed; seeds run S, S+1, ... (default 1000)\n"
+        "  --difficulty D       easy, normal or hard (default normal)\n"
         "  --profile NAME       novice, average, skilled or all (default all)\n"
         "  --threads N          worker threads (default: all cores)\n"
         "  --runs               list every run on one line\n"
@@ -62,6 +63,9 @@ bool parseArgs(int argc, char** argv, Options& options) {
             return false;
         } else if (arg == "--seeds" && hasValue) {
             options.seeds = std::max(1, std::atoi(argv[++i]));
+        } else if (arg == "--difficulty" && hasValue) {
+            const std::string name = argv[++i];
+            setGameDifficulty(name == "easy" ? Difficulty::Easy : (name == "hard" ? Difficulty::Hard : Difficulty::Normal));
         } else if (arg == "--first-seed" && hasValue) {
             options.firstSeed = std::strtoull(argv[++i], nullptr, 10);
         } else if (arg == "--threads" && hasValue) {

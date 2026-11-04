@@ -149,6 +149,24 @@ inline constexpr float kMineSpreadRadians = 0.45f;       // Between mines droppe
 inline constexpr float kFlameBaseArea = 16.0f;           // Flame area at which a flame has exactly kFlameRadius.
 inline constexpr int kMaxWeaponTargets = 16;               // Fixed size of target and hit lists, so no heap is needed.
 
+// --- Difficulty --------------------------------------------------------------
+// One small table, so a level is only these numbers and needs no logic of its own.
+struct DifficultyTuning {
+    float enemyHp;      // Multiplies zombie and boss health.
+    float enemyDamage;  // Multiplies every hit on the player, before armor.
+    float spawnRate;    // Multiplies the wave table's spawn rates.
+};
+
+inline constexpr DifficultyTuning kDifficulties[static_cast<int>(Difficulty::Count)] = {
+    /* Easy   */ {0.5f, 0.45f, 0.6f},
+    /* Normal */ {1.0f, 1.0f, 1.0f},
+    /* Hard   */ {1.3f, 1.25f, 1.2f},
+};
+
+inline constexpr const DifficultyTuning& difficultyTuning(Difficulty difficulty) {
+    return kDifficulties[static_cast<int>(difficulty)];
+}
+
 // --- Enemies -----------------------------------------------------------------
 struct EnemyStats {
     float hp;

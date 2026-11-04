@@ -42,11 +42,12 @@ void applyStressTargets(GameState& state) {
 
 }  // namespace
 
-void newRun(GameState& state, uint64_t seed) {
+void newRun(GameState& state, uint64_t seed, Difficulty difficulty) {
     state.rng = Rng{};
     state.rng.seed(seed);
     state.run = RunState{};
     state.run.seed = seed;
+    state.run.difficulty = difficulty;
     state.run.rerollsLeft = balance::kStartingRerolls;
     state.run.nextPickupDropKills = balance::kKillsPerPickupDrop;
     state.enemies.clear();
@@ -108,6 +109,7 @@ uint64_t stateHash(const GameState& state) {
     mixBytes(&state.run.tick, sizeof(state.run.tick));
     mixInt(state.run.kills);
     mixInt(static_cast<int>(state.run.phase));
+    mixInt(static_cast<int>(state.run.difficulty));
     mixFloat(state.player.pos.x);
     mixFloat(state.player.pos.y);
     mixFloat(state.player.hp);

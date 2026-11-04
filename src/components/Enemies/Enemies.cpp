@@ -74,7 +74,8 @@ Enemy* spawn(GameState& state, EnemyType type, Vec2 pos, bool elite) {
     const balance::EnemyStats& stats = balance::kEnemyStats[static_cast<int>(type)];
     const float seconds = state.timeSeconds();
     const bool isBoss = type == EnemyType::Boss;
-    const float hpScale = isBoss ? 1.0f : balance::enemyHpScale(seconds);
+    // The boss gets its difficulty share in waves::bossHpForBuild.
+    const float hpScale = isBoss ? 1.0f : balance::enemyHpScale(seconds) * balance::difficultyTuning(state.run.difficulty).enemyHp;
     const float damageScale = isBoss ? 1.0f : balance::enemyDamageScale(seconds);
     enemy->pos = pos;
     enemy->prevPos = pos;
