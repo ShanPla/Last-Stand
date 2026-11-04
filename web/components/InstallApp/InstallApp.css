@@ -1,0 +1,61 @@
+/* Dusk palette, the same tones as the in-game menus: slate fill, sand text,
+   a two-tone border and a gold highlight. Hard edges and flat fills only. */
+#install-app {
+  position: fixed;
+  z-index: 5;
+  right: max(12px, env(safe-area-inset-right));
+  /* Sits above the credit line, which the title screen draws along the bottom edge. */
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + clamp(40px, 7vh, 80px));
+  display: flex;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Hard drop shadow, like the title logo. */
+  box-shadow: 4px 4px 0 #0e0c10;
+}
+
+#install-app[hidden] {
+  display: none;
+}
+
+#install-app button {
+  box-sizing: border-box;
+  min-width: 48px;
+  min-height: 48px;
+  margin: 0;
+  padding: 0 14px;
+  border: 3px solid #806c5c;
+  border-radius: 0;
+  background: #302a32;
+  color: #f0e2c4;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation;
+}
+
+#install-app button + button {
+  margin-left: -3px; /* the two buttons share one border */
+  padding: 0;
+}
+
+#install-app button:hover {
+  border-color: #ffc440;
+  background: #4a3e3a;
+}
+
+#install-app button:active {
+  background: #ffc440;
+  color: #1c140c;
+}
+
+#install-app #install-app-button {
+  color: #ffc440;
+}
+
+#install-app #install-app-button:active {
+  color: #1c140c;
+}

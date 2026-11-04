@@ -43,11 +43,15 @@ jobs:
           cmake --preset web
           cmake --build --preset web
 
+      # The build writes site-files.txt, the list of every file the game needs
+      # (page, script, wasm, manifest, offline worker, components, icons). Copying
+      # that list keeps build system files out and needs no edit when a file is added.
       - name: Collect the site
         run: |
           mkdir site
-          cp build/web/index.html build/web/index.js build/web/index.wasm site/
-          cp -r build/web/components site/
+          tr -d '\r' < build/web/site-files.txt | tar -C build/web -cf - -T - | tar -C site -xf -
+          test -f site/index.html && test -f site/sw.js && test -f site/manifest.webmanifest
+          find site -type f | sort
 
       - uses: actions/upload-pages-artifact@v3
         with:

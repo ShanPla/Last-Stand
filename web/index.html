@@ -6,8 +6,18 @@
   <meta name="description" content="A pixel-art zombie survivors game written in C++ and running in your browser, with all art generated in code.">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#14131a">
-  <link rel="icon" href="data:,">
+  <!-- Every URL is relative, because the game is served from a sub-path on GitHub Pages. -->
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="48x48" href="icons/favicon-48.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <!-- iPhone Safari has no install prompt: these tags are what its Add to Home Screen uses. -->
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Last Stand">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <link rel="stylesheet" href="components/GameCanvas/GameCanvas.css">
+  <link rel="stylesheet" href="components/InstallApp/InstallApp.css">
   <link rel="stylesheet" href="components/LoadingScreen/LoadingScreen.css">
   <link rel="stylesheet" href="components/WebGlError/WebGlError.css">
 </head>
@@ -23,10 +33,16 @@
     <p>The game needs WebGL 2, which is off or unavailable here.</p>
     <p>Try the latest Chrome, Edge, Firefox or Safari, and check that hardware acceleration is on.</p>
   </div>
+  <div id="install-app" hidden>
+    <button id="install-app-button" type="button" tabindex="-1">Install app</button>
+    <button id="install-app-dismiss" type="button" tabindex="-1" aria-label="Hide the install button">X</button>
+  </div>
   <script>window.LS_WASM_BYTES = __LS_WASM_BYTES__;</script>
   <script src="components/WebGlError/WebGlError.js"></script>
   <script src="components/LoadingScreen/LoadingScreen.js"></script>
   <script src="components/GameCanvas/GameCanvas.js"></script>
+  <script src="components/InstallApp/InstallApp.js"></script>
+  <script src="components/OfflineCache/OfflineCache.js"></script>
   {{{ SCRIPT }}}
 </body>
 </html>

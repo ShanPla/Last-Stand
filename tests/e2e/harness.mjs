@@ -12,6 +12,7 @@ const chromePath = process.env.CHROME_PATH
   ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const types = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm',
+  '.webmanifest': 'application/manifest+json', '.png': 'image/png',
 };
 
 export async function startServer(port = 0) {

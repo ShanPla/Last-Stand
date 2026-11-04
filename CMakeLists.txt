@@ -136,6 +136,7 @@ if(EMSCRIPTEN)
     COMMAND ${CMAKE_COMMAND}
       -DOUT_DIR=$<TARGET_FILE_DIR:laststand>
       -DWEB_DIR=${LS_WEB_DIR}
+      -DTOOLS_DIR=${CMAKE_SOURCE_DIR}/tools
       -P "${CMAKE_SOURCE_DIR}/web/FinishWebBuild.cmake"
   )
 endif()
