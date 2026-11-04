@@ -19,7 +19,7 @@ namespace ls::app {
 
 namespace {
 
-enum DebugCommand { kStressEnemies = 1, kStressProjectiles = 2, kSetSeed = 3, kGrantXp = 4 };
+enum DebugCommand { kStressEnemies = 1, kStressProjectiles = 2, kSetSeed = 3, kGrantXp = 4, kShowcase = 5 };
 
 constexpr int kMaxStepsPerFrame = 5;  // Stops a slow frame causing an even slower one.
 
@@ -27,6 +27,7 @@ GameState* g_state = nullptr;
 input::Snapshot g_input;
 float g_accumulator = 0.0f;
 bool g_debug = false;
+bool g_showcase = false;  // Debug only: holds the simulation still, so every shape can be seen.
 uint64_t g_seedOverride = 0;
 
 // Rolling averages, for the debug overlay and performance tests.
@@ -104,7 +105,9 @@ void frame() {
         sim::newRun(*g_state, pickSeed());
     }
 
-    runSimulation(dtReal);
+    if (g_showcase) worldview::tickShowcase(*g_state);
+    else runSimulation(dtReal);
+    worldview::consumeEvents(*g_state);
     g_state->events.clear();
 
     const double drawStart = GetTime();
@@ -142,9 +145,12 @@ const char* queryState() {
 
 void debugCommand(int command, int value) {
     if (!g_debug) return;
+    // Any other debug command hands control back to the simulation.
+    g_showcase = command == kShowcase;
     switch (command) {
         case kStressEnemies: sim::setStressTargets(*g_state, value, g_state->run.debugProjectileTarget); break;
         case kStressProjectiles: sim::setStressTargets(*g_state, g_state->run.debugEnemyTarget, value); break;
+        case kShowcase: worldview::setupShowcase(*g_state, value); break;
         case kSetSeed:
             g_seedOverride = static_cast<uint64_t>(value);
             sim::newRun(*g_state, g_seedOverride);

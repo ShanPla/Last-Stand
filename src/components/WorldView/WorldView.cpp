@@ -1,5 +1,8 @@
 #include "components/WorldView/WorldView.h"
 
+#include "components/WorldView/Characters.h"
+#include "components/WorldView/Draw.h"
+#include "components/WorldView/Objects.h"
 #include "data/Balance.h"
 #include "data/Theme.h"
 
@@ -14,16 +17,42 @@ namespace ls::worldview {
 namespace {
 
 constexpr float kWorldUnitsOnLongSide = 1280.0f;
+constexpr float kFarthestVisibleWorldDistance = balance::kSpawnRadius - 40.0f;
 constexpr float kGridSpacing = 80.0f;
-constexpr int kMaxSides = 12;
+constexpr int kGridMajorEvery = 5;
+constexpr float kGridMajorGlowPixels = 5.0f;
 
-// Screen edges in world units, for skipping objects that can't be seen.
-struct ViewBounds {
-    float left, right, top, bottom;
-    bool contains(Vec2 pos, float margin) const {
-        return pos.x > left - margin && pos.x < right + margin && pos.y > top - margin && pos.y < bottom + margin;
-    }
+// Keeps the soldier's middle at the screen center, rather than his feet.
+constexpr float kCameraLift = balance::kPlayerRadius * 1.5f;
+
+// Level of detail. With few zombies all get the full figure. Above that, only the
+// nearest ones do, as nobody can see the extra quads on a far figure in a crowd.
+constexpr int kAllDetailedUpTo = 400;
+constexpr int kNearestDetailed = 300;
+constexpr int kNearestDetailedFast = 120;
+constexpr int kDistanceBuckets = 128;
+
+// Depth sort. Sorting by a coarse bucket is enough: figures in the same bucket
+// are at almost the same height on screen, so their order can't be noticed.
+constexpr int kSortBuckets = 512;
+
+// The player takes one extra slot in the sort, marked with this stand-in index.
+constexpr int kPlayerSlot = kMaxEnemies;
+
+struct VisibleFigure {
+    Vec2 feet;           // Ground position, after the tilt.
+    float distanceSq;    // From the player, in view units.
+    uint16_t enemyIndex;
+    bool detailed;
 };
+
+// Fixed memory, so that drawing never touches the heap.
+VisibleFigure g_visible[kMaxEnemies + 1];
+uint16_t g_drawOrder[kMaxEnemies + 1];
+int g_bucketStarts[kSortBuckets + 1];
+int g_distanceCounts[kDistanceBuckets];
+
+bool g_fastMode = false;
 
 ViewBounds viewBounds(const Camera2D& camera) {
     const float halfWidth = static_cast<float>(GetScreenWidth()) * 0.5f / camera.zoom;
@@ -31,130 +60,173 @@ ViewBounds viewBounds(const Camera2D& camera) {
     return {camera.target.x - halfWidth, camera.target.x + halfWidth, camera.target.y - halfHeight, camera.target.y + halfHeight};
 }
 
-void quad(Vec2 a, Vec2 b, Vec2 c, Vec2 d, Color color) {
-    rlColor4ub(color.r, color.g, color.b, color.a);
-    rlVertex2f(a.x, a.y);
-    rlVertex2f(b.x, b.y);
-    rlVertex2f(c.x, c.y);
-    rlVertex2f(d.x, d.y);
-}
+void drawGrid(const ViewBounds& view, float pixel) {
+    // Lines of constant y get closer together under the tilt, so the world y of the
+    // first line comes from undoing the tilt on the screen's top edge.
+    const float spacingY = kGridSpacing * kTilt;
+    const int firstX = static_cast<int>(std::floor(view.left / kGridSpacing));
+    const int lastX = static_cast<int>(std::ceil(view.right / kGridSpacing));
+    const int firstY = static_cast<int>(std::floor(view.top / spacingY));
+    const int lastY = static_cast<int>(std::ceil(view.bottom / spacingY));
+    const float width = pixel * 1.5f;
+    const float glow = pixel * kGridMajorGlowPixels;
 
-void thickLine(Vec2 from, Vec2 to, float width, Color color) {
-    const Vec2 dir = normalizedOr(to - from, Vec2{1.0f, 0.0f});
-    const Vec2 side = Vec2{-dir.y, dir.x} * (width * 0.5f);
-    quad(from + side, from - side, to - side, to + side, color);
-}
+    const auto isMajor = [](int line) { return line % kGridMajorEvery == 0; };
 
-// Unit shapes, computed once, so that drawing thousands of enemies uses no
-// trigonometry per enemy. Each shape is rotated with a direction vector instead.
-struct UnitShape {
-    Vec2 points[kMaxSides];
-    int sides = 0;
-};
-
-UnitShape makeRegularShape(int sides) {
-    UnitShape shape;
-    shape.sides = sides;
-    for (int i = 0; i < sides; ++i) {
-        shape.points[i] = fromAngle(kTau * static_cast<float>(i) / static_cast<float>(sides));
+    for (int i = firstX; i <= lastX; ++i) {
+        const float x = static_cast<float>(i) * kGridSpacing;
+        if (isMajor(i)) thickLine(Vec2{x, view.top}, Vec2{x, view.bottom}, glow, theme::kGridGlow);
+        thickLine(Vec2{x, view.top}, Vec2{x, view.bottom}, width, isMajor(i) ? theme::kGridLineMajor : theme::kGridLine);
     }
-    return shape;
-}
-
-// A filled shape with a bright outline. All of it is drawn as quads, which keeps
-// everything in one raylib batch, so the GPU sees few draw calls.
-void drawShape(const UnitShape& shape, Vec2 center, float radius, Vec2 heading, Color fill, Color outline, float thickness) {
-    Vec2 corners[kMaxSides];
-    for (int i = 0; i < shape.sides; ++i) {
-        const Vec2 p = shape.points[i];
-        corners[i] = center + Vec2{p.x * heading.x - p.y * heading.y, p.x * heading.y + p.y * heading.x} * radius;
-    }
-    for (int i = 0; i < shape.sides; ++i) {
-        const Vec2 a = corners[i];
-        const Vec2 b = corners[(i + 1) % shape.sides];
-        quad(center, a, b, b, fill);
-    }
-    for (int i = 0; i < shape.sides; ++i) {
-        thickLine(corners[i], corners[(i + 1) % shape.sides], thickness, outline);
+    for (int i = firstY; i <= lastY; ++i) {
+        const float y = static_cast<float>(i) * spacingY;
+        if (isMajor(i)) thickLine(Vec2{view.left, y}, Vec2{view.right, y}, glow, theme::kGridGlow);
+        thickLine(Vec2{view.left, y}, Vec2{view.right, y}, width, isMajor(i) ? theme::kGridLineMajor : theme::kGridLine);
     }
 }
 
-void drawGrid(const ViewBounds& view, float lineWidth) {
-    const float startX = std::floor(view.left / kGridSpacing) * kGridSpacing;
-    const float startY = std::floor(view.top / kGridSpacing) * kGridSpacing;
-    for (float x = startX; x <= view.right + kGridSpacing; x += kGridSpacing) {
-        const bool major = static_cast<int>(std::lround(x / kGridSpacing)) % 5 == 0;
-        thickLine(Vec2{x, view.top}, Vec2{x, view.bottom}, lineWidth, major ? theme::kGridLineMajor : theme::kGridLine);
+// Finds every zombie on screen. Returns how many, not counting the player.
+int collectVisibleZombies(const GameState& state, float alpha, const ViewBounds& view, Vec2 playerFeet) {
+    int visible = 0;
+    for (int i = 0; i < state.enemies.count; ++i) {
+        const Enemy& enemy = state.enemies[i];
+        const Vec2 feet = project(lerp(enemy.prevPos, enemy.pos, alpha));
+        if (!view.contains(feet, figureHalfWidth(enemy), figureHeight(enemy), enemy.radius)) continue;
+        VisibleFigure& figure = g_visible[visible++];
+        figure.feet = feet;
+        figure.distanceSq = distanceSq(feet, playerFeet);
+        figure.enemyIndex = static_cast<uint16_t>(i);
+        figure.detailed = true;
     }
-    for (float y = startY; y <= view.bottom + kGridSpacing; y += kGridSpacing) {
-        const bool major = static_cast<int>(std::lround(y / kGridSpacing)) % 5 == 0;
-        thickLine(Vec2{view.left, y}, Vec2{view.right, y}, lineWidth, major ? theme::kGridLineMajor : theme::kGridLine);
+    return visible;
+}
+
+// Picks who gets the full figure. A histogram of distances finds the cut-off in one
+// pass, so there is no need to fully sort thousands of zombies by distance.
+void chooseDetail(const GameState& state, int visible, const ViewBounds& view) {
+    const int budget = g_fastMode ? kNearestDetailedFast : kNearestDetailed;
+    if (visible <= kAllDetailedUpTo && !g_fastMode) return;
+    if (visible <= budget) return;
+
+    const float width = view.right - view.left;
+    const float height = view.bottom - view.top;
+    // Squared distance makes each bucket cover the same screen area.
+    const float largest = (width * width + height * height) * 0.25f + 1.0f;
+    const float toBucket = static_cast<float>(kDistanceBuckets) / largest;
+
+    std::fill(g_distanceCounts, g_distanceCounts + kDistanceBuckets, 0);
+    for (int i = 0; i < visible; ++i) {
+        const int bucket = std::min(kDistanceBuckets - 1, static_cast<int>(g_visible[i].distanceSq * toBucket));
+        g_distanceCounts[bucket]++;
     }
+    int total = 0;
+    int cutoff = 0;
+    while (cutoff < kDistanceBuckets && total + g_distanceCounts[cutoff] <= budget) total += g_distanceCounts[cutoff++];
+    const float cutoffSq = static_cast<float>(cutoff) / toBucket;
+
+    for (int i = 0; i < visible; ++i) {
+        VisibleFigure& figure = g_visible[i];
+        figure.detailed = figure.distanceSq < cutoffSq || mustStayDetailed(state.enemies[figure.enemyIndex]);
+    }
+}
+
+// Counting sort by screen height: things further up the screen come first, so
+// nearer figures draw over them. It runs in linear time and uses only fixed arrays.
+void sortByDepth(int count, const ViewBounds& view) {
+    const float top = view.top - 200.0f;
+    const float range = view.bottom + 400.0f - top;
+    const float toBucket = static_cast<float>(kSortBuckets) / range;
+    const auto bucketOf = [&](const VisibleFigure& figure) {
+        return std::clamp(static_cast<int>((figure.feet.y - top) * toBucket), 0, kSortBuckets - 1);
+    };
+
+    std::fill(g_bucketStarts, g_bucketStarts + kSortBuckets + 1, 0);
+    for (int i = 0; i < count; ++i) g_bucketStarts[bucketOf(g_visible[i]) + 1]++;
+    for (int i = 0; i < kSortBuckets; ++i) g_bucketStarts[i + 1] += g_bucketStarts[i];
+    for (int i = 0; i < count; ++i) g_drawOrder[g_bucketStarts[bucketOf(g_visible[i])]++] = static_cast<uint16_t>(i);
 }
 
 }  // namespace
 
+void setFastMode(bool enabled) { g_fastMode = enabled; }
+
+void consumeEvents(const GameState& state) {
+    for (const SimEvent& event : state.events) {
+        if (event.type == EventType::WeaponFired) noteWeaponFired(static_cast<WeaponId>(event.detail));
+    }
+}
+
 Camera2D makeCamera(const GameState& state, float alpha) {
-    const Vec2 center = lerp(state.player.prevPos, state.player.pos, alpha);
+    const Vec2 center = project(lerp(state.player.prevPos, state.player.pos, alpha));
     const float longSide = static_cast<float>(std::max(GetScreenWidth(), GetScreenHeight()));
     Camera2D camera{};
-    camera.target = Vector2{center.x, center.y};
+    camera.target = Vector2{center.x, center.y - kCameraLift};
     camera.offset = Vector2{static_cast<float>(GetScreenWidth()) * 0.5f, static_cast<float>(GetScreenHeight()) * 0.5f};
     camera.zoom = longSide / kWorldUnitsOnLongSide;
+    // Zombies spawn on a circle around the player. In a near-square window the corners
+    // would reach past that circle, so zoom in just enough to keep spawns off screen.
+    const float halfWidth = static_cast<float>(GetScreenWidth()) * 0.5f / camera.zoom;
+    const float halfHeight = static_cast<float>(GetScreenHeight()) * 0.5f / camera.zoom / kTilt;
+    const float cornerDistance = std::sqrt(halfWidth * halfWidth + halfHeight * halfHeight);
+    if (cornerDistance > kFarthestVisibleWorldDistance) camera.zoom *= cornerDistance / kFarthestVisibleWorldDistance;
     return camera;
 }
 
 void draw(const GameState& state, float alpha, const Camera2D& camera) {
-    static const UnitShape kTriangle = makeRegularShape(3);
-    static const UnitShape kDiamond = makeRegularShape(4);
-    static const UnitShape kHexagon = makeRegularShape(6);
-    static const UnitShape kRound = makeRegularShape(12);
-
     const ViewBounds view = viewBounds(camera);
     const float pixel = 1.0f / camera.zoom;
+    const Vec2 playerWorld = lerp(state.player.prevPos, state.player.pos, alpha);
+    const Vec2 playerFeet = project(playerWorld);
+
+    updateSoldierAnimation(state, playerWorld, GetFrameTime());
+
+    const int zombies = collectVisibleZombies(state, alpha, view, playerFeet);
+    chooseDetail(state, zombies, view);
+    VisibleFigure& playerFigure = g_visible[zombies];
+    playerFigure.feet = playerFeet;
+    playerFigure.distanceSq = 0.0f;
+    playerFigure.enemyIndex = static_cast<uint16_t>(kPlayerSlot);
+    playerFigure.detailed = true;
+    const int figures = zombies + 1;
+    sortByDepth(figures, view);
 
     BeginMode2D(camera);
     rlSetTexture(rlGetTextureIdDefault());
     rlBegin(RL_QUADS);
 
-    drawGrid(view, pixel * 1.5f);
+    // Flat things on the ground first, so characters always stand on top of them.
+    drawGrid(view, pixel);
+    drawGroundZones(state, view);
+    drawMines(state, alpha, view);
+    drawGems(state, alpha, view);
+    drawPickups(state, view);
 
-    // Gems are round, and enemies are sharp, so the two differ by shape as well as color.
-    for (const Gem& gem : state.gems) {
-        const Vec2 pos = lerp(gem.prevPos, gem.pos, alpha);
-        if (!view.contains(pos, 12.0f)) continue;
-        const bool large = gem.xp >= 5;
-        drawShape(kHexagon, pos, large ? 9.0f : 6.0f, Vec2{1.0f, 0.0f}, theme::kGemFill,
-                  large ? theme::kGemLarge : theme::kGem, pixel * 2.0f);
+    // All shadows go down before any figure, so none falls across a body.
+    for (int i = 0; i < figures; ++i) {
+        const VisibleFigure& figure = g_visible[i];
+        if (figure.enemyIndex == kPlayerSlot) drawSoldierShadow(figure.feet);
+        else drawZombieShadow(state.enemies[figure.enemyIndex], figure.feet, figure.detailed);
     }
 
-    for (const Enemy& enemy : state.enemies) {
-        const Vec2 pos = lerp(enemy.prevPos, enemy.pos, alpha);
-        if (!view.contains(pos, enemy.radius + 4.0f)) continue;
-        const Vec2 heading = normalizedOr(state.player.pos - pos, Vec2{1.0f, 0.0f});
-        const Color fill = enemy.flash > 0.0f ? theme::kEnemyHitFlash : theme::kEnemyFill;
-        drawShape(kTriangle, pos, enemy.radius * 1.25f, heading, fill, theme::kEnemyWalker, pixel * 2.5f);
+    for (int i = 0; i < figures; ++i) {
+        const VisibleFigure& figure = g_visible[g_drawOrder[i]];
+        if (figure.enemyIndex == kPlayerSlot) drawSoldier(state, figure.feet);
+        else drawZombie(state, state.enemies[figure.enemyIndex], figure.feet, figure.detailed);
     }
 
-    for (const Projectile& shot : state.projectiles) {
-        const Vec2 pos = lerp(shot.prevPos, shot.pos, alpha);
-        if (!view.contains(pos, 16.0f)) continue;
-        const Vec2 dir = normalizedOr(shot.vel, Vec2{1.0f, 0.0f});
-        thickLine(pos - dir * (shot.radius * 1.8f), pos + dir * (shot.radius * 1.8f), shot.radius * 0.9f, theme::kPlayerShot);
+    for (int i = 0; i < zombies; ++i) {
+        const VisibleFigure& figure = g_visible[i];
+        const Enemy& enemy = state.enemies[figure.enemyIndex];
+        if (enemy.elite || enemy.state != 0) drawZombieOverlay(state, enemy, figure.feet);
     }
 
-    const Vec2 playerPos = lerp(state.player.prevPos, state.player.pos, alpha);
-    drawShape(kRound, playerPos, balance::kPlayerRadius, Vec2{1.0f, 0.0f}, theme::kPlayerFill, theme::kPlayer, pixel * 3.0f);
-    drawShape(kDiamond, playerPos + state.player.facing * (balance::kPlayerRadius * 0.55f), 4.0f, Vec2{1.0f, 0.0f},
-              theme::kPlayer, theme::kPlayer, pixel);
+    drawBlades(state, alpha);
+    drawPlayerShots(state, alpha, view);
+    drawBeams(state, pixel);
+    drawMuzzleFlash(state, playerFeet);
 
     // Enemy bullets are drawn last, so nothing can hide them.
-    for (const EnemyBullet& bullet : state.enemyBullets) {
-        const Vec2 pos = lerp(bullet.prevPos, bullet.pos, alpha);
-        if (!view.contains(pos, bullet.radius + 4.0f)) continue;
-        drawShape(kDiamond, pos, bullet.radius * 1.3f, Vec2{1.0f, 0.0f}, theme::kEnemyBullet, theme::kEnemyBullet, pixel);
-        drawShape(kDiamond, pos, bullet.radius * 0.6f, Vec2{1.0f, 0.0f}, theme::kEnemyBulletCore, theme::kEnemyBulletCore, pixel);
-    }
+    drawEnemyBullets(state, alpha, view);
 
     rlEnd();
     rlSetTexture(0);
