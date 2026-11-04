@@ -6,7 +6,7 @@ This document explains how the code works. It is written for someone who knows p
 
 **What this document covers.** It describes the code that exists in this repository now. Work that has not been written yet is marked **Planned**, and all of it is listed once, in [section 11](#11-planned-work-not-in-the-code-yet).
 
-**How to read it.** Sections 1 to 3 give the big picture. Section 4 covers the memory tricks that keep the game fast. Section 5 covers game content (weapons, zombies, waves, the boss) and how to add more. Sections 6 and 7 cover the user interface, input, saves, the browser build and audio. Section 8 covers testing and measured performance. Section 9 lists the major decisions, and section 10 maps every topic to its files.
+**How to read it.** Sections 1 to 3 give the big picture, including how the pixel-art world is drawn. Section 4 covers the memory tricks that keep the game fast, including the sprite atlas and the ground chunks. Section 5 covers game content (weapons, zombies, waves, the boss) and how to add more. Sections 6 and 7 cover the user interface, input, saves, the browser build and audio. Section 8 covers testing and measured performance. Section 9 lists the major decisions, and section 10 maps every topic to its files.
 
 Contents:
 
@@ -43,6 +43,20 @@ One pass through that loop is called a **frame**. A browser calls our `frame()` 
 
 The same code also builds as a normal Windows program. That build is used for debugging and for the tests.
 
+### How the world is drawn: the short version
+
+The world is pixel art that the program paints itself. There are no image files. A few graphics terms come up from here on. Each is explained once, here.
+
+- **Art pixel.** One square of the game's pixel art. On screen, one art pixel is a block of 2, 3 or more real screen pixels, so the picture looks chunky on purpose.
+- **Render target.** A picture the program draws into instead of drawing straight to the screen. The game draws the whole world into a small render target (about 360 art pixels tall on a typical landscape window), then stretches that picture over the screen in one step. Because the stretch is one step, every art pixel ends up the same size.
+- **Texture.** A picture stored in the graphics card's memory, ready to be drawn.
+- **Texture atlas.** One texture that holds many small pictures side by side, like a sprite sheet on a web page. To draw a sprite, the program says "draw this rectangle of the atlas here". The game paints all its sprites into one atlas when it starts.
+- **Palette.** A numbered list of colors. A *palette image* stores a position in that list for each pixel, not a color. Change the list and the same image shows different colors. This is how one zombie sprite can wear many different outfits.
+- **Shader.** A small program that runs on the graphics card for every pixel it draws. The world uses three: one that looks up palette colors for sprites, one that colors and bends the ground, and one that scales the finished picture up.
+- **Perspective projection.** The rule that turns a position in the flat game world into a position in the picture. Here it squashes the world vertically so you look down at it at an angle (the tilt), and it makes things higher up the screen a little smaller (the perspective), like a camera behind the player looking down at the ground.
+
+[Section 2](#inside-the-world-pass) follows one world draw step by step. [Section 4](#texture-memory-the-sprite-atlas-and-the-ground-chunks) covers the memory it uses.
+
 ### The modules
 
 ```mermaid
@@ -63,7 +77,8 @@ flowchart LR
             State[("GameState: plain data")]
         end
 
-        WorldView["components/WorldView: draws the world"]
+        WorldView["components/WorldView: pixel-art world renderer"]
+        Maps["components/Maps: paints the ground, one map today"]
         Ui["components/Ui: HUD and screens"]
         Audio["components/Audio: generated sound"]
         Save["core/Save.cpp: settings and best run"]
@@ -79,6 +94,7 @@ flowchart LR
     Step --> Modules
     Modules -->|"read and write"| State
     State -.->|"read only"| WorldView
+    WorldView -->|"asks for ground chunks by seed"| Maps
     State -.->|"read only"| Ui
     Ui -->|"menu choices"| App
     State -->|"events list"| App
@@ -86,10 +102,11 @@ flowchart LR
     App --> Save
     Data -.-> Modules
     Data -.-> WorldView
+    Data -.-> Maps
     Data -.-> Ui
 ```
 
-Solid arrows carry data or calls. Dotted arrows are read-only.
+Solid arrows carry data or calls. Dotted arrows are read-only. The world renderer draws into a low-resolution picture and scales it up. The UI is drawn afterward at full resolution, on top.
 
 ### What each module owns
 
@@ -105,12 +122,13 @@ Solid arrows carry data or calls. Dotted arrows are read-only.
 | Pickups | [`src/components/Pickups`](../src/components/Pickups) | XP gems, health, magnets, bombs, ammo crates | State, Upgrades |
 | Upgrades | [`src/components/Upgrades`](../src/components/Upgrades) | XP and levels, the level-up cards, passives, evolutions | State, Weapons |
 | Input | [`src/components/Input`](../src/components/Input) | Turning keyboard, gamepad, touch and mouse into one snapshot | Platform |
-| World renderer | [`src/components/WorldView`](../src/components/WorldView) | Drawing the world from the state | State (read only) |
+| World renderer | [`src/components/WorldView`](../src/components/WorldView) | Drawing the world from the state: the low-resolution render target, the sprite atlas and palette, the shaders, the camera, the day cycle, the ground chunk cache | State (read only), Maps |
+| Maps | [`src/components/Maps`](../src/components/Maps) | Painting square chunks of ground, and the lamps and fires on them, from a seed. One map today, the ruined city | Data (colors). Called by the world renderer only |
 | UI | [`src/components/Ui`](../src/components/Ui) | HUD, title, level-up cards, pause, settings, game over, font, icons | State (read only), Input |
 | Audio | [`src/components/Audio`](../src/components/Audio) | Sound effects and music made in code, and the event-to-sound router | Events |
 | Saves | [`src/core/Save.cpp`](../src/core/Save.cpp) | Turning settings and best-run numbers into text and back | Platform |
 | Platform | [`src/core/Platform.cpp`](../src/core/Platform.cpp) | The few things that differ between browser and Windows: canvas size, storage, touch events, safe areas | raylib, the browser |
-| Data | [`Balance.h`](../src/data/Balance.h), [`Theme.h`](../src/data/Theme.h) | Every tuning number, every color | Everything |
+| Data | [`Balance.h`](../src/data/Balance.h), [`Theme.h`](../src/data/Theme.h) | Every tuning number, every color, and the time-of-day table | Everything |
 | Page shell | [`web/`](../web) | The HTML page, loading bar, WebGL error message, canvas styling | The WASM file |
 
 ### Rules that keep the modules apart
@@ -119,6 +137,7 @@ Solid arrows carry data or calls. Dotted arrows are read-only.
 - **The simulation never reads the clock.** Time only exists as a count of steps.
 - **The renderer and the audio only read.** They never change the game state.
 - **Events flow one way.** The simulation writes a list of things that happened. Others read it.
+- **Maps stay out of the simulation.** A map only paints a picture of the ground. Nothing in the simulation asks what is on the ground, zombies and the soldier walk straight across every prop, and there are no solid obstacles. The Maps folder is built into the game program, not into `ls_sim`, and its header includes raylib, so a simulation file that tried to use it would fail to compile.
 
 ---
 
@@ -140,7 +159,7 @@ flowchart TD
     H --> I["run ended? finishRun: summary, best run, save"]
     I --> J["audio::update: pick music layers"]
     J --> K["alpha = accumulator / step length"]
-    K --> L["world pass: worldview::draw"]
+    K --> L["world pass: worldview::draw paints the world small, then scales it up"]
     L --> M["UI pass: HUD and the current screen"]
     M --> N["EndDrawing: the frame is shown"]
 ```
@@ -152,10 +171,10 @@ flowchart TD
 3. **Read input.** `input::update` merges every device into one `Snapshot` (see [section 6](#input-handling)). Before that, the joystick is switched on only while a real run is in the playing phase, and the pause button's rectangle is given to the input code so a touch that starts on it presses it instead of starting the joystick.
 4. **Housekeeping.** The first press of any kind unlocks audio, because browsers refuse to play sound before the user does something. If the tab or window lost focus since the last frame, the game pauses. The back key (Esc, P, gamepad B or Start) pauses while playing and steps back out of menus.
 5. **Advance time**, but only where time should move: in a real run on the play screen (`runSimulation`) or in the title demo (`runDemo`). Pause, settings, how-to-play and game over run no steps. The details are in [the next subsection](#fixed-timestep-the-accumulator).
-6. **Handle events.** Each event the steps produced goes to `audio::onEvent` (not during the title demo, which makes no sound). `worldview::consumeEvents` reads the same list for animation timing. Then the list is cleared. See [the events subsection](#the-event-list).
+6. **Handle events.** Each event the steps produced goes to `audio::onEvent` (not during the title demo, which makes no sound). `worldview::consumeEvents` reads the same list for animation timing (the soldier's muzzle flash and recoil), for where to lay down corpses, and for smoke. Then the list is cleared. See [the events subsection](#the-event-list).
 7. **Check for the end of a run.** If the phase became `Dead` or `Won`, `finishRun` builds the summary, updates the best run, saves, and moves to the game over screen.
 8. **Update music.** `audio::update` receives how far through the ten minutes the run is, and whether the boss is out.
-9. **Compute `alpha`** (explained below), then **draw**: the world pass, then the UI pass, then the optional debug overlay, then `EndDrawing()`.
+9. **Compute `alpha`** (explained below), then **draw**: the world pass, then the UI pass, then the optional debug overlay, then `EndDrawing()`. The world pass draws into a small picture and scales it up ([inside the world pass](#inside-the-world-pass)). The UI pass draws on top at full screen resolution.
 
 ### Fixed timestep: the accumulator
 
@@ -202,7 +221,51 @@ The state only changes every 1/60 s, but the screen may refresh more often. If t
 const float alpha = g_accumulator / kDt;
 ```
 
-`alpha` is a number from 0 to 1: how far we are between the previous step and the next one. The renderer draws each object at `lerp(prevPos, pos, alpha)`, which is a point part of the way between the two positions. The cost is that what you see is up to one step (16.7 ms) behind the simulation. The gain is smooth motion at any refresh rate. See `collectVisibleZombies` and `makeCamera` in [`WorldView.cpp`](../src/components/WorldView/WorldView.cpp).
+`alpha` is a number from 0 to 1: how far we are between the previous step and the next one. The renderer draws each object at `lerp(prevPos, pos, alpha)`, which is a point part of the way between the two positions. The cost is that what you see is up to one step (16.7 ms) behind the simulation. The gain is smooth motion at any refresh rate. See `collectVisibleZombies` and `aimCamera` in [`WorldView.cpp`](../src/components/WorldView/WorldView.cpp).
+
+### Inside the world pass
+
+`worldview::draw(state, alpha)` in [`WorldView.cpp`](../src/components/WorldView/WorldView.cpp) is the whole world pass. It reads the state and never writes it. In order:
+
+1. **Fit the render target to the window.** The target is a small picture, as many art pixels as the window needs. `chooseScale` decides how many screen pixels one art pixel takes. It aims for about 360 art pixel rows on landscape windows (about 420 columns on portrait ones), and it prefers a whole number (2, 3, 4...) when one is within 17% of the ideal. It also zooms in just far enough that the edge of the view never shows ground beyond the spawn circle (`kSpawnRadius`, 960 world units, minus a margin of 34). So a zombie is never seen appearing out of nothing. This is worked out for each window shape, and a browser test checks nine different shapes.
+2. **Aim the camera, snapped to whole art pixels.** The camera sits on the soldier's interpolated position, rounded to the nearest art pixel (`aimCamera`). The soldier is therefore always drawn in the same spot of the picture, and the ground scrolls past in whole-pixel steps. Sprites and ground share one grid, so nothing shimmers against anything else.
+3. **Paint ground chunks that are about to be needed** (`updateGround`). See [section 4](#texture-memory-the-sprite-atlas-and-the-ground-chunks).
+4. **Open the render target and draw the ground** as a few textured quads, through the ground shader, which also applies the time-of-day grading. At dusk and night, pools of light from lamps and fires are then multiplied onto the ground.
+5. **Draw flat marks on the ground:** boss warning shapes, mine trigger rings and the soldier's ring.
+6. **Draw sprites** through the palette shader, in this order: lamp bulbs and fire, corpses, mines, gems and pickups, all shadows, then every figure sorted by depth, so nearer figures cover farther ones. The soldier is drawn a second time, faintly, on top of the crowd so he is never lost.
+7. **Draw the overlays that must stay readable above a crowd:** the Charger's warning line, health bars on elites and the boss, blade trails, and the soldier's ring.
+8. **Draw shots and blasts:** a soft warm glow under explosions (blended by adding colors), then explosion rings, bullets, beams and lightning.
+9. **Draw smoke, flames, grenades, rockets, blades and the muzzle flash,** and last of all enemy bullets, so nothing can hide a bullet that can hurt.
+10. **Close the render target and scale it up** over the window with the present shader. This is the only scaling step in the world.
+
+The sorting in step 6 is a **counting sort** by screen height, the same linear-time idea as in [section 4](#the-counting-sort), using 512 buckets and fixed arrays. Figures in the same bucket are at almost the same height on screen, so their order cannot be noticed.
+
+The renderer owns a few small pools of its own, because they only change how things look: up to 240 corpses, up to 180 smoke puffs, and the soldier's walk cycle and muzzle flash timers. The simulation knows nothing about them.
+
+#### The three shaders
+
+- **Palette shader (sprites).** Each atlas pixel is a palette column. The vertex color of each sprite says which palette row to use and how strongly the time of day tints it. The shader looks up the color in the palette texture. Hit flash, elite gold, boss phases and fire or smoke recoloring are all just different palette rows.
+- **Ground shader.** The ground chunk textures are drawn with a real perspective matrix, so the graphics card does the perspective divide for every pixel and the texture stays correct across a whole chunk. The shader also applies the strong part of the time-of-day grading: tint, saturation and a small lift.
+- **Present shader.** Scales the finished picture up. Inside one art pixel it reads a single flat color, and it only blends over the last screen pixel at an edge. At a whole-number scale that is exact. At any other scale every art pixel still looks the same size. It also darkens the corners (a vignette) in whole art-pixel blocks.
+
+One GLSL source works for both builds. Only the first line differs (`#version 300 es` for the browser, `#version 330` for Windows).
+
+#### The projection
+
+[`Projection.h`](../src/components/WorldView/Projection.h) holds the one function, `project`, that turns a world position into a picture position. Everything in the world goes through it. It does two things:
+
+- **Tilt.** A square on the ground is drawn shorter than it is wide: its height is multiplied by `kTiltSquash` (224/384, about 0.58). Sprites stand upright, which gives the 3/4 look.
+- **Mild perspective.** The depth is `1 - kPerspective × dy`, where `dy` is how far the point is from the camera focus along the world's y axis and `kPerspective` is 0.00045. Points farther up the screen are divided by a bigger depth, so they shrink. Road lines converge a little. At the player's depth the scale is 1, and sprites are drawn 1:1 there: 0.6 art pixels per world unit (`kArtPerWorld`).
+
+The inverse, `unproject`, finds the ground point under a picture pixel. The renderer uses it to decide which ground chunks the camera can see.
+
+#### The day cycle
+
+The time of day is worked out from `state.timeSeconds()`, which is `run.tick` times the step length. [`DayCycle.cpp`](../src/components/WorldView/DayCycle.cpp) blends between the rows of `kDayKeys` in [`Theme.h`](../src/data/Theme.h): golden afternoon (0 s), low sun (120 s), dusk (210 s), late dusk (300 s), night (370 s), deep night (500 s) and a blood-red sky (590 to 600 s, as the boss arrives). Each row sets the ground tint, how colorful the ground is, a small lift, a gentle tint for sprites, how bright the lamps are, how long sun shadows are, and how dark the corners are.
+
+The ground is graded strongly. Sprites are graded only a little, so zombies and bullets stay readable at the darkest moment. Nothing about the day cycle is stored in the simulation, and it cannot change the outcome of a run. The title-screen demo calls `setFixedDayTime` to hold the clock at dusk (240 s).
+
+[`Ground.cpp`](../src/components/WorldView/Ground.cpp) draws the lamp and fire light. Street lamps switch on as the lamp level rises, and a lamp now and then buzzes dimmer. Fires burn all the time and flicker. The setting **Reduced motion** (`setReducedMotion`) freezes the flicker, the buzzing and the fire animation. The day cycle itself keeps moving.
 
 ### What one simulation step does
 
@@ -244,7 +307,7 @@ While the step runs, systems record things that happened with `pushEvent`:
 pushEvent(state, EventType::PlayerHit, player.pos, taken);
 ```
 
-An event holds a type, a position, a number and a small detail field (which weapon, which zombie type). The events for a frame accumulate in `state.events`, a pool with room for 512. `frame()` hands them to the audio and renderer, then clears the list. If the list is full, further events are dropped. That is safe because events only drive sound and animation, and never change the simulation.
+An event holds a type, a position, a number and a small detail field (which weapon, which zombie type). The events for a frame accumulate in `state.events`, a pool with room for 512. `frame()` hands them to the audio and renderer, then clears the list. If the list is full, further events are dropped. That is safe because events only drive sound and animation, and never change the simulation. Every blast sends an `Explosion` event, even one that hits nothing (`explode` in [`Weapons.cpp`](../src/components/Weapons/Weapons.cpp)), so a mine going off in an empty street still makes a sound.
 
 ---
 
@@ -283,7 +346,8 @@ struct GameState {
 |---|---|---|---|
 | Simulation modules (`Player`, `Waves`, `Enemies`, `Weapons`, `Pickups`, `Upgrades`) | yes | **yes** | Only through `sim::step`, once per step |
 | `core/App.cpp` | yes | a little | Starts runs (`sim::newRun`), clears the event list, and feeds `InputFrame` to `sim::step`. It also writes state directly in two cases: the title-screen demo (loops the clock, tops up ammo) and the debug commands, which only work with `?debug` |
-| `WorldView` (renderer) | yes, `const` | no | It keeps its own private data (walk cycles, muzzle flash timers) outside the game state |
+| `WorldView` (renderer) | yes, `const` | no | It keeps its own private data outside the game state: the sprite atlas, the ground chunks, the soldier's walk cycle and muzzle flash timers, and small pools of corpses and smoke puffs. The time of day is a pure function of `run.tick` |
+| `Maps` | no (it gets the seed as an argument) | no | `renderChunk` is a pure function of the seed and the chunk position. It uses no global state |
 | `Ui` (HUD, screens) | yes, `const` | no | It returns choices (a card number, "reroll", "resume"), and `App` turns those into input or screen changes |
 | `Audio` | events only | no | It never sees the game state, only `SimEvent` values |
 | `Save` | no | no | It has its own `SaveData`, separate from the run |
@@ -319,7 +383,9 @@ The game uses **PCG32**, a small random number generator ([`Rng.h`](../src/core/
 2. The simulation never reads the clock, graphics or audio.
 3. Anything random for looks alone uses something else: the renderer derives variation from a zombie's id or position (`scramble` and `hashPosition` in [`Draw.h`](../src/components/WorldView/Draw.h)), the audio has its own generator (`synth::Noise`), and the bots used in testing have their own.
 
-One honest limit: the determinism test compares two runs inside the same program build. Floating-point maths such as `sin` and `cos` may differ in the last digit between compilers, so a run recorded on Windows is not guaranteed to match one in the browser. That has not been tested.
+The ground follows the same idea. The city is painted from `state.run.seed` with hash functions of the tile position ([`TileRandom` in `Paint.h`](../src/components/Maps/City/Paint/Paint.h)), never from `state.rng`. A hash function turns a few numbers (the seed and the tile's position) into one scrambled number, and the same inputs always give the same result. So the same seed always shows the same city, and any chunk can be painted again later, in any order, and come out identical. A browser test checks this by walking away, coming back and comparing screenshots.
+
+One honest limit: the determinism test compares two runs inside the same program build. Floating-point maths such as `sin` and `cos` may differ in the last digit between compilers, so a run recorded on Windows is not guaranteed to match one in the browser. That has not been tested. The same goes for the city: the screenshot test compares pictures inside one browser build, and the city has not been compared between Windows and the browser.
 
 ---
 
@@ -495,13 +561,42 @@ The **heap** is the general-purpose memory the operating system hands out when y
 
 - The whole `GameState` is created **once**, at startup, with a single `new GameState()` in `app::init`. After that, the pools never grow or shrink. By a hand count it is roughly half a megabyte.
 - The simulation code contains no `new`, `malloc`, `std::vector` or `std::string`. Where a weapon needs a short list (for example the zombies a lightning bolt has hit), it uses a small fixed array on the stack (`int hitIndices[balance::kMaxWeaponTargets]` in `Tesla.cpp`).
-- The renderer uses fixed global arrays (`g_visible`, `g_drawOrder` in `WorldView.cpp`) and builds every zombie pose into a table once at startup ([`Figures.cpp`](../src/components/WorldView/Figures.cpp)), so drawing a zombie is a table lookup and a scale.
+- The renderer uses fixed global arrays (`g_visible`, `g_drawOrder` in `WorldView.cpp`, and fixed pools of corpses and smoke puffs). It paints every sprite into the atlas once at startup (see below), so drawing a zombie is a lookup of its rectangle in the atlas and one quad.
 - UI text is formatted into small stack buffers with `snprintf`.
 - Audio is rendered into buffers at startup, not per frame.
 
-The honest exceptions: saving builds a small `std::string` when settings change or a run ends (not every frame), and the audio synthesis at startup uses `std::vector`.
+The honest exceptions: saving builds a small `std::string` when settings change or a run ends (not every frame), the audio synthesis at startup uses `std::vector`, and building the atlas at startup uses `new` for a 4 MB scratch buffer and a painter object, both deleted as soon as the atlas has been sent to the graphics card.
 
 **Cache friendliness.** A zombie record is roughly 70 bytes (a hand count), and the zombies sit side by side in one array. When the CPU reads one, it loads its neighbours too, so the next several reads are nearly free. A design with each zombie as a separate heap object, reached through pointers, would miss that benefit.
+
+### Texture memory: the sprite atlas and the ground chunks
+
+The pixel-art world adds two groups of **textures**, which live in the graphics card's memory, not in the program's own memory. Sizes below are hand counts from the constants in the code.
+
+| What | Size | Notes |
+|---|---|---|
+| Sprite atlas | 2048 × 2048 texels, 1 byte each = 4 MiB | Built once at startup. Each texel is a palette column, not a color |
+| Palette texture | 128 columns × 64 rows, 4 bytes each = 32 KiB | Rows are outfits, elite and boss colors, hit flash, shadows, fire and smoke, and lamp light |
+| Ground chunk pool | 24 textures of 384 × 224 texels, 4 bytes each = about 336 KiB each, about 7.9 MiB in all | About 2 MiB in the low quality setting, which paints half-size chunks |
+| Render target | The window size divided by the scale, 4 bytes per texel. About 0.9 MB at 640 × 360 | Resized when the window changes shape |
+
+**The atlas.** [`Canvas.h`](../src/components/WorldView/Canvas.h) is a small software painter that works in art pixels. It has shapes (ellipses, limbs, boxes), single dots, and an outline pass. It shades in hard bands from a light above and to the left, which is what makes plain ellipses and limbs read as pixel art. It writes palette positions, never colors. Painters for each family of sprites ([`SoldierArt.cpp`](../src/components/WorldView/SoldierArt.cpp), [`ZombieArt.cpp`](../src/components/WorldView/ZombieArt.cpp), [`ItemArt.cpp`](../src/components/WorldView/ItemArt.cpp)) each draw one frame into it. [`Atlas.cpp`](../src/components/WorldView/Atlas.cpp) copies each finished frame into the atlas with a simple row packer, remembers where it went (a `SpriteRef`: position, size and the anchor point, usually the feet), and then uploads the atlas as one texture with nearest-neighbor filtering, because palette positions must never be blended. The sprites are:
+
+- the soldier: 3 facings (side, front, back) with 8 walk frames, 2 idle frames and a fallen pose; each weapon at 9 aiming angles, plus 2 reload frames. Left-facing views are the right-facing ones mirrored;
+- the 7 zombie types, plus the boss in 3 phases, in up to 6 pre-painted sizes, each with 3 facings and a walk cycle, plus special poses (the Spitter's spit, the Charger's brace and dash) and 3 corpse frames. Perspective makes a zombie larger or smaller, and the nearest pre-painted size is used. Each size is painted at its own size and not scaled afterward, so its pixels stay even and its outline stays 1 pixel wide;
+- small things: gems, pickups, mines, grenades, enemy bullets, muzzle flashes, shadows, fire, lamp bulbs, smoke puffs and a light-pool shape; 16 rocket angles and 8 blade frames.
+
+A test checks that every sprite fits in the atlas, and the debug log reports how many atlas rows were used. In the browser build the art files are compiled for small size (`-Oz`) rather than speed, since they run at startup and when a new ground chunk is needed.
+
+**The palette.** Because the atlas stores palette positions, the same zombie sprite can wear different clothes with no extra memory. `buildPalette` makes 32 outfit rows by stepping through lists of skin, shirt, trousers, hair and shoe colors, faded toward gray so a big crowd does not look like a box of sweets. A zombie's outfit is chosen from a hash of its id, so it keeps the same clothes all its life. Other rows give each elite type a gold outfit, the three boss phases, the telegraph flash, the hit flash (nearly white, with a little shading kept), the shadow color, and recolors of one puff sprite as fire or smoke.
+
+**The ground chunks.** A chunk is a square of world, 640 world units wide, painted as 384 × 224 texels on the CPU. The texels already include the camera's vertical squash, so at the player's depth one chunk texel is exactly one art pixel. The renderer keeps a pool of 24 chunk textures. [`updateGround`](../src/components/WorldView/Ground.cpp) works out which chunks the camera can see by unprojecting the four corners of the picture.
+
+- Every chunk on screen must be ready now. A missing one is painted at once, replacing the chunk that was used longest ago and is not on screen. This only paints several in one frame on the first frame, after a jump, or when a run starts with a new seed.
+- Then **at most one more chunk per frame** is painted, from a ring 200 world units beyond the view. By the time the camera gets there, the chunk is ready, so walking does not cause a hitch.
+- Drawing is one textured quad per visible chunk, a handful in all.
+
+**The city.** [`Maps/City`](../src/components/Maps/City/City.cpp) paints a grid of blocks. Roads run along chunk edges, and each chunk holds one block. About 12% of road segments are missing, which gives broken roads. The inside of each block is filled with one kind of lot: a brick or plaster ruin, a parking lot, a camp, a dead park or a bare foundation. The roads get furniture such as cars, barrels, signs and street lamps. All coordinates are global texels and every chunk clips to itself, so a car that crosses a chunk edge is simply drawn by both chunks, and the seam is invisible. A chunk also reports up to 12 lights (street lamps and fires) for the renderer to draw as pools of light.
 
 ---
 
@@ -668,7 +763,7 @@ Example: a "Crossbow".
 3. **Write the behavior.** Create `src/components/Weapons/Crossbow/Crossbow.h` and `.cpp` with `bool fireCrossbow(GameState&, const WeaponSlot&, const balance::WeaponLevel&)`. Copy [`Rifle.cpp`](../src/components/Weapons/Rifle/Rifle.cpp) as a starting point. Return `false` when there is no target. Call `markFired` when it fires. CMake picks up new `.cpp` files by globbing, so re-run the configure step.
 4. **Hook it in.** Add a `case WeaponId::Crossbow:` to `fire()` in [`Weapons.cpp`](../src/components/Weapons/Weapons.cpp).
 5. **If it needs a new kind of shot,** add to `ProjectileKind` or `ZoneKind`, handle it in `updateProjectile` or `updateZones`, and draw it in [`Objects.cpp`](../src/components/WorldView/Objects.cpp).
-6. **Give it a name, an icon and a look.** Add the name to [`Names.cpp`](../src/components/Ui/Names/Names.cpp), a case to the weapon icon in [`Icons.cpp`](../src/components/Ui/Icons/Icons.cpp), the card's count and area labels in [`LevelUpCards.cpp`](../src/components/Ui/LevelUpCards/LevelUpCards.cpp), and the gun the soldier holds in [`Soldier.cpp`](../src/components/WorldView/Soldier.cpp). The level-up card numbers come from the table by themselves.
+6. **Give it a name, an icon and a look.** Add the name to [`Names.cpp`](../src/components/Ui/Names/Names.cpp), a case to the weapon icon in [`Icons.cpp`](../src/components/Ui/Icons/Icons.cpp), the card's count and area labels in [`LevelUpCards.cpp`](../src/components/Ui/LevelUpCards/LevelUpCards.cpp), and the gun the soldier holds: add a case to `gunShape` and `paintGunParts` in [`SoldierArt.cpp`](../src/components/WorldView/SoldierArt.cpp). Without a case the gun is drawn with the Rifle's shape. The atlas builder loops over every `WeaponId`, so the aiming and reload sprites for the new gun are painted by themselves. If the weapon is not a held gun (like Blades and Landmines), also check `isHeldGun` in [`Characters.cpp`](../src/components/WorldView/Characters.cpp), and add the muzzle flash size there if it fires. The level-up card numbers come from the table by themselves.
 7. **Give it a sound.** Add a `SfxId` in [`Sfx.h`](../src/components/Audio/Sfx/Sfx.h), render it in [`Sfx.cpp`](../src/components/Audio/Sfx/Sfx.cpp), and add it to the `kFire` list in [`Router.cpp`](../src/components/Audio/Router/Router.cpp).
 8. **Optional: an evolution.** See below.
 9. **Test it.** Add a case to `WeaponTests.cpp`. The balance tool picks up the new weapon from `WeaponId::Count`, but check the weapon name list in [`tests/balance/Names.h`](../tests/balance/Names.h) and `kWeaponNames` in [`BotRunTests.cpp`](../tests/unit/BotRunTests.cpp).
@@ -681,7 +776,7 @@ Example: a "Screamer".
 2. Add a stats row to `kEnemyStats` in `Balance.h`, in the same position.
 3. Create `src/components/Enemies/Screamer/Screamer.h` and `.cpp` with `Vec2 screamerVelocity(GameState&, Enemy&)`. Use `enemy.timer` and `enemy.state` if it needs memory between steps. Copy [`Walker.cpp`](../src/components/Enemies/Walker/Walker.cpp) for the simplest case.
 4. Add a `case` to `behaviourVelocity` in `Enemies.cpp`.
-5. Draw it: add a `FigureId` and a pose in [`Figures.cpp`](../src/components/WorldView/Figures.cpp), map it in `figureFor` in [`Zombies.cpp`](../src/components/WorldView/Zombies.cpp), add the per-type size and gait numbers in the same file, and add colors to [`Theme.h`](../src/data/Theme.h).
+5. Draw it: add a `Figure` value in [`Sprites.h`](../src/components/WorldView/Sprites.h), in the same position as the type (`figureOf` in [`Characters.cpp`](../src/components/WorldView/Characters.cpp) turns an `EnemyType` straight into a `Figure` by its number), and add a painter case in `paintFigureBody` in [`ZombieArt.cpp`](../src/components/WorldView/ZombieArt.cpp). It paints each facing and walk frame, and the atlas builder picks them up. In `Characters.cpp`, add the type to the per-type tables `kWalkRate`, `kHeights` and `kHalfWidths`, and to `shadowFor`. If it has special poses or elite versions, update `posesOf` and `hasElites` in [`Atlas.cpp`](../src/components/WorldView/Atlas.cpp). Add colors to [`Theme.h`](../src/data/Theme.h).
 6. Make it appear: add a `WaveRow` to `kWaves`. The balance tool also keeps a list of damage source names in [`tests/balance/RunResult.h`](../tests/balance/RunResult.h) that needs a new entry.
 7. Add a test to [`EnemyTests.cpp`](../tests/unit/EnemyTests.cpp). The wave test there checks that every type first appears at the right time.
 
@@ -728,7 +823,7 @@ The screens are in [`src/components/Ui`](../src/components/Ui): `TitleScreen`, `
 
 #### Immediate-mode UI
 
-The UI is drawn in C++ on the same canvas as the game. It is **immediate mode**: there are no button objects that persist. Each frame, the code calls `button(...)`, which draws the button and, in the same call, checks whether it was pressed this frame and returns `true` if so ([`Widgets.h`](../src/components/Ui/Widgets/Widgets.h)). The picture and the hit area cannot disagree because they come from the same rectangle.
+The UI is drawn in C++ on the same canvas as the game. The world is drawn first, into a small picture that is scaled up. The UI is drawn after that at the full screen resolution, so text and buttons stay sharp. It is **immediate mode**: there are no button objects that persist. Each frame, the code calls `button(...)`, which draws the button and, in the same call, checks whether it was pressed this frame and returns `true` if so ([`Widgets.h`](../src/components/Ui/Widgets/Widgets.h)). The picture and the hit area cannot disagree because they come from the same rectangle.
 
 A web developer can think of this as a framework that re-renders everything on every frame (like calling `render()` 60 times a second), with no stored component tree. State such as "which button has keyboard focus" lives in small module-level structs (`Nav`).
 
@@ -800,7 +895,7 @@ The rules make loading safe:
 
 Where the text goes is the platform's job: the browser's `localStorage` under the key `laststand.save`, or a file next to the program on Windows. Both fail quietly if storage is blocked. Settings are saved after a change finishes (not on every frame of a slider drag), and a finished run saves the best-run numbers. There are no accounts, no server and no analytics. If nothing is saved yet, the "reduced motion" setting starts from the system's `prefers-reduced-motion` preference.
 
-At present, the stored **screen shake** and **damage numbers** settings are shown on the settings screen but nothing in the game reads them. The **flash intensity** and **reduced motion** settings change only the low-health warning on the HUD.
+At present, the stored **screen shake** and **damage numbers** settings are shown on the settings screen but nothing in the game reads them. The **flash intensity** setting changes only the low-health warning on the HUD. **Reduced motion** changes that warning too, and it also stops the flicker of lamps and fires in the world (`worldview::setReducedMotion`).
 
 ### The embedded font
 
@@ -828,7 +923,7 @@ The game uses the open-license font Pixelify Sans ([`OFL.txt`](../src/components
 
 #### Canvas size and safe areas
 
-Every frame, `platform::syncCanvasSize` reads the canvas's CSS size and multiplies by the device pixel ratio (capped at 2, since a higher ratio costs a lot of fill rate for almost no visible gain), and resizes the drawing buffer to match. Phone notches are read by creating a hidden element padded with `env(safe-area-inset-*)` and reading its computed padding, about twice a second.
+Every frame, `platform::syncCanvasSize` reads the canvas's CSS size and multiplies by the device pixel ratio (capped at 2, since a higher ratio costs a lot of fill rate for almost no visible gain), and resizes the drawing buffer to match. When the buffer changes shape, the world renderer notices and builds a new render target of the right size and scale (see [section 2](#inside-the-world-pass)). Phone notches are read by creating a hidden element padded with `env(safe-area-inset-*)` and reading its computed padding, about twice a second.
 
 ### The build: CMake and Emscripten
 
@@ -838,7 +933,7 @@ Every frame, `platform::syncCanvasSize` reads the canvas's CSS size and multipli
 |---|---|
 | `ls_sim` | The simulation as a static library. No raylib. |
 | `ls_audio` | The sound synthesis, router and mixer logic. No raylib |
-| `laststand` | The game: app, UI, renderer, input, platform, and the raylib-using audio file |
+| `laststand` | The game: app, UI, world renderer, maps, input, platform, and the raylib-using audio file |
 | `ls_tests` | Unit tests (native only) |
 | `ls_balance` | The balance tool (native only) |
 
@@ -851,6 +946,7 @@ The browser build sets these link options for `laststand` (the compile options a
 | `-O3 -flto` | Optimize for speed, and optimize across files at link time |
 | `-fno-exceptions -fno-rtti` | Turn off C++ exceptions and runtime type information, which the code does not use and which cost size |
 | `-sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2` | WebGL 2 only |
+| `-Oz` on the art files | The sprite painters (`*Art.cpp`) and the maps are compiled for small size instead of speed, since the browser build only runs them at startup and when a new ground chunk is needed |
 | `-sENVIRONMENT=web` | Browser only, no Node.js support code |
 | `-sINITIAL_MEMORY=64MB -sALLOW_MEMORY_GROWTH=1` | Start with 64 MB and allow growth |
 | `-sSTACK_SIZE=1MB` | A 1 MB stack, for the few large local arrays |
@@ -865,6 +961,8 @@ Opening the page with `?debug` in the address turns on the debug tools. `platfor
 
 - `drawDebugOverlay` draws one text block in the corner: frames per second, frame time, **simulation time per step**, draw time, and the live counts of zombies, shots, bullets, gems and events. The numbers are smoothed so they are readable.
 - `debugCommand` accepts commands from JavaScript (stress test with N zombies and shots, set the seed, jump to a screen, grant XP, force death or victory, give a full build, and so on). Without `?debug` it returns immediately. The browser tests use these to reach screens quickly.
+- Four commands, numbers 17 to 20, are for checking the pixel world. **17** is the showcase: it fills the pools with one of every world object (and an optional extra crowd), holds the simulation still and keeps the animation going, so every sprite can be seen. With the value -1 it leaves the world empty and stops the clock, to look at the ground alone. It can also show pages of the sprite atlas. **18** and **19** move the player to an x or y position, to walk the city fast. **20** sets the quality level (0 paints half-size ground chunks and turns off the pools of lamp light, the flicker and the dark corners). Command 12 sets the run time, which moves the day cycle.
+- With `?debug`, the world renderer also prints two lines to the browser console: how long startup took and how many atlas rows were used, and the size and scale of the render target each time it changes.
 
 `ls_query_state` and `ls_query_ui` return JSON about the current state and the on-screen button rectangles. They are read-only and are always exported. On Windows, the debug overlay is always on.
 
@@ -918,12 +1016,13 @@ The tests use [doctest](https://github.com/doctest/doctest) and run natively, wi
 | [`BossHpTests.cpp`](../tests/unit/BossHpTests.cpp) | 3 | Boss HP from the build: stronger build, tougher boss, still a faster kill; HP limits; HP at spawn |
 | [`AmmoCrateTests.cpp`](../tests/unit/AmmoCrateTests.cpp) | 2 | The timed ammo crate and how far from the player it lands |
 | [`BladeRingTests.cpp`](../tests/unit/BladeRingTests.cpp) | 2 | Blades reach adjacent zombies, and the two orbit radii |
+| [`ExplosionEventTests.cpp`](../tests/unit/ExplosionEventTests.cpp) | 1 | A blast that hits nothing still sends its `Explosion` event |
 | [`BotRunTests.cpp`](../tests/unit/BotRunTests.cpp) | 3 | Full 10-minute-plus runs with a simple bot |
 | [`SaveTests.cpp`](../tests/unit/SaveTests.cpp) | 12 | Round trip, corrupt text, NaN, clamping, newer versions, large text |
 | [`AudioTests.cpp`](../tests/unit/AudioTests.cpp) | 15 | Every sound is clean and ends in silence, music loops join without a click, layers, router limits |
 | [`TestMain.cpp`](../tests/unit/TestMain.cpp) | 2 | Random number generator |
 
-Measured result: the test files hold 115 cases (counted by reading them), reported as passing by the project owner (not repeated while writing this document).
+Measured result: the test files hold 116 cases (counted by reading them), reported as passing by the project owner (not repeated while writing this document).
 
 ### The determinism test
 
@@ -954,7 +1053,7 @@ Two runs with the same seed and the same scripted input play 90 seconds of game 
 
 It has three **bot profiles**, Novice, Average and Skilled ([`Bot.h`](../tests/balance/Bot.h)). They differ in reaction time, how far they look for danger, whether they predict movement, how often they notice boss warnings, how much they wander, whether they collect loot and ammo, and how they pick cards. They are documented in the code as approximations of people, not measurements of them. The report shows win rates, death times, weapon use, ammo and zombie counts per five seconds, wave pressure and calm moments. Other modes run Skilled bots built around each weapon in turn, and a "solo" test of each weapon alone at each level against a standing crowd.
 
-**Measured results.** Bot games, 100 seeds per profile, seeds 500000 to 500099, with the native `ls_balance` tool (no browser involved), as reported by the project owner. These are seeds that the tuning never used, so the numbers are not fitted to them:
+**Measured results.** Bot games, 100 seeds per profile, seeds 500000 to 500099, with the native `ls_balance` tool (no browser involved). The first balance pass never used these seeds, but the later boss health and crate tuning did, so treat them as only partly independent. The final balance pass will check again on new seeds:
 
 | Profile | Result |
 |---|---|
@@ -964,9 +1063,9 @@ It has three **bot profiles**, Novice, Average and Skilled ([`Bot.h`](../tests/b
 
 These numbers tune the game, but a bot is not a person. A human playtest decides the final tuning.
 
-### Browser tests: 58
+### Browser tests: 67
 
-[`tests/e2e`](../tests/e2e) uses Playwright (the `playwright-core` package) to drive the installed Chrome. A small server ([`harness.mjs`](../tests/e2e/harness.mjs)) serves the web build with gzip, like a real host. Tests use the game's own JSON queries (`ls_query_state`, `ls_query_ui`) and debug commands. The 58 tests come from 45 test definitions, with some repeated over several window sizes or pixel ratios. They cover:
+[`tests/e2e`](../tests/e2e) uses Playwright (the `playwright-core` package) to drive the installed Chrome. A small server ([`harness.mjs`](../tests/e2e/harness.mjs)) serves the web build with gzip, like a real host. Tests use the game's own JSON queries (`ls_query_state`, `ls_query_ui`) and debug commands. The 67 tests come from 54 test definitions, with some repeated over several window sizes or pixel ratios. They cover:
 
 - The page loads with no console errors, fits the window, and shows a clear message without WebGL 2.
 - The page blocks scrolling, zoom gestures and the context menu.
@@ -975,33 +1074,41 @@ These numbers tune the game, but a bot is not a person. A human playtest decides
 - Settings by mouse drag, keyboard and touch, persisted across a reload. A corrupt save is ignored, and blocked storage does not break the game.
 - Every screen fits on desktop, portrait phone, landscape phone and five extreme sizes, with nothing overlapping and safe-area insets respected.
 - Mouse clicks hit the card at pixel ratios 1, 1.25 and 2.
+- The pixel world ([`world.test.mjs`](../tests/e2e/world.test.mjs), 9 definitions): the same seed paints the same ground at the same place after walking away and back, and another seed differs; nearby places differ, so the city does not visibly repeat; the picture is darker at night than in the afternoon; walking very far in every direction (up to 140,000 units) keeps drawing ground with no errors; walking with the keyboard across chunk edges raises no errors; at a whole-number scale every art pixel is an even, unblurred block; every sprite fits in the atlas; resizing works and spawns stay out of view at nine window shapes; and the low quality level still draws the world.
 
 The tests also take a **real pixel check** ([`countColorNearCenter`](../tests/e2e/harness.mjs) counts screen pixels of a color). This exists because a state query can pass while nothing is visible on screen (see [bugs](#bugs-worth-knowing-about)).
 
 The functional tests run Chrome with a software renderer, so they check behavior, not speed. [`perf.mjs`](../tests/e2e/perf.mjs) is run by hand and uses the machine's real GPU.
 
-Measured result: 58 passed in the owner's last run (reported, not repeated here). **Gamepad, phone touch and phone notches have only been emulated**, not tried on real devices.
+Measured result: all 67 tests pass on the current build. The 54 definitions were counted by reading the test files. **Gamepad, phone touch and phone notches have only been emulated**, not tried on real devices. **Motion is not covered:** the world tests compare still screenshots, so how the camera scroll, flicker and animation look in motion has not been checked by a test.
 
 ### Performance
 
 Measured by [`perf.mjs`](../tests/e2e/perf.mjs) on the project owner's Windows PC, at 1920 by 1080, on an **Intel UHD integrated GPU**, in **headless Chrome**, with a stress test of about **2,000 zombies and 2,900 shots** on screen:
 
-| Measure | Current build | Before the UI and audio were merged |
+| Measure | Pixel world (current build) | Earlier outline renderer |
 |---|---|---|
-| Frames per second | about 205 | about 234 |
-| Frame time, average | 4.9 ms | |
-| Frame time, 99th percentile | 7.3 ms | |
-| Simulation time per step | about 1.5 ms | |
+| Frames per second, average | about 434 | about 205 |
+| Frame time, average | 2.3 ms | 4.9 ms |
+| Frame time, 99th percentile | 17.6 ms | 7.3 ms |
+| Simulation time per step | about 1.1 ms | about 1.5 ms |
+| Draw time on the CPU | about 2.0 ms | not recorded |
 
-For scale, 60 frames per second allows 16.7 ms per frame, and the simulation uses about 1.5 ms of each step.
+For scale, 60 frames per second allows 16.7 ms per frame, and the simulation uses about 1.1 ms of each step.
 
-Caveats: the run is headless (no real display), so it shows how fast the work runs, not what a screen would show. It has no map, bloom or particles yet, because those are not written. The test will be measured again once they are.
+Two things stand out. First, the average is much faster than the earlier renderer. One likely reason is that the world is now drawn into a picture of about 640 by 360 texels instead of 1920 by 1080, so the graphics card fills far fewer pixels, but that was not measured on its own. Second, the 99th percentile is *higher* than before and above the 16.7 ms frame budget: the slowest 1% of frames were slower. The cause has not been looked into. Painting a new ground chunk is one candidate, but that is a guess.
 
-**Download size.** About 252 KB of gzip-compressed transfer in total (measured through the test server's gzip, on localhost), well under the 3 MB goal. Load took about 0.6 s on localhost. A real network will be slower.
+Caveats: the run is headless (no real display), so it shows how fast the work runs, not what a screen would show. It was taken without the planned effects (particles, glow, damage numbers, screen shake, hit pause; see [section 11](#11-planned-work-not-in-the-code-yet)), so it will be measured again once they exist. The stress scene is one scenario, in one place.
+
+**Startup art painting.** Building the shaders, the sprite atlas and the palette took about 65 to 180 ms in the browser (the range over the project owner's runs; the debug log prints the time for each run).
+
+**Download size.** About 277 KB of gzip-compressed transfer in total (measured through the test server's gzip, on localhost), well under the 3 MB goal. A real network will be slower.
+
+**Spawn visibility.** How much ground the camera shows is computed for each window shape so that the edge of the view stays inside the spawn circle. A browser test checks this at nine window shapes.
 
 **Real phone: not measured.**
 
-The performance work behind these numbers is the design in [section 4](#4-object-pools-the-spatial-hash-and-memory-layout): pools, the spatial hash, no per-frame allocation. The renderer also draws everything as quads in one batch, skips anything off-screen, gives only the nearest ~300 zombies in a big crowd the full detailed figure (the rest get a cheaper one), and sorts figures by depth with a counting sort. A "fast mode" switch for the detail limit exists in the renderer but nothing turns it on yet.
+The performance work behind these numbers is the design in [section 4](#4-object-pools-the-spatial-hash-and-memory-layout): pools, the spatial hash, no per-frame allocation. The renderer also draws every sprite as one quad from the atlas, skips anything off-screen, sorts figures by depth with a counting sort, draws the ground as a handful of cached chunk quads, and gives the long sun shadow to at most the 500 figures nearest the soldier when the crowd is big (60 in "fast mode"). A fast mode switch and a quality level exist in the renderer, but nothing turns them on yet except the debug command for quality (see [section 11](#11-planned-work-not-in-the-code-yet)).
 
 ---
 
@@ -1061,15 +1168,50 @@ Each entry lists what was chosen, what was rejected, and why.
 - Rejected: asset packs.
 - Why: licensing, download size, and the work of matching animation frames across mixed sources.
 
-**Camera: tilted 3/4 view, not flat top-down and not first person.**
-- Chosen: the simulation stays flat 2D. The renderer squashes the world's y axis by `kTilt` (0.72) and adds height straight up the screen.
-- Rejected: first person. It loses the all-around view of the horde, needs aiming, needs a new renderer, and allows far fewer zombies.
-- Result: characters read as standing figures with a front and a height, while the simulation stays simple and flat.
+**Draw the world into a low-resolution picture, then scale it up.**
+- Chosen: the world is drawn into a render target of about 360 art pixels tall (on a landscape window). One shader then stretches it over the window. Sprites are painted ahead of time at up to six sizes, so even a far-away zombie is drawn 1:1 with crisp 1-pixel outlines.
+- Rejected: drawing sprites at full screen resolution. A sprite shrunk or stretched by perspective would end up with pixels of different sizes and soft or shimmering edges. That breaks the pixel look.
+- Why: every art pixel stays an even block of screen pixels, at any window size. It is also cheap, because the graphics card fills far fewer pixels than it would at window size.
+- Trade-off: the scale is a whole number when one fits (2, 3, 4) and is a fraction otherwise. The present shader keeps the pixels even in both cases. How much of the world is visible depends on the window shape, and the code limits it so that zombies never spawn in view.
 
-**Art direction moved from neon outlines to pixel art.**
-- The first direction was neon shapes. After looking at reference pictures, the direction became pixel art. The earlier versions are kept as git tags `look-1-shapes` and `look-2-outlines`, with screenshots in [`docs/prototypes`](prototypes): [shapes, play](progress/1-before-neon-shapes-play.png), [shapes, crowd](progress/1-before-neon-shapes-crowd.png), [soldier and zombies, play](progress/2-after-soldier-zombies-play.png), [soldier and zombies, crowd](progress/2-after-soldier-zombies-crowd.png).
+**Sprites are palette positions in one code-painted atlas, colored by a shader.**
+- Chosen: all sprites are painted by code at startup into one 2048 × 2048 atlas that stores palette positions. The palette shader looks each one up in a palette texture (128 columns, 64 rows). A sprite picks its palette row when it is drawn.
+- Rejected: image file assets.
+- Why: no image files to download, license or keep in step; one texture, so all sprites share one batch of drawing; and variety costs no extra memory. 32 zombie outfits, the gold elites, the boss phases, the hit flash, shadows and fire or smoke all come from different palette rows over the same sprites. The download stays small (about 277 KB gzip).
+- Trade-off: the look depends on the painting code (`Canvas`, `SoldierArt`, `ZombieArt`, `ItemArt`), which is slower to tune than drawing in an art program, and about 65 to 180 ms of startup goes to painting.
+
+**The ground is cached in chunks, painted a little at a time.**
+- Chosen: the ground is painted in square chunks (640 world units, 384 × 224 texels) into a pool of 24 textures. Each visible chunk is drawn as one quad, so the ground costs a handful of quads. At most one extra chunk is painted per frame, from a ring just beyond the view, so by the time the camera arrives the chunk is ready. Painting is a pure function of the seed and the chunk position, so a chunk that was dropped can be painted again identically.
+- Rejected: redrawing the ground every frame. A city ground is made of thousands of small pieces, so drawing them as thousands of ground quads again every frame would be wasteful when the ground only changes as you walk to new places.
+- Why: spreading the painting over frames means walking never hitches. The cost is about 8 MiB of texture memory, and a jump (or a new seed) paints several chunks in one frame.
+
+**The camera snaps to whole art pixels.**
+- Chosen: the camera follows the soldier's position rounded to the nearest art pixel (`aimCamera`). He is always drawn in the same spot, and the ground and all sprites move in whole-pixel steps on one shared grid.
+- Rejected: following his exact position and shifting the picture by a fraction of an art pixel. Sprites sit on whole pixels while the ground would slide by fractions, so the soldier would jitter against the ground.
+- Result: nothing shimmers against anything else while the view scrolls. The cost is that scrolling moves in steps of one art pixel.
+
+**Maps sit behind one interface, with one map today.**
+- Chosen: [`Maps.h`](../src/components/Maps/Maps.h) has a `MapId` enum and one function, `renderChunk(map, seed, chunkX, chunkY, pixels, lights)`. Adding a map means adding an enum value and one `case` in `Maps.cpp`. Only the ruined city exists.
+- Why: a later map should not need a rewrite of the renderer. Honest limit: the renderer still passes `MapId::City` directly (in `paintChunk` in `Ground.cpp` and in `draw` in `WorldView.cpp`), so choosing a map before a run would need a small change in those two places.
+- Map data stays out of the simulation. A map is only a picture: nothing in the game rules reads it, so it cannot change a replay.
+- A desert map and solid obstacles are possibilities, not commitments. Solid obstacles would need the simulation to know about the map, and that would be a real change.
+
+**The time of day comes from the run clock.**
+- Chosen: the day cycle is a function of `run.tick`, blended between key moments in `Theme.h`. The ground is graded strongly and sprites only gently.
+- Why: nothing extra to save or keep in step, and zombies stay readable at the darkest moment. The ground carries the mood.
+
+**Camera: tilted 3/4 view with mild perspective, not flat top-down and not first person.**
+- Chosen: the simulation stays flat 2D. The renderer squashes the world's y axis by `kTiltSquash` (224/384, about 0.58) and divides by a depth that grows up the screen (`kPerspective`, 0.00045 per world unit). Sprites stand upright on the ground. The earlier outline renderer used a gentler tilt (0.72) and no perspective.
+- Rejected: first person. It loses the all-around view of the horde, needs aiming, needs a new renderer, and allows far fewer zombies.
+- Result: characters read as standing figures with a front and a height, while the simulation stays simple and flat. One function, `project`, is the only place the world is mapped to the picture.
+
+**Art direction: first shapes, then outlines, then pixel art.**
+- The look went through three prototypes, each kept as a git tag with screenshots in [`docs/prototypes`](prototypes):
+  1. Shapes (tag `look-1-shapes`): [play](prototypes/prototype-1-shapes-play.png), [crowd](prototypes/prototype-1-shapes-crowd.png).
+  2. Outlines, with a soldier and zombies (tag `look-2-outlines`): [play](prototypes/prototype-2-outlines-play.png), [crowd](prototypes/prototype-2-outlines-crowd.png).
+  3. Pixel art with a city (tag `look-3-pixel-city`): [play](prototypes/prototype-3-pixel-city-play.png), [crowd](prototypes/prototype-3-pixel-city-crowd.png).
+- The direction changed to pixel art after looking at reference pictures. The menus, HUD, font, page shell and world now all use the pixel style.
 - Rejected: real pixel-art files. They break the no-asset rule and make matching animation frames hard.
-- Current state: the menus, HUD, font and page shell already use the pixel style. The world renderer is still the outlined vector one.
 
 **10 distinct soldier weapons replaced 8 abstract ones.**
 - Result: each weapon has its own look, sound and behavior, and its own ammo numbers.
@@ -1102,8 +1244,8 @@ Each entry lists what was chosen, what was rejected, and why.
 ### Other design choices found in the code
 
 - **Gems merge** above 500, and a full gem pool gives XP directly. No reward is lost, and the pool never overflows.
-- **Visual randomness never uses the simulation's generator.** Looks cannot change a replay.
-- **Zombie poses are baked into tables at startup**, so drawing 2,000 animated zombies costs table lookups.
+- **Visual randomness never uses the simulation's generator.** Looks cannot change a replay. Zombie outfits come from a hash of the zombie's id, and the city from a hash of the seed and the tile position.
+- **Zombie sprites are painted at startup** into the atlas, so drawing 2,000 animated zombies costs a rectangle lookup and one quad each.
 - **The title screen runs the real simulation** as its background, so the demo exercises the same code a run does.
 - **Text saves, not JSON or binary.** The parser is short and has no dependency.
 - **The sound sample rate is 22,050 Hz.** It is lower than usual on purpose, to keep startup rendering fast.
@@ -1143,8 +1285,20 @@ Links are relative to this document.
 | 5 | Boss | [`src/components/Enemies/Boss`](../src/components/Enemies/Boss) |
 | 5 | Pickups, gems | [`src/components/Pickups`](../src/components/Pickups) |
 | 5 | Every tuning number | [`src/data/Balance.h`](../src/data/Balance.h) |
-| 5, 6 | Every color | [`src/data/Theme.h`](../src/data/Theme.h) |
-| 2, 4 | World renderer | [`src/components/WorldView`](../src/components/WorldView) |
+| 2, 5, 6 | Every color | [`src/data/Theme.h`](../src/data/Theme.h) |
+| 2 | World pass: camera, draw order, present | [`WorldView.cpp`](../src/components/WorldView/WorldView.cpp), [`WorldView.h`](../src/components/WorldView/WorldView.h) |
+| 2 | One world-to-picture mapping (tilt and perspective) | [`Projection.h`](../src/components/WorldView/Projection.h) |
+| 2 | Shaders | [`Shaders.cpp`](../src/components/WorldView/Shaders.cpp), [`Shaders.h`](../src/components/WorldView/Shaders.h) |
+| 2 | Day cycle | [`DayCycle.cpp`](../src/components/WorldView/DayCycle.cpp) (key moments in [`Theme.h`](../src/data/Theme.h)) |
+| 2 | Soldier, zombies and corpses: which sprite, where | [`Characters.cpp`](../src/components/WorldView/Characters.cpp) |
+| 2 | Shots, blasts, beams, smoke, pickups on screen | [`Objects.cpp`](../src/components/WorldView/Objects.cpp), [`Draw.h`](../src/components/WorldView/Draw.h) (quad helpers, repeatable noise) |
+| 4 | Sprite painter | [`Canvas.cpp`](../src/components/WorldView/Canvas.cpp), [`Canvas.h`](../src/components/WorldView/Canvas.h) |
+| 4 | Sprite atlas and palette | [`Atlas.cpp`](../src/components/WorldView/Atlas.cpp), [`Sprites.h`](../src/components/WorldView/Sprites.h) |
+| 4 | Sprite art | [`SoldierArt.cpp`](../src/components/WorldView/SoldierArt.cpp), [`ZombieArt.cpp`](../src/components/WorldView/ZombieArt.cpp), [`ItemArt.cpp`](../src/components/WorldView/ItemArt.cpp) |
+| 4 | Ground chunk cache and light pools | [`Ground.cpp`](../src/components/WorldView/Ground.cpp) |
+| 4, 9 | Map interface | [`src/components/Maps/Maps.h`](../src/components/Maps/Maps.h), [`Maps.cpp`](../src/components/Maps/Maps.cpp) |
+| 4 | The ruined city | [`src/components/Maps/City`](../src/components/Maps/City) (roads in [`City.cpp`](../src/components/Maps/City/City.cpp), lots, props, painting tools in its subfolders) |
+| 6 | Debug showcase | [`Showcase.cpp`](../src/components/WorldView/Showcase.cpp), `setupShowcase` in [`WorldView.h`](../src/components/WorldView/WorldView.h) |
 | 6 | Screens | [`src/components/Ui`](../src/components/Ui) |
 | 6 | Shared widgets, layout | [`src/components/Ui/Widgets`](../src/components/Ui/Widgets) |
 | 6 | Embedded font | [`src/components/Ui/Font`](../src/components/Ui/Font) |
@@ -1158,24 +1312,25 @@ Links are relative to this document.
 | 8 | Unit tests | [`tests/unit`](../tests/unit) |
 | 8 | Balance tool | [`tests/balance`](../tests/balance) |
 | 8 | Browser tests, performance script | [`tests/e2e`](../tests/e2e) |
-| 9 | Earlier look screenshots | [`docs/prototypes`](prototypes) |
+| 9 | Look prototypes (shapes, outlines, pixel city): screenshots | [`docs/prototypes`](prototypes) |
+| 11 | Deploy workflow (written, not yet run) | [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) |
 
 ---
 
 ## 11. Planned work, not in the code yet
 
-Everything here is **Planned**. None of it exists in the code now, and details may change.
+Everything marked **Planned** here is not in the code now, and details may change. One item is different: the deploy workflow is written, but it has never been run.
 
 **Planned:**
 
-- **A pixel-art world renderer** to replace the outlined vector one. It would use pixel sprites generated in code, a low-resolution render target scaled up, and a stronger tilt with mild perspective. The loop already draws the world and the UI in two separate passes (`drawWorldPass` and `drawUiPass` in `App.cpp`) so the world pass can change without touching the UI.
-- **An endless, seeded ruined-city map** to replace the grid, with a day cycle.
-- **Effects:** particles, bloom on shots and explosions, damage numbers, screen shake and hit pause. When these exist, the saved "screen shake" and "damage numbers" settings will have something to control.
-- **Automatic quality reduction on weak devices.** Hooks exist (the renderer's fast mode switch and the extra scale argument in `syncCanvasSize`), but nothing uses them.
+- **Effects:** particles, damage numbers, screen shake, hit pause, and a glow on shots and explosions. Work on these is in progress, but none of it is in the code at the time of writing. What the renderer has today is small: a pool of 180 smoke puffs (behind rockets and after blasts), burning rings and fire sprites for blasts, and one soft warm glow disc under each explosion. When screen shake and damage numbers exist, the saved "screen shake" and "damage numbers" settings will have something to control.
+- **Automatic quality reduction on weak devices.** Hooks exist (the renderer's fast mode switch, the quality level that paints half-size ground chunks and drops lamp light pools, flicker and the vignette, and the extra scale argument in `syncCanvasSize`). Nothing calls them except the `?debug` command that sets the quality level.
+- **An installable web app.** A way to add the game to a phone's home screen or a computer's app list from the browser, so it opens like an app.
+- **A PC download.** A `.zip` of the Windows build, published on GitHub Releases.
+- **A second map,** a desert highway wasteland, chosen with a small map picker on the title screen.
+- **Solid obstacles,** starting with cars. The simulation does not know about maps today, so this is a real change: obstacle positions must come from the seed in the simulation, and zombies and the player slide around them.
 - **Real phone measurements** of speed, touch, the gamepad and notches.
-- **Deployment to GitHub Pages** by a GitHub Actions workflow.
 
-**Possibly later, only if time allows. Not committed:**
+**Written, not yet run:**
 
-- A second map, a desert wasteland, chosen before starting a run.
-- Solid obstacles.
+- **Deployment to GitHub Pages.** The workflow is [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml). It builds the browser version with Emscripten and publishes it, when started by hand from the Actions tab or when a version tag such as `v1.0.0` is pushed. It has not been run yet, so nothing about it is confirmed to work. It builds and publishes only. It does not run the tests.
