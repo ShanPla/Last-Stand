@@ -1,5 +1,7 @@
 #include "components/Input/Input.h"
 
+#include "core/Platform.h"
+
 #include "raylib.h"
 
 #include <algorithm>
@@ -115,11 +117,11 @@ void readTouch(Snapshot& s) {
 }
 
 void readMouse(Snapshot& s) {
-    if (s.lastDevice == Device::Touch && !IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) return;
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !g_touching) {
-        const Vector2 mouse = GetMousePosition();
+    float x = 0.0f;
+    float y = 0.0f;
+    if (platform::consumeMouseDown(&x, &y) && !g_touching) {
         s.pointerPressed = true;
-        s.pointer = Vec2{mouse.x, mouse.y};
+        s.pointer = Vec2{x, y};
         s.lastDevice = Device::Mouse;
     }
 }

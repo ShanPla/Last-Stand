@@ -12,6 +12,48 @@
 
 namespace ls::platform {
 
+#ifdef __EMSCRIPTEN__
+namespace {
+
+bool g_mouseDown = false;
+float g_mouseX = 0.0f;
+float g_mouseY = 0.0f;
+
+EM_BOOL onMouseDown(int, const EmscriptenMouseEvent* event, void*) {
+    if (event->button != 0) return EM_FALSE;
+    double cssWidth = 1.0;
+    double cssHeight = 1.0;
+    emscripten_get_element_css_size("#canvas", &cssWidth, &cssHeight);
+    g_mouseDown = true;
+    g_mouseX = static_cast<float>(event->targetX * GetScreenWidth() / cssWidth);
+    g_mouseY = static_cast<float>(event->targetY * GetScreenHeight() / cssHeight);
+    return EM_FALSE;  // Not consumed, so the normal input handling still sees it.
+}
+
+}  // namespace
+#endif
+
+bool consumeMouseDown(float* x, float* y) {
+#ifdef __EMSCRIPTEN__
+    static const bool registered = [] {
+        emscripten_set_mousedown_callback("#canvas", nullptr, EM_FALSE, onMouseDown);
+        return true;
+    }();
+    (void)registered;
+    if (!g_mouseDown) return false;
+    g_mouseDown = false;
+    *x = g_mouseX;
+    *y = g_mouseY;
+    return true;
+#else
+    if (!IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) return false;
+    const Vector2 mouse = GetMousePosition();
+    *x = mouse.x;
+    *y = mouse.y;
+    return true;
+#endif
+}
+
 void syncCanvasSize(float renderScale) {
 #ifdef __EMSCRIPTEN__
     double cssWidth = 0.0;
