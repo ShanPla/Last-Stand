@@ -1,0 +1,64 @@
+# Builds the browser version and publishes it to GitHub Pages.
+# Runs when run by hand from the Actions tab, or when a version tag such as v1.0.0 is pushed.
+name: Deploy to GitHub Pages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
+          "$HOME/emsdk/emsdk" install 6.0.13
+          "$HOME/emsdk/emsdk" activate 6.0.13
+          echo "EMSDK=$HOME/emsdk" >> "$GITHUB_ENV"
+          echo "$HOME/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Build
+        run: |
+          cmake --preset web
+          cmake --build --preset web
+
+      - name: Collect the site
+        run: |
+          mkdir site
+          cp build/web/index.html build/web/index.js build/web/index.wasm site/
+          cp -r build/web/components site/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
