@@ -1067,7 +1067,7 @@ Each entry lists what was chosen, what was rejected, and why.
 - Result: characters read as standing figures with a front and a height, while the simulation stays simple and flat.
 
 **Art direction moved from neon outlines to pixel art.**
-- The first direction was neon shapes. After looking at reference pictures, the direction became pixel art. The earlier versions are kept as git tags `look-1-shapes` and `look-2-outlines`, with screenshots in [`docs/progress`](progress): [shapes, play](progress/1-before-neon-shapes-play.png), [shapes, crowd](progress/1-before-neon-shapes-crowd.png), [soldier and zombies, play](progress/2-after-soldier-zombies-play.png), [soldier and zombies, crowd](progress/2-after-soldier-zombies-crowd.png).
+- The first direction was neon shapes. After looking at reference pictures, the direction became pixel art. The earlier versions are kept as git tags `look-1-shapes` and `look-2-outlines`, with screenshots in [`docs/prototypes`](prototypes): [shapes, play](progress/1-before-neon-shapes-play.png), [shapes, crowd](progress/1-before-neon-shapes-crowd.png), [soldier and zombies, play](progress/2-after-soldier-zombies-play.png), [soldier and zombies, crowd](progress/2-after-soldier-zombies-crowd.png).
 - Rejected: real pixel-art files. They break the no-asset rule and make matching animation frames hard.
 - Current state: the menus, HUD, font and page shell already use the pixel style. The world renderer is still the outlined vector one.
 
@@ -1158,7 +1158,7 @@ Links are relative to this document.
 | 8 | Unit tests | [`tests/unit`](../tests/unit) |
 | 8 | Balance tool | [`tests/balance`](../tests/balance) |
 | 8 | Browser tests, performance script | [`tests/e2e`](../tests/e2e) |
-| 9 | Earlier look screenshots | [`docs/progress`](progress) |
+| 9 | Earlier look screenshots | [`docs/prototypes`](prototypes) |
 
 ---
 
