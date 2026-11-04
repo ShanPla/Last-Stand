@@ -320,7 +320,7 @@ void draw(const GameState& state, float alpha) {
     sortByDepth(figures);
 
     BeginTextureMode(g_target);
-    ClearBackground(maps::fallbackGround(maps::MapId::City));
+    ClearBackground(maps::fallbackGround(maps::current()));
 
     drawGround(g_view, look);
 

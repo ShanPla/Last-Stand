@@ -1,7 +1,7 @@
 #include "components/Maps/City/City.h"
 
 #include "components/Maps/City/Lots/Lots.h"
-#include "components/Maps/City/Paint/Paint.h"
+#include "components/Maps/Paint/Paint.h"
 #include "components/Maps/City/Props/Props.h"
 #include "data/Theme.h"
 

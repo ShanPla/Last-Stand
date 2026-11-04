@@ -274,6 +274,83 @@ inline constexpr Color kFireLight{240, 130, 60, 255};
 inline constexpr Color kPlayerLight{120, 130, 150, 255};  // His own small pool of light at night.
 inline constexpr Color kFireFlame[3] = {{226, 90, 30, 255}, {250, 160, 50, 255}, {255, 232, 150, 255}};
 
+// --- Wasteland map -------------------------------------------------------------
+// Sand is kept mid-dark, and every ground tone sits close to its neighbors, so that the
+// characters, gems, bullets and telegraphs always read first. Only thin lines such as
+// cracks and dune crests are allowed some contrast: they show that the player is moving.
+inline constexpr Color kSand[4] = {{97, 88, 70, 255}, {102, 92, 73, 255}, {107, 97, 77, 255}, {112, 101, 80, 255}};
+inline constexpr Color kSandLee{84, 76, 63, 255};
+inline constexpr Color kSandShade{92, 84, 68, 255};
+inline constexpr Color kSandCrest{120, 109, 87, 255};
+inline constexpr Color kPan[3] = {{96, 90, 78, 255}, {100, 94, 82, 255}, {105, 98, 85, 255}};
+inline constexpr Color kPanCrack{64, 57, 50, 255};
+inline constexpr Color kPanCrackLit{114, 106, 92, 255};
+inline constexpr Color kPanCrackFaint{82, 74, 62, 255};
+inline constexpr Color kReg[3] = {{80, 74, 64, 255}, {85, 79, 68, 255}, {90, 83, 71, 255}};
+inline constexpr Color kRedEarth[3] = {{94, 75, 60, 255}, {99, 79, 63, 255}, {104, 83, 66, 255}};
+inline constexpr Color kScrubEarth[3] = {{90, 85, 66, 255}, {95, 89, 69, 255}, {100, 93, 72, 255}};
+inline constexpr Color kStone[4] = {{58, 53, 48, 255}, {80, 73, 64, 255}, {102, 93, 80, 255}, {122, 113, 96, 255}};
+inline constexpr Color kDryGrass[3] = {{76, 68, 42, 255}, {98, 86, 48, 255}, {120, 106, 60, 255}};
+inline constexpr Color kTwig{54, 44, 34, 255};
+inline constexpr Color kTrackDark{30, 24, 22, 64};
+inline constexpr Color kTrackLit{150, 136, 108, 48};
+
+inline constexpr Color kOldAsphalt[3] = {{63, 60, 58, 255}, {68, 64, 62, 255}, {73, 69, 66, 255}};
+inline constexpr Color kOldAsphaltCrack{40, 38, 38, 255};
+inline constexpr Color kOldAsphaltLit{86, 81, 75, 255};
+inline constexpr Color kTarSnake{45, 43, 44, 255};
+inline constexpr Color kOldAsphaltPatch{57, 55, 54, 255};
+inline constexpr Color kFadedYellow{128, 108, 64, 255};
+inline constexpr Color kFadedWhite{122, 117, 102, 255};
+inline constexpr Color kSkidMark{30, 28, 30, 110};
+
+inline constexpr Color kWreckPaints[5][3] = {
+    {{52, 74, 76, 255}, {74, 100, 98, 255}, {100, 124, 116, 255}},   // Sun-bleached teal.
+    {{80, 50, 42, 255}, {106, 68, 54, 255}, {130, 92, 72, 255}},     // Old red.
+    {{92, 76, 44, 255}, {126, 106, 62, 255}, {150, 130, 84, 255}},   // Dull mustard.
+    {{64, 68, 76, 255}, {90, 94, 100, 255}, {118, 120, 122, 255}},   // Chalky blue grey.
+    {{78, 66, 54, 255}, {108, 94, 76, 255}, {136, 122, 100, 255}},   // Faded cream.
+};
+inline constexpr Color kWreckBurnt[3] = {{30, 26, 26, 255}, {46, 40, 38, 255}, {66, 56, 50, 255}};
+inline constexpr Color kBusPaint[3] = {{86, 70, 38, 255}, {112, 92, 50, 255}, {132, 112, 68, 255}};
+inline constexpr Color kTankerPaint[3] = {{74, 76, 78, 255}, {104, 106, 106, 255}, {134, 134, 130, 255}};
+inline constexpr Color kDustyGlass{42, 46, 50, 255};
+inline constexpr Color kDustyGlassShine{84, 92, 94, 255};
+
+inline constexpr Color kRock[4] = {{50, 46, 46, 255}, {72, 66, 62, 255}, {94, 86, 78, 255}, {118, 110, 98, 255}};
+inline constexpr Color kRockRed[4] = {{58, 42, 38, 255}, {84, 60, 50, 255}, {106, 78, 62, 255}, {128, 98, 78, 255}};
+inline constexpr Color kTireInner{50, 46, 46, 255};
+inline constexpr Color kTireTop{62, 58, 56, 255};
+inline constexpr Color kBone[3] = {{104, 94, 74, 255}, {136, 126, 102, 255}, {160, 150, 124, 255}};
+inline constexpr Color kBoneHole{40, 34, 30, 255};
+inline constexpr Color kDeadWood[3] = {{42, 34, 28, 255}, {62, 50, 40, 255}, {84, 70, 54, 255}};
+inline constexpr Color kWirePost{66, 54, 42, 255};
+inline constexpr Color kWireStrand{36, 34, 34, 170};
+inline constexpr Color kWireBarb{26, 24, 24, 255};
+inline constexpr Color kPoleWood[2] = {{46, 36, 30, 255}, {68, 54, 42, 255}};
+inline constexpr Color kPowerWire{24, 22, 24, 120};
+inline constexpr Color kRailMetal[3] = {{60, 58, 56, 255}, {88, 86, 80, 255}, {112, 108, 98, 255}};
+inline constexpr Color kMarkerAmber{150, 104, 44, 255};
+inline constexpr Color kSignGreen{46, 72, 58, 255};
+inline constexpr Color kSignYellow{138, 112, 52, 255};
+inline constexpr Color kSignInk{36, 32, 30, 255};
+inline constexpr Color kSignPale{136, 130, 112, 255};
+inline constexpr Color kBillboard[3] = {{92, 62, 48, 255}, {118, 104, 80, 255}, {62, 78, 84, 255}};
+
+inline constexpr Color kCorrugated[3] = {{68, 48, 38, 255}, {88, 64, 50, 255}, {110, 84, 66, 255}};
+inline constexpr Color kCorrugatedGrey[3] = {{62, 62, 62, 255}, {84, 84, 82, 255}, {106, 104, 98, 255}};
+inline constexpr Color kAdobe[3] = {{100, 84, 64, 255}, {112, 95, 72, 255}, {124, 106, 82, 255}};
+inline constexpr Color kAdobeTop{136, 120, 94, 255};
+inline constexpr Color kCinder[3] = {{84, 82, 76, 255}, {96, 94, 86, 255}, {108, 105, 96, 255}};
+inline constexpr Color kCinderTop{124, 120, 108, 255};
+inline constexpr Color kApron[3] = {{84, 81, 74, 255}, {89, 86, 78, 255}, {94, 91, 82, 255}};
+inline constexpr Color kApronJoint{62, 59, 55, 255};
+inline constexpr Color kOilStain{24, 22, 26, 90};
+inline constexpr Color kFloorDark{60, 54, 48, 255};
+inline constexpr Color kPumpBody[3] = {{70, 44, 38, 255}, {108, 66, 52, 255}, {136, 94, 74, 255}};
+inline constexpr Color kPumpFace{38, 40, 42, 255};
+inline constexpr Color kCanopyStripe[2] = {{104, 56, 44, 255}, {122, 116, 100, 255}};
+
 // --- Day cycle ---------------------------------------------------------------
 // The run moves from golden afternoon, through dusk and night, to a blood-red sky
 // for the boss. The ground is graded strongly, characters only gently, so threats

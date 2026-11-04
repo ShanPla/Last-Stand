@@ -9,10 +9,24 @@
 // The ground under the fight. Maps are decoration only: nothing here ever reaches the
 // simulation, and everyone walks straight across every prop. A map paints square
 // chunks of ground on request, from a seed, so the same run always shows the same
-// place. Adding a map means adding one enum value and one case in Maps.cpp.
+// place. Adding a map means adding one enum value and one case in each switch in Maps.cpp.
 namespace ls::maps {
 
-enum class MapId : uint8_t { City, Count };
+enum class MapId : uint8_t { City, Wasteland, Count };
+
+// What a new player gets, and what any unknown id falls back to.
+inline constexpr MapId kDefaultMap = MapId::City;
+inline constexpr int kMapCount = static_cast<int>(MapId::Count);
+
+// The map being shown. The renderer notices a change and repaints its chunks by itself.
+void setCurrent(MapId map);
+MapId current();
+
+// Turns a stored or typed number into a map, so a bad number can't reach the painters.
+MapId mapFromIndex(int index);
+
+// For menus.
+const char* name(MapId map);
 
 // A chunk covers this much of the world. Its pixels already include the camera's
 // vertical squash, so at the player's depth one chunk pixel is exactly one art pixel.
@@ -37,5 +51,10 @@ int renderChunk(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels,
 
 // What to show if a chunk is somehow not ready yet.
 Color fallbackGround(MapId map);
+
+// How many ticks one swell of a fire's light takes on this map, and how long its flame
+// holds each picture. Bigger numbers are calmer.
+uint32_t fireFlickerTicks(MapId map);
+uint32_t fireFrameTicks(MapId map);
 
 }  // namespace ls::maps

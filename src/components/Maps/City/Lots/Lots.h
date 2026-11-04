@@ -1,6 +1,6 @@
 #pragma once
 
-#include "components/Maps/City/Paint/Paint.h"
+#include "components/Maps/Paint/Paint.h"
 #include "components/Maps/City/Props/Props.h"
 
 // What fills the inside of a city block: brick and plaster ruins seen from above,

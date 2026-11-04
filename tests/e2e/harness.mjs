@@ -88,7 +88,7 @@ export async function countColorNearCenter(page, [r, g, b], boxFraction = 0.2) {
 export const CMD = {
   stressEnemies: 1, stressProjectiles: 2, setSeed: 3, grantXp: 4, startRun: 5, forceDeath: 6, forceVictory: 7,
   showScreen: 8, setSafeArea: 9, giveBuild: 10, setHp: 11, setTime: 12, setKills: 13, setLevel: 14, fakeDamage: 15, levelUp: 16,
-  setQuality: 20, setShake: 21, setFlash: 22, setDamageNumbers: 23, setReducedMotion: 24, pushEvent: 25, resetFxCounters: 26, runSteps: 27,
+  setQuality: 20, setShake: 21, setFlash: 22, setDamageNumbers: 23, setReducedMotion: 24, pushEvent: 25, resetFxCounters: 26, runSteps: 27, setMap: 28,
 };
 
 export const readState = (page) => page.evaluate(() => JSON.parse(Module.ccall('ls_query_state', 'string', [], [])));

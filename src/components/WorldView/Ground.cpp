@@ -21,7 +21,6 @@ constexpr int kPoolSize = 24;
 constexpr float kPaintAheadWorld = 200.0f;
 
 constexpr float kPoolReachWorld = 120.0f;
-constexpr int kFlickerPeriodTicks = 7;
 
 struct Chunk {
     int x = 0;
@@ -40,6 +39,7 @@ Color g_halfPixels[(maps::kChunkWidth / 2) * (maps::kChunkHeight / 2)];
 bool g_halfResolution = false;
 uint32_t g_frame = 0;
 uint64_t g_seed = 0;
+maps::MapId g_map = maps::kDefaultMap;  // The map the pool's chunks were painted for.
 
 struct ChunkRange {
     int x0, y0, x1, y1;  // Inclusive.
@@ -86,7 +86,7 @@ void loadPoolTextures() {
 }
 
 void paintChunk(Chunk& chunk, int x, int y, uint64_t seed) {
-    chunk.lightCount = maps::renderChunk(maps::MapId::City, seed, x, y, g_pixels, chunk.lights);
+    chunk.lightCount = maps::renderChunk(g_map, seed, x, y, g_pixels, chunk.lights);
     chunk.x = x;
     chunk.y = y;
     chunk.seed = seed;
@@ -133,6 +133,15 @@ void setGroundHalfResolution(bool half) {
 void updateGround(const View& view, uint64_t seed) {
     g_frame++;
     g_seed = seed;
+    // A new map makes every painted chunk wrong, along with its lights. Only the flags
+    // change here: the textures stay, and get painted over.
+    if (maps::current() != g_map) {
+        g_map = maps::current();
+        for (Chunk& chunk : g_pool) {
+            chunk.ready = false;
+            chunk.lightCount = 0;
+        }
+    }
     const ChunkRange visible = visibleChunks(view, 0.0f);
     const ChunkRange ahead = visibleChunks(view, kPaintAheadWorld);
 
@@ -233,7 +242,7 @@ void drawLightPools(const View& view, const DayLook& look, uint32_t tick, bool f
             // Bulbs buzz now and then, and fires never stop moving.
             float level = look.lampLevel * look.lampLevel;
             if (flicker) {
-                if (fire) level *= 0.82f + 0.18f * triangleWave(tick + seed, kFlickerPeriodTicks + (seed & 3u));
+                if (fire) level *= 0.82f + 0.18f * triangleWave(tick + seed, maps::fireFlickerTicks(g_map) + (seed & 3u));
                 else if (((tick / 8u + seed) & 127u) < 3u) level *= 0.55f;
             }
             const ScreenPoint point = project(view, light.world);
@@ -262,7 +271,7 @@ void drawLightSprites(const View& view, const DayLook& look, uint32_t tick, bool
             const uint32_t seed = hashPosition(light.world);
             if (light.kind == maps::LightKind::Fire) {
                 // Fires burn all day, so these show whatever the time.
-                const uint32_t frame = flicker ? (tick / 5u + seed) & 3u : seed & 3u;
+                const uint32_t frame = flicker ? (tick / maps::fireFrameTicks(g_map) + seed) & 3u : seed & 3u;
                 const SpriteRef& flame = itemSprite(kFireFrames[frame]);
                 const int y = roundToInt(point.y - light.height * point.scale);
                 spriteQuad(flame, roundToInt(point.x), y, ((seed >> 3) & 1u) != 0u, kRowBase, 0);

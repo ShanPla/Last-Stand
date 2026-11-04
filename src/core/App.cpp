@@ -3,6 +3,7 @@
 #include "components/Audio/Audio.h"
 #include "components/Effects/Effects.h"
 #include "components/Input/Input.h"
+#include "components/Maps/Maps.h"
 #include "components/Ui/Font/Font.h"
 #include "components/Ui/GameOverScreen/GameOverScreen.h"
 #include "components/Ui/Hud/Hud.h"
@@ -67,6 +68,7 @@ enum DebugCommand {
     kPushEvent = 25,     // Sends an event of this type through the normal list, at the player.
     kResetFxCounters = 26,
     kRunSteps = 27,      // Runs this many steps at once with no input, then reads their events.
+    kSetMap = 28,        // For tests only. A bad value falls back to the default map.
 };
 
 // Which screen is showing. Level-up is not here: it is a phase of a running game.
@@ -587,7 +589,7 @@ void debugCommand(int command, int value) {
     // Any other debug command hands control back to the simulation, except the ones
     // that only move the camera or the clock, which also work while it is held still.
     const bool keepsShowcase = command == kSetTime || command == kMovePlayerX || command == kMovePlayerY || command == kSetQuality || command == kSetShake ||
-                               command == kSetFlash || command == kSetDamageNumbers || command == kSetReducedMotion || command == kPushEvent || command == kResetFxCounters;
+                               command == kSetFlash || command == kSetDamageNumbers || command == kSetReducedMotion || command == kPushEvent || command == kResetFxCounters || command == kSetMap;
     if (!keepsShowcase) g_showcase = command == kShowcase;
     switch (command) {
         case kShowcase: worldview::setupShowcase(s, value); break;
@@ -629,6 +631,7 @@ void debugCommand(int command, int value) {
                 s.events.clear();
             }
             break;
+        case kSetMap: maps::setCurrent(maps::mapFromIndex(value)); break;
         case kStressEnemies: sim::setStressTargets(s, value, s.run.debugProjectileTarget); break;
         case kStressProjectiles: sim::setStressTargets(s, s.run.debugEnemyTarget, value); break;
         case kSetSeed:

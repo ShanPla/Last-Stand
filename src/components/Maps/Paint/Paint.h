@@ -4,10 +4,10 @@
 
 #include <cstdint>
 
-// Drawing tools for the city. All coordinates are global texels of the whole map, not
+// Drawing tools shared by the maps. All coordinates are global texels of the whole map, not
 // local to a chunk, and everything clips to the chunk being painted. That is what
 // makes seams invisible: a car over a chunk edge is simply drawn by both chunks.
-namespace ls::maps::city {
+namespace ls::maps {
 
 inline uint32_t mix(uint32_t value) {
     value ^= value >> 15;
@@ -153,4 +153,4 @@ private:
     int height_;
 };
 
-}  // namespace ls::maps::city
+}  // namespace ls::maps
