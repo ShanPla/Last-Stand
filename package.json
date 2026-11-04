@@ -6,7 +6,8 @@
   "author": "Shan Platon",
   "type": "module",
   "scripts": {
-    "test:e2e": "node --test tests/e2e/*.test.mjs"
+    "test:e2e": "node --test tests/e2e/*.test.mjs",
+    "serve": "node tests/e2e/serve.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.64.1"

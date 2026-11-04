@@ -14,7 +14,7 @@ const types = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm',
 };
 
-export async function startServer() {
+export async function startServer(port = 0) {
   const sent = { raw: 0, compressed: 0 };
   const server = createServer(async (req, res) => {
     const urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
@@ -34,7 +34,7 @@ export async function startServer() {
       res.end();
     }
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
   return { server, sent, url: `http://127.0.0.1:${server.address().port}/` };
 }
 
@@ -58,4 +58,25 @@ export async function openGame(browser, url, contextOptions = {}) {
   await page.goto(url);
   await page.waitForFunction(() => document.getElementById('loading-screen').classList.contains('is-done'), null, { timeout: 30000 });
   return { context, page, problems };
+}
+
+// Counts screenshot pixels close to an RGB color, inside a centered box. A real
+// pixel check, because state queries can pass while nothing is visible on screen.
+export async function countColorNearCenter(page, [r, g, b], boxFraction = 0.2) {
+  const base64 = (await page.screenshot()).toString('base64');
+  return page.evaluate(async ({ base64, r, g, b, boxFraction }) => {
+    const blob = await (await fetch(`data:image/png;base64,${base64}`)).blob();
+    const image = await createImageBitmap(blob);
+    const canvas = new OffscreenCanvas(image.width, image.height);
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0);
+    const w = Math.floor(image.width * boxFraction);
+    const h = Math.floor(image.height * boxFraction);
+    const data = context.getImageData((image.width - w) >> 1, (image.height - h) >> 1, w, h).data;
+    let count = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (Math.abs(data[i] - r) < 24 && Math.abs(data[i + 1] - g) < 24 && Math.abs(data[i + 2] - b) < 24) count++;
+    }
+    return count;
+  }, { base64, r, g, b, boxFraction });
 }
