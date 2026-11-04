@@ -14,6 +14,10 @@ void dropGem(GameState& state, Vec2 pos, int xp);
 // Called for each death. Elites always drop a pickup, others on a kill counter.
 void onEnemyKilled(GameState& state, Vec2 pos, bool elite);
 
+// Adds a pickup. Pickups never expire, so a full pool replaces an old one, which
+// means an uncollected pile can never block a needed ammo crate.
+void spawnPickup(GameState& state, Vec2 pos, PickupType type);
+
 // Combines nearby gems into one, keeping total XP the same.
 void mergeGems(GameState& state);
 

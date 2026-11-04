@@ -86,6 +86,8 @@ Enemy* spawn(GameState& state, EnemyType type, Vec2 pos, bool elite) {
     enemy->radius = stats.radius * (elite ? balance::kElite_RadiusMult : 1.0f);
     enemy->speed = stats.speed;
     enemy->contactDamage = stats.contactDamage * damageScale * (elite ? balance::kElite_DamageMult : 1.0f);
+    // The boss waits one full interval before its first attack, so it can walk in.
+    if (isBoss) enemy->timer = balance::kBossAttackInterval[0];
     return enemy;
 }
 
@@ -142,15 +144,40 @@ void fireBullet(GameState& state, Vec2 pos, Vec2 velocity, float damage) {
     bullet->life = balance::kEnemyBulletLife;
 }
 
-void hit(GameState& state, int enemyIndex, float amount, WeaponId source, Vec2 knockback) {
+namespace {
+
+// Shared by hit() and damageNoCredit(). A credited hit adds to the weapon's damage total.
+void applyDamage(GameState& state, int enemyIndex, float amount, bool credited, WeaponId source, Vec2 knockback) {
     Enemy& enemy = state.enemies[enemyIndex];
     if (enemy.hp <= 0.0f) return;
     const float dealt = std::min(enemy.hp, amount);
     enemy.hp -= amount;
     enemy.flash = balance::kHitFlashSeconds;
     enemy.knock += knockback * balance::kEnemyStats[static_cast<int>(enemy.type)].knockbackTaken;
-    state.run.damageByWeapon[static_cast<int>(source)] += dealt;
-    pushEvent(state, EventType::EnemyHit, enemy.pos, dealt, static_cast<uint8_t>(source), enemy.elite);
+    if (credited) state.run.damageByWeapon[static_cast<int>(source)] += dealt;
+    // WeaponId::Count in the event means no weapon was behind the hit.
+    pushEvent(state, EventType::EnemyHit, enemy.pos, dealt, static_cast<uint8_t>(credited ? source : WeaponId::Count),
+              enemy.elite);
+}
+
+// Crawlers burst out of a dead Bloater, spread evenly around it from a random start angle.
+void spawnCrawlers(GameState& state, const Enemy& bloater) {
+    const int count = balance::kCrawlersPerBloater * (bloater.elite ? 2 : 1);
+    const float start = state.rng.range(0.0f, kTau);
+    for (int i = 0; i < count; ++i) {
+        const float angle = start + kTau * static_cast<float>(i) / static_cast<float>(count);
+        spawn(state, EnemyType::Crawler, bloater.pos + fromAngle(angle) * balance::kBloaterCrawlerSpread, false);
+    }
+}
+
+}  // namespace
+
+void hit(GameState& state, int enemyIndex, float amount, WeaponId source, Vec2 knockback) {
+    applyDamage(state, enemyIndex, amount, true, source, knockback);
+}
+
+void damageNoCredit(GameState& state, int enemyIndex, float amount) {
+    applyDamage(state, enemyIndex, amount, false, WeaponId::Rifle, Vec2{});
 }
 
 void removeDead(GameState& state) {
@@ -163,7 +190,15 @@ void removeDead(GameState& state) {
         state.run.kills++;
         const balance::EnemyStats& stats = balance::kEnemyStats[static_cast<int>(dead.type)];
         pickups::dropGem(state, dead.pos, stats.xp * (dead.elite ? balance::kElite_XpMult : 1));
+        if (dead.type == EnemyType::Boss) {
+            // Killing the boss wins the run. It drops no pickup, because the run is over.
+            state.run.bossHpFraction = 0.0f;
+            state.run.phase = RunPhase::Won;
+            pushEvent(state, EventType::BossKilled, dead.pos, dead.radius, static_cast<uint8_t>(dead.type));
+            continue;
+        }
         pickups::onEnemyKilled(state, dead.pos, dead.elite);
+        if (dead.type == EnemyType::Bloater) spawnCrawlers(state, dead);
         pushEvent(state, dead.elite ? EventType::EliteKilled : EventType::EnemyKilled, dead.pos, dead.radius,
                   static_cast<uint8_t>(dead.type));
     }

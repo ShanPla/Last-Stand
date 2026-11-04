@@ -20,6 +20,9 @@ void fireBullet(GameState& state, Vec2 pos, Vec2 velocity, float damage);
 // stay valid for the rest of the step. source says which weapon gets the credit.
 void hit(GameState& state, int enemyIndex, float amount, WeaponId source, Vec2 knockback);
 
+// Same as hit, but no weapon gets the credit and there is no knockback. For the bomb.
+void damageNoCredit(GameState& state, int enemyIndex, float amount);
+
 // Removes dead enemies, and handles their drops, splitting and kill counts.
 void removeDead(GameState& state);
 
