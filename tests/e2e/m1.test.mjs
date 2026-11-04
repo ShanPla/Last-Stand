@@ -73,3 +73,24 @@ test('touch drag moves the player, and a tap picks a card on a phone', async () 
   assert.deepEqual(problems, []);
   await context.close();
 });
+
+for (const scale of [1, 1.25, 2]) {
+  for (const holdMs of [0, 80]) {
+    test(`mouse click picks a card at pixel ratio ${scale}, button held ${holdMs} ms`, async () => {
+      const { context, page, problems } = await openGame(browser, web.url + '?debug', {
+        viewport: { width: 1280, height: 720 }, deviceScaleFactor: scale,
+      });
+      await page.evaluate(() => { Module._ls_debug_command(4, 1); });
+      await page.waitForFunction(() => JSON.parse(Module.ccall('ls_query_state', 'string', [], [])).phase === 1, null, { timeout: 40000 });
+      await page.waitForTimeout(500);
+      await page.mouse.move(1050, 380);
+      await page.waitForTimeout(100);
+      await page.mouse.down();
+      await page.waitForTimeout(holdMs);
+      await page.mouse.up();
+      await page.waitForFunction(() => JSON.parse(Module.ccall('ls_query_state', 'string', [], [])).phase === 0, null, { timeout: 3000 });
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+  }
+}

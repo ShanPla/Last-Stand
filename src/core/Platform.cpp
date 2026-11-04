@@ -24,8 +24,8 @@ void syncCanvasSize(float renderScale) {
     if (width != GetScreenWidth() || height != GetScreenHeight()) {
         SetWindowSize(width, height);
     }
-    // Mouse events arrive in CSS pixels, but the game works in buffer pixels.
-    SetMouseScale(static_cast<float>(ratio), static_cast<float>(ratio));
+    // No mouse scaling here: the browser layer already reports the mouse in drawing
+    // buffer pixels, so scaling again would make clicks miss at high pixel ratios.
 #else
     (void)renderScale;
 #endif
