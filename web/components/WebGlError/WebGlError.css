@@ -7,8 +7,8 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: #05060f;
-  color: #e6f7ff;
+  background: #14131a;
+  color: #f2e6cf;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 18px;
   line-height: 1.5;
@@ -23,7 +23,7 @@
   margin-bottom: 8px;
   font-size: 26px;
   font-weight: 700;
-  color: #ff9d5c;
+  color: #d9603b;
 }
 
 #webgl-error p {

@@ -8,8 +8,8 @@
   justify-content: center;
   gap: 18px;
   padding: 24px;
-  background: #05060f;
-  color: #e6f7ff;
+  background: #14131a;
+  color: #f2e6cf;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   transition: opacity 200ms ease-out;
 }
@@ -24,29 +24,26 @@
   font-weight: 700;
   letter-spacing: 0.14em;
   text-align: center;
-  color: #5ff4ff;
-  text-shadow: 0 0 18px rgba(95, 244, 255, 0.65);
+  color: #d9603b;
+  text-shadow: 4px 4px 0 #6b2c1c;
 }
 
 .loading-track {
   width: min(70vw, 360px);
   height: 8px;
   overflow: hidden;
-  border-radius: 4px;
-  background: #16203a;
+  background: #2c2a33;
 }
 
 .loading-bar {
   width: 0;
   height: 100%;
-  border-radius: 4px;
-  background: #5ff4ff;
-  box-shadow: 0 0 12px #5ff4ff;
+  background: #ffd873;
 }
 
 .loading-label {
   font-size: 16px;
-  color: #a7bcd6;
+  color: #b7ab98;
 }
 
 @media (prefers-reduced-motion: reduce) {
