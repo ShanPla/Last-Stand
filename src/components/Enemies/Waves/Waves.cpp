@@ -13,8 +13,8 @@ namespace ls::waves {
 
 namespace {
 
-Vec2 spawnPoint(GameState& state) {
-    return state.player.pos + fromAngle(state.rng.range(0.0f, kTau)) * balance::kSpawnRadius;
+Vec2 spawnPoint(GameState& state, float extraDistance = 0.0f) {
+    return state.player.pos + fromAngle(state.rng.range(0.0f, kTau)) * (balance::kSpawnRadius + extraDistance);
 }
 
 }  // namespace
@@ -64,7 +64,7 @@ void update(GameState& state) {
         // shots must reach it rather than being soaked up by leftover zombies.
         state.enemies.clear();
         pushEvent(state, EventType::BombBlast, state.player.pos, balance::kBombRadius);
-        const Vec2 pos = spawnPoint(state);
+        const Vec2 pos = spawnPoint(state, balance::kBossSpawnExtra);
         if (Enemy* boss = enemies::spawn(state, EnemyType::Boss, pos, false)) {
             boss->maxHp = bossHpForBuild(state);
             boss->hp = boss->maxHp;

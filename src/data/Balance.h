@@ -203,7 +203,13 @@ inline constexpr float kElite_RadiusMult = 1.5f;
 inline constexpr float kElite_DamageMult = 1.5f;
 inline constexpr int kElite_XpMult = 8;
 
-inline constexpr float kSpawnRadius = 960.0f;     // Just outside the widest view, including portrait.
+// Just outside the widest view, including portrait. The camera may only show what this
+// circle allows, so this also sets how much a tall phone can see: 1200 shows 20% more
+// than 960 did, and the balance tool shows Novice survival doesn't change.
+inline constexpr float kSpawnRadius = 1200.0f;
+// The boss is far wider and taller than a zombie, so it starts this much further out to
+// be fully out of sight on any window shape. Catch-up speed brings it in.
+inline constexpr float kBossSpawnExtra = 140.0f;
 inline constexpr float kRecycleRadius = 1500.0f;  // Enemies left this far behind reappear ahead.
 inline constexpr float kSeparationStrength = 60.0f;
 
