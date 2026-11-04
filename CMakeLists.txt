@@ -37,6 +37,7 @@ file(GLOB_RECURSE LS_SIM_SOURCES CONFIGURE_DEPENDS
   src/components/Enemies/*.cpp
   src/components/Weapons/*.cpp
   src/components/Pickups/*.cpp
+  src/components/Upgrades/*.cpp
 )
 list(FILTER LS_SIM_SOURCES EXCLUDE REGEX "/core/(App|Platform)\\.cpp$")
 
@@ -79,7 +80,6 @@ if(EMSCRIPTEN)
     -sINITIAL_MEMORY=64MB -sALLOW_MEMORY_GROWTH=1
     -sSTACK_SIZE=1MB
     -sEXPORTED_FUNCTIONS=_main,_ls_query_state,_ls_debug_command
-    -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString
     -fno-exceptions -fno-rtti
   )
   set_target_properties(laststand PROPERTIES OUTPUT_NAME "index"
