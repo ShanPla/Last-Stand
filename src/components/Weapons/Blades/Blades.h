@@ -5,6 +5,8 @@
 
 namespace ls::weapons {
 
-void fireBlades(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats);
+// Spins the blades around the player and hurts zombies they touch. Called every
+// step, because blades have no cooldown between shots.
+void updateBlades(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats);
 
 }  // namespace ls::weapons

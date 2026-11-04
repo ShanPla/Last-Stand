@@ -1,22 +1,24 @@
 #include "components/Weapons/Rifle/Rifle.h"
 
 #include "components/Enemies/Enemies.h"
+#include "components/Weapons/Weapons.h"
 
 #include <cmath>
 
 namespace ls::weapons {
 
-void fireRifle(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
+bool fireRifle(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
     const Vec2 origin = state.player.pos;
     const int target = enemies::nearest(state, origin, balance::kWeaponRange);
-    if (target < 0) return;
+    if (target < 0) return false;
 
     const Vec2 aim = normalizedOr(state.enemies[target].pos - origin, state.player.facing);
     const float baseAngle = std::atan2(aim.y, aim.x);
+    // Bullets are centered on the aim line, so an odd count has one dead ahead.
     const float firstOffset = -0.5f * static_cast<float>(stats.count - 1) * balance::kBulletSpreadRadians;
     for (int i = 0; i < stats.count; ++i) {
         Projectile* shot = state.projectiles.add();
-        if (!shot) return;
+        if (!shot) break;
         const float angle = baseAngle + firstOffset + static_cast<float>(i) * balance::kBulletSpreadRadians;
         shot->pos = origin;
         shot->prevPos = origin;
@@ -29,7 +31,8 @@ void fireRifle(GameState& state, const WeaponSlot& slot, const balance::WeaponLe
         shot->source = slot.id;
         shot->evolved = slot.evolved;
     }
-    pushEvent(state, EventType::WeaponFired, origin, 0.0f, static_cast<uint8_t>(slot.id));
+    markFired(state, slot, aim);
+    return true;
 }
 
 }  // namespace ls::weapons

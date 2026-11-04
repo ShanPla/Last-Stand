@@ -5,6 +5,8 @@
 
 namespace ls::weapons {
 
-void fireSniper(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats);
+// Instant beam at the toughest zombie in range, hitting everything along the line.
+// Returns true if it really fired. With no target it returns false and does nothing.
+bool fireSniper(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats);
 
 }  // namespace ls::weapons

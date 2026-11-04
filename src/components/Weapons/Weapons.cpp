@@ -1,6 +1,7 @@
 #include "components/Weapons/Weapons.h"
 
 #include "components/Enemies/Enemies.h"
+#include "components/Player/Player.h"
 #include "components/Weapons/Blades/Blades.h"
 #include "components/Weapons/Flamethrower/Flamethrower.h"
 #include "components/Weapons/GrenadeLauncher/GrenadeLauncher.h"
@@ -12,6 +13,7 @@
 #include "components/Weapons/Sniper/Sniper.h"
 #include "components/Weapons/Tesla/Tesla.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace ls::weapons {
@@ -25,23 +27,54 @@ const balance::Evolution* evolutionFor(WeaponId id) {
     return nullptr;
 }
 
-void fire(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
+// Returns true when the weapon really fired. A weapon with no target returns
+// false, so it keeps its ammo and its cooldown and simply waits.
+bool fire(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
     switch (slot.id) {
-        case WeaponId::Rifle: fireRifle(state, slot, stats); break;
-        case WeaponId::Shotgun: fireShotgun(state, slot, stats); break;
-        case WeaponId::Smg: fireSmg(state, slot, stats); break;
-        case WeaponId::Sniper: fireSniper(state, slot, stats); break;
-        case WeaponId::Flamethrower: fireFlamethrower(state, slot, stats); break;
-        case WeaponId::GrenadeLauncher: fireGrenadeLauncher(state, slot, stats); break;
-        case WeaponId::Rockets: fireRockets(state, slot, stats); break;
-        case WeaponId::Landmines: fireLandmines(state, slot, stats); break;
-        case WeaponId::Tesla: fireTesla(state, slot, stats); break;
-        case WeaponId::Blades: fireBlades(state, slot, stats); break;
+        case WeaponId::Rifle: return fireRifle(state, slot, stats);
+        case WeaponId::Shotgun: return fireShotgun(state, slot, stats);
+        case WeaponId::Smg: return fireSmg(state, slot, stats);
+        case WeaponId::Sniper: return fireSniper(state, slot, stats);
+        case WeaponId::Flamethrower: return fireFlamethrower(state, slot, stats);
+        case WeaponId::GrenadeLauncher: return fireGrenadeLauncher(state, slot, stats);
+        case WeaponId::Rockets: return fireRockets(state, slot, stats);
+        case WeaponId::Landmines: return fireLandmines(state, slot, stats);
+        case WeaponId::Tesla: return fireTesla(state, slot, stats);
+        case WeaponId::Blades:
         case WeaponId::Count: break;
+    }
+    return false;
+}
+
+// One blast: a visible ring, plus damage to every zombie inside, once, right now.
+// The damage is applied at creation so the zone only has to be drawn afterwards.
+void explode(GameState& state, Vec2 center, float radius, float damage, WeaponId source, bool evolved) {
+    state.enemyGrid.query(center, radius + balance::kLargestEnemyRadius, [&](int index) {
+        const Enemy& enemy = state.enemies[index];
+        if (enemy.hp <= 0.0f) return false;
+        const float reach = radius + enemy.radius;
+        if (distanceSq(enemy.pos, center) >= reach * reach) return false;
+        const Vec2 outward = normalizedOr(enemy.pos - center, Vec2{1.0f, 0.0f});
+        enemies::hit(state, index, damage, source, outward * balance::kAreaKnockback);
+        return false;
+    });
+    if (Zone* zone = state.zones.add()) {
+        zone->kind = ZoneKind::Explosion;
+        zone->a = center;
+        zone->b = center;
+        zone->radius = radius;
+        zone->prevRadius = radius;
+        zone->maxRadius = radius;
+        zone->life = balance::kExplosionSeconds;
+        zone->maxLife = balance::kExplosionSeconds;
+        zone->damage = damage;
+        zone->source = source;
+        zone->evolved = evolved;
+        zone->applied = true;
     }
 }
 
-// Moves one shot and checks it against nearby enemies.
+// Moves a bullet or flame and checks it against nearby enemies.
 // Returns true when the shot is used up.
 bool updateShot(GameState& state, Projectile& shot) {
     shot.prevPos = shot.pos;
@@ -50,8 +83,7 @@ bool updateShot(GameState& state, Projectile& shot) {
     if (shot.life <= 0.0f) return true;
 
     bool usedUp = false;
-    const float largestEnemyRadius = 87.0f;
-    state.enemyGrid.query(shot.pos, shot.radius + largestEnemyRadius, [&](int index) {
+    state.enemyGrid.query(shot.pos, shot.radius + balance::kLargestEnemyRadius, [&](int index) {
         const Enemy& enemy = state.enemies[index];
         if (enemy.hp <= 0.0f || enemy.id == shot.lastHitId) return false;
         const float touch = enemy.radius + shot.radius;
@@ -68,7 +100,194 @@ bool updateShot(GameState& state, Projectile& shot) {
     return usedUp;
 }
 
+// Grenades fly over everything and only explode when the fuse runs out.
+bool updateGrenade(GameState& state, Projectile& shot) {
+    shot.prevPos = shot.pos;
+    shot.pos += shot.vel * kDt;
+    shot.life -= kDt;
+    if (shot.life > 0.0f) return false;
+    explode(state, shot.pos, shot.area, shot.damage, shot.source, shot.evolved);
+    return true;
+}
+
+// Rockets steer toward the nearest zombie, limited by a turn rate so they swing
+// in wide curves. They explode on contact, or when their life ends.
+bool updateRocket(GameState& state, Projectile& shot) {
+    const float speed = length(shot.vel);
+    const int target = enemies::nearest(state, shot.pos, balance::kWeaponRange);
+    if (target >= 0 && speed > 0.0f) {
+        const Vec2 wanted = state.enemies[target].pos - shot.pos;
+        const float cross = shot.vel.x * wanted.y - shot.vel.y * wanted.x;
+        const float angleToTarget = std::atan2(cross, dot(shot.vel, wanted));
+        const float maxTurn = balance::kRocketTurnRate * kDt;
+        const float turn = clampf(angleToTarget, -maxTurn, maxTurn);
+        const float c = std::cos(turn);
+        const float s = std::sin(turn);
+        shot.vel = Vec2{shot.vel.x * c - shot.vel.y * s, shot.vel.x * s + shot.vel.y * c};
+    }
+    shot.prevPos = shot.pos;
+    shot.pos += shot.vel * kDt;
+    shot.life -= kDt;
+
+    bool touched = false;
+    state.enemyGrid.query(shot.pos, shot.radius + balance::kLargestEnemyRadius, [&](int index) {
+        const Enemy& enemy = state.enemies[index];
+        if (enemy.hp <= 0.0f) return false;
+        const float touch = enemy.radius + shot.radius;
+        if (distanceSq(enemy.pos, shot.pos) >= touch * touch) return false;
+        touched = true;
+        return true;
+    });
+    if (!touched && shot.life > 0.0f) return false;
+    explode(state, shot.pos, shot.area, shot.damage, shot.source, shot.evolved);
+    return true;
+}
+
+// Mines sit still. They go off when a zombie steps close, or vanish when old.
+bool updateMine(GameState& state, Projectile& shot) {
+    shot.life -= kDt;
+    if (shot.life <= 0.0f) return true;
+    bool triggered = false;
+    state.enemyGrid.query(shot.pos, shot.radius + balance::kLargestEnemyRadius, [&](int index) {
+        const Enemy& enemy = state.enemies[index];
+        if (enemy.hp <= 0.0f) return false;
+        const float reach = balance::kMineTriggerRadius + enemy.radius;
+        if (distanceSq(enemy.pos, shot.pos) >= reach * reach) return false;
+        triggered = true;
+        return true;
+    });
+    if (!triggered) return false;
+    explode(state, shot.pos, shot.area, shot.damage, shot.source, shot.evolved);
+    return true;
+}
+
+bool updateProjectile(GameState& state, Projectile& shot) {
+    switch (shot.kind) {
+        case ProjectileKind::Bullet:
+        case ProjectileKind::Flame: return updateShot(state, shot);
+        case ProjectileKind::Grenade: return updateGrenade(state, shot);
+        case ProjectileKind::Rocket: return updateRocket(state, shot);
+        case ProjectileKind::Mine: return updateMine(state, shot);
+    }
+    return true;
+}
+
+// A boss attack zone hits the player once, when its telegraph ends.
+void applyHostileZone(GameState& state, const Zone& zone) {
+    const Vec2 playerPos = state.player.pos;
+    bool inside = false;
+    if (zone.kind == ZoneKind::BossCircle) {
+        inside = distanceSq(playerPos, zone.a) <= zone.radius * zone.radius;
+    } else {
+        inside = distanceToSegmentSq(playerPos, zone.a, zone.b) <= zone.radius * zone.radius;
+    }
+    if (inside) player::damage(state, zone.damage);
+}
+
+void updateZones(GameState& state) {
+    for (int i = state.zones.count - 1; i >= 0; --i) {
+        Zone& zone = state.zones[i];
+        zone.life -= kDt;
+        if (zone.life > 0.0f) continue;
+        const bool bossAttack = zone.hostile && (zone.kind == ZoneKind::BossCircle || zone.kind == ZoneKind::BossLine);
+        if (bossAttack) applyHostileZone(state, zone);
+        state.zones.removeAt(i);
+    }
+}
+
+void startReload(GameState& state, WeaponSlot& slot, const balance::WeaponLevel& stats) {
+    slot.reloadLeft = stats.reload;
+    pushEvent(state, EventType::ReloadStarted, state.player.pos, stats.reload, static_cast<uint8_t>(slot.id));
+}
+
+// Moves rounds from the reserve into the magazine.
+void finishReload(WeaponSlot& slot, const balance::WeaponLevel& stats) {
+    const int moved = std::min(stats.magazine - slot.magazine, slot.reserve);
+    slot.magazine += moved;
+    slot.reserve -= moved;
+    slot.reloadLeft = 0.0f;
+    slot.dryReported = false;
+}
+
+void updateSlot(GameState& state, WeaponSlot& slot) {
+    balance::WeaponLevel stats = effectiveStats(state, slot);
+
+    // Combat Blades are always spinning, so they skip the cooldown and ammo logic.
+    if (slot.id == WeaponId::Blades) {
+        updateBlades(state, slot, stats);
+        return;
+    }
+
+    // A waiting gun may bank at most one step of readiness, so it cannot fire
+    // a burst of catch-up shots once a target appears.
+    slot.cooldown = std::max(slot.cooldown - kDt, -kDt);
+
+    const bool usesAmmo = stats.magazine > 0;
+    bool freeShot = false;
+    if (usesAmmo) {
+        if (slot.reloadLeft > 0.0f) {
+            slot.reloadLeft -= kDt;
+            if (slot.reloadLeft > 0.0f) return;
+            finishReload(slot, stats);
+        }
+        if (slot.magazine <= 0) {
+            if (slot.reserve > 0) {
+                startReload(state, slot, stats);
+                return;
+            }
+            if (!slot.dryReported) {
+                slot.dryReported = true;
+                pushEvent(state, EventType::WeaponDry, state.player.pos, 0.0f, static_cast<uint8_t>(slot.id));
+            }
+            // Only the Rifle keeps firing, slowly and weakly, so the player can always fight back.
+            if (slot.id != WeaponId::Rifle) return;
+            freeShot = true;
+            stats.damage *= balance::kRifleDryDamageMult;
+            stats.cooldown *= balance::kRifleDryCooldownMult;
+            stats.count = 1;
+        }
+    }
+
+    if (slot.cooldown > 0.0f) return;
+    if (!fire(state, slot, stats)) return;
+    if (usesAmmo && !freeShot) slot.magazine--;
+    slot.cooldown += stats.cooldown;
+}
+
 }  // namespace
+
+void markFired(GameState& state, const WeaponSlot& slot, Vec2 aim) {
+    state.player.aim = aim;
+    pushEvent(state, EventType::WeaponFired, state.player.pos, 0.0f, static_cast<uint8_t>(slot.id));
+}
+
+int nearestEnemyExcluding(const GameState& state, Vec2 pos, float range, const int* excluded, int excludedCount) {
+    int best = -1;
+    float bestDistSq = range * range;
+    for (int i = 0; i < state.enemies.count; ++i) {
+        const Enemy& enemy = state.enemies[i];
+        if (enemy.hp <= 0.0f) continue;
+        bool skip = false;
+        for (int e = 0; e < excludedCount; ++e) {
+            if (excluded[e] == i) skip = true;
+        }
+        if (skip) continue;
+        const float distSq = distanceSq(enemy.pos, pos);
+        if (distSq < bestDistSq) {
+            bestDistSq = distSq;
+            best = i;
+        }
+    }
+    return best;
+}
+
+float distanceToSegmentSq(Vec2 point, Vec2 a, Vec2 b) {
+    const Vec2 along = b - a;
+    const float lenSq = lengthSq(along);
+    if (lenSq < 1e-8f) return distanceSq(point, a);
+    const float t = clampf(dot(point - a, along) / lenSq, 0.0f, 1.0f);
+    return distanceSq(point, a + along * t);
+}
 
 void grant(GameState& state, WeaponId id) {
     Player& player = state.player;
@@ -79,11 +298,28 @@ void grant(GameState& state, WeaponId id) {
     WeaponSlot& slot = player.weapons[player.weaponCount++];
     slot = WeaponSlot{};
     slot.id = id;
+    refill(state, slot);
 }
 
-void refill(GameState&, WeaponSlot&) {}
+void refill(GameState& state, WeaponSlot& slot) {
+    const balance::WeaponLevel stats = effectiveStats(state, slot);
+    slot.magazine = stats.magazine;
+    slot.reserve = stats.maxReserve;
+    slot.reloadLeft = 0.0f;
+    slot.dryReported = false;
+}
 
-void addAmmoFraction(GameState&, float) {}
+void addAmmoFraction(GameState& state, float fraction) {
+    Player& player = state.player;
+    for (int i = 0; i < player.weaponCount; ++i) {
+        WeaponSlot& slot = player.weapons[i];
+        const balance::WeaponLevel stats = effectiveStats(state, slot);
+        if (stats.magazine <= 0) continue;
+        const int added = static_cast<int>(std::lround(fraction * static_cast<float>(stats.maxReserve)));
+        slot.reserve = std::min(stats.maxReserve, slot.reserve + added);
+        slot.dryReported = false;
+    }
+}
 
 balance::WeaponLevel effectiveStats(const GameState& state, const WeaponSlot& slot) {
     balance::WeaponLevel stats = balance::kWeaponLevels[static_cast<int>(slot.id)][slot.level - 1];
@@ -105,19 +341,12 @@ balance::WeaponLevel effectiveStats(const GameState& state, const WeaponSlot& sl
 
 void update(GameState& state) {
     Player& player = state.player;
-    for (int i = 0; i < player.weaponCount; ++i) {
-        WeaponSlot& slot = player.weapons[i];
-        slot.cooldown -= kDt;
-        if (slot.cooldown <= 0.0f) {
-            const balance::WeaponLevel stats = effectiveStats(state, slot);
-            fire(state, slot, stats);
-            slot.cooldown += stats.cooldown;
-        }
-    }
+    for (int i = 0; i < player.weaponCount; ++i) updateSlot(state, player.weapons[i]);
 
     for (int i = state.projectiles.count - 1; i >= 0; --i) {
-        if (updateShot(state, state.projectiles[i])) state.projectiles.removeAt(i);
+        if (updateProjectile(state, state.projectiles[i])) state.projectiles.removeAt(i);
     }
+    updateZones(state);
 }
 
 }  // namespace ls::weapons

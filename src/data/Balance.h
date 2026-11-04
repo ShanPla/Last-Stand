@@ -130,6 +130,19 @@ inline constexpr Evolution kEvolutions[] = {
     {WeaponId::Blades, PassiveId::Armor, "Halo Saw", 1.5f, 0.8f, 2, 1.25f, 0},
 };
 
+// --- Weapon extras -----------------------------------------------------------
+// Boss radius 58, or the biggest elite (Brute 26 * 1.5), whichever is larger, plus a margin.
+// Grid queries add this to a shot's radius so no big enemy is missed.
+inline constexpr float kLargestEnemyRadius = 87.0f;
+inline constexpr float kShortRangeSlack = 1.3f;          // Shotgun and grenades aim a little past their reach.
+inline constexpr float kSniperBeamSpreadRadians = 0.06f; // Between beams when the Sniper fires several.
+inline constexpr float kRocketFanStepRadians = 0.35f;    // Between rockets at launch, before they home.
+inline constexpr float kGrenadeScatterRadians = 0.12f;   // Used when there are more grenades than targets.
+inline constexpr float kMineDropDistance = 40.0f;        // How far behind the player a mine lands.
+inline constexpr float kMineSpreadRadians = 0.45f;       // Between mines dropped in one trigger pull.
+inline constexpr float kFlameBaseArea = 16.0f;           // Flame area at which a flame has exactly kFlameRadius.
+inline constexpr int kMaxWeaponTargets = 16;               // Fixed size of target and hit lists, so no heap is needed.
+
 // --- Enemies -----------------------------------------------------------------
 struct EnemyStats {
     float hp;
@@ -176,6 +189,24 @@ inline constexpr float kChargerTelegraphSeconds = 0.8f;
 inline constexpr float kChargerDashSeconds = 0.55f;
 inline constexpr float kChargerDashSpeed = 560.0f;
 inline constexpr float kChargerRecoverSeconds = 1.1f;
+
+// --- Enemy extras ------------------------------------------------------------
+inline constexpr float kRunnerWeaveSpeedFraction = 0.35f;   // Sideways speed, as a share of forward speed.
+inline constexpr float kRunnerWeaveRadiansPerSecond = 5.0f;
+inline constexpr float kRunnerWeavePhasePerId = 2.4f;       // Spreads a pack out of step.
+inline constexpr float kSpitterDistanceBand = 40.0f;        // Slack around the keep distance before it moves.
+inline constexpr float kSpitterStrafeSpeedFraction = 0.6f;
+inline constexpr float kBloaterCrawlerSpread = 22.0f;       // How far from the corpse crawlers appear.
+inline constexpr float kBombBossMaxHpFraction = 0.02f;      // A bomb takes at most this much of the boss's HP.
+inline constexpr float kPickupDropOffset = 18.0f;           // Moves a second drop off the first.
+inline constexpr float kBossDashSeconds = 0.6f;
+inline constexpr float kBossCircleScatter = 260.0f;         // Extra circles land within this of the player.
+inline constexpr float kBossSecondLineRadians = 0.5f;       // Extra lines in the last phase, either side.
+inline constexpr float kBossLeashDistance = 560.0f;         // Further than this, the boss hurries to catch up.
+inline constexpr float kBossCatchUpSpeed = 340.0f;          // Faster than the fastest player, so it can't be outrun.
+inline constexpr float kBossAddsPerSecond = 1.5f;           // Walkers during the boss fight, which keep XP coming.
+inline constexpr float kBossAmmoCrateSeconds = 12.0f;       // A crate lands this often, so guns can't stay empty.
+inline constexpr float kBossAmmoCrateDistance = 160.0f;     // How far from the player it lands.
 
 // --- Boss --------------------------------------------------------------------
 inline constexpr float kBossPhase2HpFraction = 0.66f;
