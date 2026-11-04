@@ -50,6 +50,15 @@ if(MSVC)
   target_compile_options(ls_sim PRIVATE /W4 /utf-8)
 endif()
 
+# The sound synthesis is plain C++ too, so the unit tests can render and check
+# every sound and the music without raylib. Only Audio/Audio.cpp uses raylib.
+file(GLOB_RECURSE LS_AUDIO_SOURCES CONFIGURE_DEPENDS src/components/Audio/*/*.cpp)
+add_library(ls_audio STATIC ${LS_AUDIO_SOURCES})
+target_include_directories(ls_audio PUBLIC src)
+if(MSVC)
+  target_compile_options(ls_audio PRIVATE /W4 /utf-8)
+endif()
+
 if(NOT LS_SIM_ONLY)
 file(GLOB_RECURSE LS_GAME_SOURCES CONFIGURE_DEPENDS
   src/components/Effects/*.cpp
@@ -58,10 +67,11 @@ file(GLOB_RECURSE LS_GAME_SOURCES CONFIGURE_DEPENDS
   src/components/Ui/*.cpp
   src/components/WorldView/*.cpp
 )
+list(FILTER LS_GAME_SOURCES EXCLUDE REGEX "/components/Audio/[^/]+/")
 file(GLOB LS_APP_SOURCE CONFIGURE_DEPENDS src/core/App.cpp)
 
 add_executable(laststand src/main.cpp src/core/Platform.cpp ${LS_APP_SOURCE} ${LS_GAME_SOURCES})
-target_link_libraries(laststand PRIVATE ls_sim raylib)
+target_link_libraries(laststand PRIVATE ls_sim ls_audio raylib)
 
 if(MSVC)
   target_compile_options(laststand PRIVATE /W4 /utf-8)
@@ -75,7 +85,7 @@ endif()
 if(EMSCRIPTEN)
   set(CMAKE_EXECUTABLE_SUFFIX ".html")
   set(LS_WEB_DIR "${CMAKE_SOURCE_DIR}/web")
-  foreach(tgt ls_sim laststand)
+  foreach(tgt ls_sim ls_audio laststand)
     target_compile_options(${tgt} PRIVATE -O3 -flto -fno-exceptions -fno-rtti)
   endforeach()
   target_compile_options(raylib PRIVATE -O3 -flto)
@@ -108,7 +118,7 @@ if(LS_BUILD_TESTS AND NOT EMSCRIPTEN)
   enable_testing()
   file(GLOB_RECURSE LS_TEST_SOURCES CONFIGURE_DEPENDS tests/unit/*.cpp)
   add_executable(ls_tests ${LS_TEST_SOURCES})
-  target_link_libraries(ls_tests PRIVATE ls_sim)
+  target_link_libraries(ls_tests PRIVATE ls_sim ls_audio)
   target_include_directories(ls_tests PRIVATE third_party/doctest)
   if(MSVC)
     target_compile_options(ls_tests PRIVATE /W4 /utf-8)
