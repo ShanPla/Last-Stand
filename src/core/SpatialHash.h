@@ -20,6 +20,8 @@ template <int MaxItems>
 class SpatialHash {
 public:
     static constexpr int kGrid = 128;  // Must be a power of two.
+    static_assert((kGrid & (kGrid - 1)) == 0, "wrapping cells uses a bit mask, so the grid must be a power of two");
+    static_assert(MaxItems <= 65536, "item indices are stored in 16 bits");
     static constexpr float kCellSize = 64.0f;
 
     template <typename Item>

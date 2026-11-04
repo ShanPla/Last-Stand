@@ -85,6 +85,9 @@ inline constexpr WeaponLevel kWeaponLevels[static_cast<int>(WeaponId::Count)][kM
 };
 // clang-format on
 
+// The tables are sized by the enum, so a missing row would quietly fill with zeros.
+static_assert(kWeaponLevels[static_cast<int>(WeaponId::Count) - 1][0].cooldown > 0.0f, "a weapon row is missing");
+
 inline constexpr float kBulletRadius = 6.0f;
 inline constexpr float kPelletRadius = 4.5f;
 inline constexpr float kFlameRadius = 13.0f;
@@ -164,7 +167,7 @@ inline constexpr EnemyStats kEnemyStats[static_cast<int>(EnemyType::Count)] = {
     /* Bloater  */ {55, 62, 19, 10, 3, 0.7f},
     /* Crawler  */ {12, 115, 9, 5, 1, 1.2f},
     /* Charger  */ {60, 75, 16, 14, 4, 0.5f},
-    /* Boss     */ {65000, 72, 58, 30, 0, 0.0f},
+    /* Boss     */ {65000, 72, 58, 30, 0, 0.0f},  // HP is replaced at spawn. See kBossHpAtReferenceDps.
 };
 
 // Enemy HP grows with time, so upgrades do not make the late game trivial.
@@ -239,6 +242,7 @@ inline constexpr float kBossDamageShare[static_cast<int>(WeaponId::Count)] = {
     /* Tesla           */ 1.0f,
     /* Blades          */ 0.4f,
 };
+static_assert(kBossDamageShare[static_cast<int>(WeaponId::Count) - 1] > 0.0f, "a weapon is missing from kBossDamageShare");
 
 // --- Boss --------------------------------------------------------------------
 inline constexpr float kBossPhase2HpFraction = 0.66f;

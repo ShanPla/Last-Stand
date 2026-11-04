@@ -13,7 +13,7 @@ inline constexpr int kSaveVersion = 1;
 struct Settings {
     float musicVolume = 0.7f;     // 0 to 1.
     float effectsVolume = 0.8f;   // 0 to 1.
-    float screenShake = 1.0f;     // 0 to 1. Read by the renderer.
+    float screenShake = 1.0f;     // 0 to 1. Saved now, for the screen shake effect once it exists.
     float flashIntensity = 1.0f;  // 0 to 1. Scales screen flashes and the low health pulse.
     bool damageNumbers = true;
     bool reducedMotion = false;   // Starts from the system preference when nothing is saved.

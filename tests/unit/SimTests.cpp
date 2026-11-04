@@ -225,7 +225,8 @@ TEST_CASE("merging gems keeps total XP and reduces the count") {
 
 TEST_CASE("wave table rows are valid and fit the spawn accumulator array") {
     const int rows = static_cast<int>(std::size(balance::kWaves));
-    CHECK(rows <= static_cast<int>(std::size(RunState{}.waveAccumulators)));
+    // The last accumulator is kept for the walkers during the boss fight.
+    CHECK(rows < static_cast<int>(std::size(RunState{}.waveAccumulators)));
     for (const balance::WaveRow& row : balance::kWaves) {
         CHECK(row.startSec < row.endSec);
         CHECK(row.endSec <= balance::kRunSeconds);

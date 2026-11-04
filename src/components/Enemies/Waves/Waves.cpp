@@ -91,7 +91,8 @@ void update(GameState& state) {
     // no run can become unwinnable. Stress tests skip this like the rest of the waves.
     const float crateSeconds = run.bossSpawned ? balance::kBossAmmoCrateSeconds : balance::kTimedAmmoCrateSeconds;
     const float crateDistance = run.bossSpawned ? balance::kBossAmmoCrateDistance : balance::kTimedAmmoCrateDistance;
-    if (run.tick % static_cast<uint32_t>(crateSeconds / kDt) == 0) {
+    // Rounded, because the division can land just under a whole number of steps.
+    if (run.tick % static_cast<uint32_t>(std::lround(crateSeconds / kDt)) == 0) {
         const Vec2 offset = fromAngle(state.rng.range(0.0f, kTau)) * crateDistance;
         pickups::spawnPickup(state, state.player.pos + offset, PickupType::Ammo);
     }
