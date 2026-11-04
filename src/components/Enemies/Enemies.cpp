@@ -1,6 +1,13 @@
 #include "components/Enemies/Enemies.h"
 
-#include "components/Enemies/Drifter/Drifter.h"
+#include "components/Enemies/Bloater/Bloater.h"
+#include "components/Enemies/Boss/Boss.h"
+#include "components/Enemies/Brute/Brute.h"
+#include "components/Enemies/Charger/Charger.h"
+#include "components/Enemies/Crawler/Crawler.h"
+#include "components/Enemies/Runner/Runner.h"
+#include "components/Enemies/Spitter/Spitter.h"
+#include "components/Enemies/Walker/Walker.h"
 #include "components/Pickups/Pickups.h"
 #include "components/Player/Player.h"
 #include "data/Balance.h"
@@ -15,9 +22,17 @@ namespace {
 // Each enemy's wanted velocity for this step. Every type has its own folder.
 Vec2 behaviourVelocity(GameState& state, Enemy& enemy) {
     switch (enemy.type) {
-        default:
-            return drifterVelocity(state, enemy);
+        case EnemyType::Walker: return walkerVelocity(state, enemy);
+        case EnemyType::Runner: return runnerVelocity(state, enemy);
+        case EnemyType::Brute: return bruteVelocity(state, enemy);
+        case EnemyType::Spitter: return spitterVelocity(state, enemy);
+        case EnemyType::Bloater: return bloaterVelocity(state, enemy);
+        case EnemyType::Crawler: return crawlerVelocity(state, enemy);
+        case EnemyType::Charger: return chargerVelocity(state, enemy);
+        case EnemyType::Boss: return bossVelocity(state, enemy);
+        case EnemyType::Count: break;
     }
+    return Vec2{};
 }
 
 // Pushes overlapping enemies apart so crowds spread out instead of stacking.
@@ -83,7 +98,7 @@ void update(GameState& state) {
         Enemy& enemy = state.enemies[i];
         enemy.prevPos = enemy.pos;
         enemy.flash = std::max(0.0f, enemy.flash - kDt);
-        enemy.orbitCooldown = std::max(0.0f, enemy.orbitCooldown - kDt);
+        enemy.bladeCooldown = std::max(0.0f, enemy.bladeCooldown - kDt);
 
         const Vec2 velocity = behaviourVelocity(state, enemy) + enemy.knock + separation(state, enemy, i);
         enemy.pos += velocity * kDt;
@@ -140,7 +155,7 @@ void hit(GameState& state, int enemyIndex, float amount, WeaponId source, Vec2 k
 
 void removeDead(GameState& state) {
     // Backward, so a removed item's replacement has already been checked. Enemies
-    // added during this loop (Splitter shards) sit past the index and are not visited.
+    // added during this loop (Bloater crawlers) sit past the index and are not visited.
     for (int i = state.enemies.count - 1; i >= 0; --i) {
         if (state.enemies[i].hp > 0.0f) continue;
         const Enemy dead = state.enemies[i];

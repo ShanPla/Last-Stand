@@ -17,7 +17,7 @@ constexpr float kInputDelaySeconds = 0.35f;  // Stops a held key or fast tap cho
 float g_openTime = 0.0f;
 int g_selected = 0;
 
-const char* const kWeaponNames[] = {"Pulse", "Orbit", "Nova", "Arc", "Mines", "Lance", "Swarm", "Ripple"};
+const char* const kWeaponNames[] = {"Rifle", "Shotgun", "SMG", "Sniper", "Flamethrower", "Grenade Launcher", "Homing Rockets", "Landmines", "Tesla Coil", "Combat Blades"};
 const char* const kPassiveNames[] = {"Damage", "Fire Rate", "Area", "Move Speed", "Pickup Range", "Armor"};
 
 const char* cardTitle(const Card& card) {

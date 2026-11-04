@@ -133,7 +133,7 @@ void draw(const GameState& state, float alpha, const Camera2D& camera) {
         if (!view.contains(pos, enemy.radius + 4.0f)) continue;
         const Vec2 heading = normalizedOr(state.player.pos - pos, Vec2{1.0f, 0.0f});
         const Color fill = enemy.flash > 0.0f ? theme::kEnemyHitFlash : theme::kEnemyFill;
-        drawShape(kTriangle, pos, enemy.radius * 1.25f, heading, fill, theme::kEnemyDrifter, pixel * 2.5f);
+        drawShape(kTriangle, pos, enemy.radius * 1.25f, heading, fill, theme::kEnemyWalker, pixel * 2.5f);
     }
 
     for (const Projectile& shot : state.projectiles) {

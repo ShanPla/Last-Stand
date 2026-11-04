@@ -20,7 +20,7 @@ inline constexpr Color kGemFill{8, 48, 44, 255};
 inline constexpr Color kGemLarge{120, 190, 255, 255};
 
 // Threats (warm).
-inline constexpr Color kEnemyDrifter{255, 96, 72, 255};
+inline constexpr Color kEnemyWalker{255, 96, 72, 255};
 inline constexpr Color kEnemyFill{44, 10, 12, 255};
 inline constexpr Color kEnemyHitFlash{255, 255, 255, 255};
 inline constexpr Color kEnemyBullet{255, 60, 170, 255};

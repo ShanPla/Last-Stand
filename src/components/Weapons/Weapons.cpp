@@ -1,7 +1,16 @@
 #include "components/Weapons/Weapons.h"
 
 #include "components/Enemies/Enemies.h"
-#include "components/Weapons/Pulse/Pulse.h"
+#include "components/Weapons/Blades/Blades.h"
+#include "components/Weapons/Flamethrower/Flamethrower.h"
+#include "components/Weapons/GrenadeLauncher/GrenadeLauncher.h"
+#include "components/Weapons/Landmines/Landmines.h"
+#include "components/Weapons/Rifle/Rifle.h"
+#include "components/Weapons/Rockets/Rockets.h"
+#include "components/Weapons/Shotgun/Shotgun.h"
+#include "components/Weapons/Smg/Smg.h"
+#include "components/Weapons/Sniper/Sniper.h"
+#include "components/Weapons/Tesla/Tesla.h"
 
 #include <cmath>
 
@@ -18,9 +27,17 @@ const balance::Evolution* evolutionFor(WeaponId id) {
 
 void fire(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
     switch (slot.id) {
-        default:
-            firePulse(state, slot, stats);
-            break;
+        case WeaponId::Rifle: fireRifle(state, slot, stats); break;
+        case WeaponId::Shotgun: fireShotgun(state, slot, stats); break;
+        case WeaponId::Smg: fireSmg(state, slot, stats); break;
+        case WeaponId::Sniper: fireSniper(state, slot, stats); break;
+        case WeaponId::Flamethrower: fireFlamethrower(state, slot, stats); break;
+        case WeaponId::GrenadeLauncher: fireGrenadeLauncher(state, slot, stats); break;
+        case WeaponId::Rockets: fireRockets(state, slot, stats); break;
+        case WeaponId::Landmines: fireLandmines(state, slot, stats); break;
+        case WeaponId::Tesla: fireTesla(state, slot, stats); break;
+        case WeaponId::Blades: fireBlades(state, slot, stats); break;
+        case WeaponId::Count: break;
     }
 }
 
@@ -63,6 +80,10 @@ void grant(GameState& state, WeaponId id) {
     slot = WeaponSlot{};
     slot.id = id;
 }
+
+void refill(GameState&, WeaponSlot&) {}
+
+void addAmmoFraction(GameState&, float) {}
 
 balance::WeaponLevel effectiveStats(const GameState& state, const WeaponSlot& slot) {
     balance::WeaponLevel stats = balance::kWeaponLevels[static_cast<int>(slot.id)][slot.level - 1];

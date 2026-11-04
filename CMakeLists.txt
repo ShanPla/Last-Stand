@@ -6,11 +6,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(LS_BUILD_TESTS "Build the native unit tests and bot run" ON)
+option(LS_SIM_ONLY "Build only the simulation and its tests, with no raylib or window" OFF)
 
 # ---------------------------------------------------------------------------
 # raylib: pinned version and hash. Stored in build/downloads so that deleting a
 # single build folder does not download it again.
 # ---------------------------------------------------------------------------
+if(NOT LS_SIM_ONLY)
 include(FetchContent)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_GAMES OFF CACHE BOOL "" FORCE)
@@ -26,6 +28,7 @@ FetchContent_Declare(raylib
   DOWNLOAD_EXTRACT_TIMESTAMP FALSE
 )
 FetchContent_MakeAvailable(raylib)
+endif()
 
 # ---------------------------------------------------------------------------
 # The simulation is plain C++ with no raylib dependency, so that unit tests and
@@ -43,7 +46,11 @@ list(FILTER LS_SIM_SOURCES EXCLUDE REGEX "/core/(App|Platform)\\.cpp$")
 
 add_library(ls_sim STATIC ${LS_SIM_SOURCES})
 target_include_directories(ls_sim PUBLIC src)
+if(MSVC)
+  target_compile_options(ls_sim PRIVATE /W4 /utf-8)
+endif()
 
+if(NOT LS_SIM_ONLY)
 file(GLOB_RECURSE LS_GAME_SOURCES CONFIGURE_DEPENDS
   src/components/Effects/*.cpp
   src/components/Audio/*.cpp
@@ -57,9 +64,9 @@ add_executable(laststand src/main.cpp src/core/Platform.cpp ${LS_APP_SOURCE} ${L
 target_link_libraries(laststand PRIVATE ls_sim raylib)
 
 if(MSVC)
-  target_compile_options(ls_sim PRIVATE /W4 /utf-8)
   target_compile_options(laststand PRIVATE /W4 /utf-8)
   target_link_libraries(laststand PRIVATE winmm)
+endif()
 endif()
 
 # ---------------------------------------------------------------------------

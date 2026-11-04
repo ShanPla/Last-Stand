@@ -27,17 +27,17 @@ inline constexpr int kMaxHeldPassives = 6;
 inline constexpr int kMaxLevelPerItem = 5;
 inline constexpr int kOffersPerLevel = 3;
 
-enum class EnemyType : uint8_t { Drifter, Swarmer, Brute, Spitter, Splitter, Shard, Charger, Boss, Count };
-enum class WeaponId : uint8_t { Pulse, Orbit, Nova, Arc, Mines, Lance, Swarm, Ripple, Count };
+enum class EnemyType : uint8_t { Walker, Runner, Brute, Spitter, Bloater, Crawler, Charger, Boss, Count };
+enum class WeaponId : uint8_t { Rifle, Shotgun, Smg, Sniper, Flamethrower, GrenadeLauncher, Rockets, Landmines, Tesla, Blades, Count };
 enum class PassiveId : uint8_t { Damage, FireRate, Area, MoveSpeed, PickupRange, Armor, Count };
-enum class PickupType : uint8_t { Heal, Magnet, Bomb, Count };
+enum class PickupType : uint8_t { Heal, Magnet, Bomb, Ammo, Count };
 
-// Player-owned moving objects. Beams, rings and lightning are Zones instead.
-enum class ProjectileKind : uint8_t { Shot, Mine, Missile };
+// Player-owned moving objects. Beams, blasts and lightning are Zones instead.
+enum class ProjectileKind : uint8_t { Bullet, Flame, Grenade, Rocket, Mine };
 
 // Short-lived area effects that have a shape and sometimes deal damage.
 // Hostile zones are boss attacks: they show a telegraph, then hit at the end.
-enum class ZoneKind : uint8_t { NovaBurst, RippleRing, LanceBeam, ArcLink, MineBlast, BossCircle, BossLine };
+enum class ZoneKind : uint8_t { Explosion, SniperBeam, TeslaLink, BossCircle, BossLine };
 
 struct Enemy {
     Vec2 pos;
@@ -51,9 +51,9 @@ struct Enemy {
     float contactDamage = 0.0f;
     float timer = 0.0f;  // Meaning depends on the enemy type's behaviour.
     float flash = 0.0f;  // Seconds of white hit flash left. Only the renderer reads it.
-    float orbitCooldown = 0.0f;  // Stops one Orbit blade hitting every step.
+    float bladeCooldown = 0.0f;  // Stops one Combat Blade hitting every step.
     uint32_t id = 0;     // Stays the same when the pool moves this item.
-    EnemyType type = EnemyType::Drifter;
+    EnemyType type = EnemyType::Walker;
     uint8_t state = 0;   // Meaning depends on the enemy type's behaviour.
     bool elite = false;
 };
@@ -68,8 +68,8 @@ struct Projectile {
     float area = 0.0f;       // Blast radius, for mines and missiles.
     uint32_t lastHitId = 0;  // Stops a piercing shot hitting one enemy twice in a row.
     int16_t pierce = 0;      // Enemies it can pass through before it is used up.
-    ProjectileKind kind = ProjectileKind::Shot;
-    WeaponId source = WeaponId::Pulse;
+    ProjectileKind kind = ProjectileKind::Bullet;
+    WeaponId source = WeaponId::Rifle;
     bool evolved = false;
 };
 
@@ -91,8 +91,8 @@ struct Zone {
     float life = 0.0f;
     float maxLife = 0.0f;
     float damage = 0.0f;
-    ZoneKind kind = ZoneKind::NovaBurst;
-    WeaponId source = WeaponId::Nova;
+    ZoneKind kind = ZoneKind::Explosion;
+    WeaponId source = WeaponId::Rifle;
     bool evolved = false;
     bool hostile = false;
     bool applied = false;     // True once single-hit zones have dealt damage.
@@ -111,10 +111,14 @@ struct Pickup {
 };
 
 struct WeaponSlot {
-    WeaponId id = WeaponId::Pulse;
+    WeaponId id = WeaponId::Rifle;
     uint8_t level = 1;
     bool evolved = false;
     float cooldown = 0.0f;
+    int magazine = 0;         // Rounds loaded. Weapons with no ammo keep this at 0.
+    int reserve = 0;          // Rounds carried, not loaded.
+    float reloadLeft = 0.0f;  // Above 0 means reloading. The renderer also reads this.
+    bool dryReported = false;  // True once this weapon's WeaponDry event has been sent.
 };
 
 struct PassiveSlot {
@@ -136,6 +140,7 @@ struct Player {
     Vec2 pos;
     Vec2 prevPos;
     Vec2 facing{1.0f, 0.0f};
+    Vec2 aim{1.0f, 0.0f};  // Direction of the last shot. The gun is drawn pointing this way.
     float hp = 0.0f;
     float maxHp = 0.0f;
     float invulnerable = 0.0f;
@@ -155,7 +160,7 @@ enum class CardKind : uint8_t { Weapon, Passive, Evolution, Heal };
 // One level-up choice.
 struct Card {
     CardKind kind = CardKind::Heal;
-    WeaponId weapon = WeaponId::Pulse;    // For Weapon and Evolution cards.
+    WeaponId weapon = WeaponId::Rifle;    // For Weapon and Evolution cards.
     PassiveId passive = PassiveId::Damage;  // For Passive cards.
     uint8_t newLevel = 1;
 };
@@ -176,7 +181,7 @@ struct RunState {
     float waveAccumulators[32] = {};  // Fractional spawns owed, per wave table row.
     int nextEliteEvent = 0;
     int nextPickupDropKills = 0;
-    float orbitAngle = 0.0f;
+    float bladeAngle = 0.0f;
     bool bossSpawned = false;
     uint8_t bossPhase = 0;
     float bossHpFraction = 0.0f;  // Copied each step, for the HUD boss bar.
@@ -188,7 +193,7 @@ struct RunState {
 // audio read them later, which keeps the simulation free of graphics and sound.
 enum class EventType : uint8_t {
     EnemyHit, EnemyKilled, EliteKilled, PlayerHit, GemCollected, LevelUp, PickupCollected,
-    BombBlast, WeaponFired, EvolutionGained, BossSpawned, BossPhaseChanged, BossKilled, PlayerDied,
+    BombBlast, WeaponFired, ReloadStarted, WeaponDry, EvolutionGained, BossSpawned, BossPhaseChanged, BossKilled, PlayerDied,
 };
 
 struct SimEvent {

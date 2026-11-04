@@ -19,7 +19,7 @@ void applyStressTargets(GameState& state) {
     const Vec2 center = state.player.pos;
     while (state.enemies.count < state.run.debugEnemyTarget) {
         const Vec2 pos = center + fromAngle(state.rng.range(0.0f, kTau)) * state.rng.range(120.0f, 650.0f);
-        if (!enemies::spawn(state, EnemyType::Drifter, pos, false)) break;
+        if (!enemies::spawn(state, EnemyType::Walker, pos, false)) break;
     }
     while (state.projectiles.count < state.run.debugProjectileTarget) {
         Projectile* shot = state.projectiles.add();
@@ -29,7 +29,7 @@ void applyStressTargets(GameState& state) {
         shot->prevPos = pos;
         shot->vel = fromAngle(state.rng.range(0.0f, kTau)) * 200.0f;
         shot->damage = 1.0f;
-        shot->radius = balance::kShotRadius;
+        shot->radius = balance::kBulletRadius;
         shot->life = 1.5f;
         shot->pierce = 2;
     }
@@ -59,7 +59,7 @@ void newRun(GameState& state, uint64_t seed) {
     player::reset(state);
     upgrades::recomputeStats(state);
     state.player.hp = state.player.maxHp;
-    weapons::grant(state, WeaponId::Pulse);
+    weapons::grant(state, WeaponId::Rifle);
 }
 
 void step(GameState& state, const InputFrame& input) {

@@ -93,7 +93,7 @@ TEST_CASE("player moves at full speed, and diagonals are not faster") {
 
 TEST_CASE("an enemy touching the player deals damage, then invulnerability blocks repeats") {
     auto state = makeRun();
-    enemies::spawn(*state, EnemyType::Drifter, Vec2{1.0f, 0.0f}, false);
+    enemies::spawn(*state, EnemyType::Walker, Vec2{1.0f, 0.0f}, false);
     const float startHp = state->player.hp;
     sim::step(*state, InputFrame{});
     const float afterFirst = state->player.hp;
@@ -105,7 +105,7 @@ TEST_CASE("an enemy touching the player deals damage, then invulnerability block
 TEST_CASE("armor reduces damage but never below the minimum") {
     auto state = makeRun();
     state->player.stats.armor = 100.0f;
-    enemies::spawn(*state, EnemyType::Drifter, Vec2{1.0f, 0.0f}, false);
+    enemies::spawn(*state, EnemyType::Walker, Vec2{1.0f, 0.0f}, false);
     const float startHp = state->player.hp;
     sim::step(*state, InputFrame{});
     CHECK(startHp - state->player.hp == doctest::Approx(balance::kMinDamageTaken));
@@ -116,17 +116,17 @@ TEST_CASE("a shot hits an enemy, damages it, credits the weapon, and is used up"
     Enemy* enemy = enemies::spawn(*state, EnemyType::Brute, Vec2{200.0f, 0.0f}, false);
     REQUIRE(enemy != nullptr);
     const float startHp = enemy->hp;
-    // Pulse fires on the first step, and the shot takes under half a second to arrive.
+    // The Rifle fires on the first step, and the shot takes under half a second to arrive.
     for (int i = 0; i < 30; ++i) sim::step(*state, InputFrame{});
     CHECK(state->enemies[0].hp < startHp);
-    CHECK(state->run.damageByWeapon[static_cast<int>(WeaponId::Pulse)] > 0.0f);
+    CHECK(state->run.damageByWeapon[static_cast<int>(WeaponId::Rifle)] > 0.0f);
 }
 
 TEST_CASE("killing an enemy counts the kill and drops a gem with its XP") {
     auto state = makeRun();
     Enemy* enemy = enemies::spawn(*state, EnemyType::Brute, Vec2{400.0f, 0.0f}, false);
     REQUIRE(enemy != nullptr);
-    enemies::hit(*state, 0, 100000.0f, WeaponId::Pulse, Vec2{});
+    enemies::hit(*state, 0, 100000.0f, WeaponId::Rifle, Vec2{});
     enemies::removeDead(*state);
     CHECK(state->run.kills == 1);
     CHECK(state->enemies.count == 0);
@@ -189,7 +189,7 @@ TEST_CASE("a level 5 weapon with its passive is offered an evolution first") {
     sim::step(*state, InputFrame{});
     REQUIRE(state->run.phase == RunPhase::LevelUp);
     CHECK(state->run.offers[0].kind == CardKind::Evolution);
-    CHECK(state->run.offers[0].weapon == WeaponId::Pulse);
+    CHECK(state->run.offers[0].weapon == WeaponId::Rifle);
 
     InputFrame pick;
     pick.chooseCard = 0;

@@ -54,9 +54,9 @@ int collectCandidates(GameState& state, Card* out, int maxCards) {
         const PassiveId id = static_cast<PassiveId>(i);
         const PassiveSlot* held = findPassive(player, id);
         if (held && held->level < kMaxLevelPerItem) {
-            add(Card{CardKind::Passive, WeaponId::Pulse, id, static_cast<uint8_t>(held->level + 1)});
+            add(Card{CardKind::Passive, WeaponId::Rifle, id, static_cast<uint8_t>(held->level + 1)});
         } else if (!held && player.passiveCount < kMaxHeldPassives) {
-            add(Card{CardKind::Passive, WeaponId::Pulse, id, 1});
+            add(Card{CardKind::Passive, WeaponId::Rifle, id, 1});
         }
     }
     return count;
@@ -85,7 +85,7 @@ void buildOffers(GameState& state) {
     }
     // A finished build still gets a useful choice.
     if (run.offerCount == 0) {
-        run.offers[run.offerCount++] = Card{CardKind::Heal, WeaponId::Pulse, PassiveId::Damage, 1};
+        run.offers[run.offerCount++] = Card{CardKind::Heal, WeaponId::Rifle, PassiveId::Damage, 1};
     }
 }
 
@@ -121,6 +121,7 @@ void choose(GameState& state, int index) {
         case CardKind::Weapon:
             if (WeaponSlot* held = findWeapon(player, card.weapon)) {
                 held->level = card.newLevel;
+                weapons::refill(state, *held);
             } else {
                 weapons::grant(state, card.weapon);
             }
