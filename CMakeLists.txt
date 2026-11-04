@@ -135,6 +135,20 @@ if(EMSCRIPTEN)
 endif()
 
 # ---------------------------------------------------------------------------
+# Balance tool: plays many bot games and prints tuning tables. Native only, and
+# also built with LS_SIM_ONLY. It is a development tool, not part of the game.
+# ---------------------------------------------------------------------------
+if(NOT EMSCRIPTEN)
+  find_package(Threads REQUIRED)
+  file(GLOB LS_BALANCE_SOURCES CONFIGURE_DEPENDS tests/balance/*.cpp)
+  add_executable(ls_balance ${LS_BALANCE_SOURCES})
+  target_link_libraries(ls_balance PRIVATE ls_sim Threads::Threads)
+  if(MSVC)
+    target_compile_options(ls_balance PRIVATE /W4 /utf-8)
+  endif()
+endif()
+
+# ---------------------------------------------------------------------------
 # Native tests
 # ---------------------------------------------------------------------------
 if(LS_BUILD_TESTS AND NOT EMSCRIPTEN)
