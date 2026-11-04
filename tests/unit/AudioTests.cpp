@@ -320,7 +320,9 @@ TEST_CASE("the router limits rates and picks the right sound") {
     // A bomb hit is WeaponId::Count. It must be safe and silent.
     CHECK_FALSE(r3.route(makeEvent(EventType::EnemyHit, static_cast<uint8_t>(WeaponId::Count)), 4.0f, req));
     CHECK_FALSE(r3.route(makeEvent(EventType::EnemyHit, 255), 4.0f, req));
-    CHECK(r3.route(makeEvent(EventType::EnemyHit, static_cast<uint8_t>(WeaponId::Rockets)), 5.0f, req));
+    // A blast has its own event, so that one explosion isn't one sound per zombie hit.
+    CHECK_FALSE(r3.route(makeEvent(EventType::EnemyHit, static_cast<uint8_t>(WeaponId::Rockets)), 5.0f, req));
+    CHECK(r3.route(makeEvent(EventType::Explosion, static_cast<uint8_t>(WeaponId::Landmines)), 5.0f, req));
     CHECK(req.id == sfx::SfxId::Explosion);
     CHECK(r3.route(makeEvent(EventType::ReloadStarted, static_cast<uint8_t>(WeaponId::Rifle)), 6.0f, req));
     CHECK(req.id == sfx::SfxId::Reload);

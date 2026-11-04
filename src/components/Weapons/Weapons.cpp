@@ -58,6 +58,8 @@ void explode(GameState& state, Vec2 center, float radius, float damage, WeaponId
         enemies::hit(state, index, damage, source, outward * balance::kAreaKnockback);
         return false;
     });
+    // Sent even when the blast hits nothing, so that a lone mine still makes a sound.
+    pushEvent(state, EventType::Explosion, center, radius, static_cast<uint8_t>(source));
     if (Zone* zone = state.zones.add()) {
         zone->kind = ZoneKind::Explosion;
         zone->a = center;

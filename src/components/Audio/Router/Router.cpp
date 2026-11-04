@@ -39,10 +39,15 @@ bool Router::route(const SimEvent& event, float now, PlayRequest& out) {
             // WeaponId::Count means no weapon was behind the hit, such as a bomb. The bomb has its own sound.
             if (event.detail >= static_cast<uint8_t>(WeaponId::Count)) return false;
             const WeaponId weapon = static_cast<WeaponId>(event.detail);
-            // Blast damage is credited to the weapon that made it, so those hits become one boom.
-            if (weapon == WeaponId::GrenadeLauncher || weapon == WeaponId::Landmines) return start(SfxId::Explosion, SfxId::Explosion, now, 0.85f, 0.08f, out);
-            if (weapon == WeaponId::Rockets) return start(SfxId::Explosion, SfxId::Explosion, now, 0.6f, 0.08f, out);
+            // Blast damage is credited to the weapon that made it. The blast has its own
+            // event and sound, so a hit from one stays quiet.
+            if (weapon == WeaponId::GrenadeLauncher || weapon == WeaponId::Landmines || weapon == WeaponId::Rockets) return false;
             return start(SfxId::EnemyHit, SfxId::EnemyHit, now, event.flag ? 1.0f : 0.7f, 0.12f, out);
+        }
+        case EventType::Explosion: {
+            const WeaponId weapon = static_cast<WeaponId>(event.detail);
+            if (weapon == WeaponId::Rockets) return start(SfxId::Explosion, SfxId::Explosion, now, 0.6f, 0.08f, out);
+            return start(SfxId::Explosion, SfxId::Explosion, now, 0.85f, 0.08f, out);
         }
         case EventType::EnemyKilled: {
             const EnemyType type = static_cast<EnemyType>(event.detail);

@@ -194,6 +194,7 @@ struct RunState {
 enum class EventType : uint8_t {
     EnemyHit, EnemyKilled, EliteKilled, PlayerHit, GemCollected, LevelUp, PickupCollected,
     BombBlast, WeaponFired, ReloadStarted, WeaponDry, EvolutionGained, BossSpawned, BossPhaseChanged, BossKilled, PlayerDied,
+    Explosion,  // detail is the weapon that made it. value is the blast radius.
 };
 
 struct SimEvent {
