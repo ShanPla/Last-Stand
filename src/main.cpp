@@ -22,7 +22,9 @@ static void setWindowIconFromCode() {
     constexpr int kSize = 64;
     const RenderTexture2D target = LoadRenderTexture(kSize, kSize);
     BeginTextureMode(target);
-    ClearBackground(BLANK);
+    // A see-through clear is right here: the icon needs a transparent background, so the
+    // window shows the zombie head and not a square.
+    ClearBackground(ls::theme::kNoColor);
     ls::ui::drawZombieIcon(kSize / 2.0f, kSize / 2.0f, 60.0f, 1.0f);
     EndTextureMode();
     Image icon = LoadImageFromTexture(target.texture);
