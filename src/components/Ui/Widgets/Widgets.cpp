@@ -23,6 +23,9 @@ float g_fade = 1.0f;
 bool g_inputEnabled = true;
 Registered g_registered[kMaxRegistered];
 int g_registeredCount = 0;
+constexpr int kMaxExtents = 24;
+Registered g_extents[kMaxExtents];
+int g_extentCount = 0;
 const void* g_dragging = nullptr;  // The slider value being dragged, or null.
 char g_selectedName[24] = "";
 
@@ -79,6 +82,7 @@ void beginFrame(const input::Snapshot& input, float dtReal) {
     if (!input.pointerDown && !input.pointerPressed) g_dragging = nullptr;
     g_seconds += dtReal;
     g_registeredCount = 0;
+    g_extentCount = 0;
     g_selectedName[0] = '\0';
     g_fade = 1.0f;
     g_inputEnabled = true;
@@ -288,6 +292,15 @@ void registerRect(const char* name, Rectangle rect) {
     std::snprintf(entry.name, sizeof(entry.name), "%s", name);
     entry.rect = rect;
 }
+
+void registerExtent(const char* name, Rectangle rect) {
+    if (g_extentCount >= kMaxExtents) return;
+    Registered& entry = g_extents[g_extentCount++];
+    std::snprintf(entry.name, sizeof(entry.name), "%s", name);
+    entry.rect = rect;
+}
+int extentCount() { return g_extentCount; }
+const Registered& extent(int index) { return g_extents[index]; }
 
 void markSelected(const char* name) { std::snprintf(g_selectedName, sizeof(g_selectedName), "%s", name); }
 const char* selectedName() { return g_selectedName; }

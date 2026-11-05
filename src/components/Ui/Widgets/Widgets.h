@@ -130,6 +130,13 @@ const Registered& registered(int index);
 // Lets screens that draw their own hit areas, such as cards, appear in the record.
 void registerRect(const char* name, Rectangle rect);
 
+// Panels and the reach of their content, for the layout tests: where a tip's text really
+// ends, how far a build list runs. They are not controls, so they are kept apart from
+// registerRect, and the tests that check every control (size, overlap) never see them.
+void registerExtent(const char* name, Rectangle rect);
+int extentCount();
+const Registered& extent(int index);
+
 // The control that has keyboard or gamepad focus this frame, for the tests.
 void markSelected(const char* name);
 const char* selectedName();

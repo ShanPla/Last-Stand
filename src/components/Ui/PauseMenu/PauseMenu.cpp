@@ -72,7 +72,9 @@ void drawWeaponRow(const GameState& state, const WeaponSlot& slot, Rectangle r, 
 
     // Name and level on the left, and exact numbers in the middle when there is room.
     const float room = rightEdge - ammoWidth - 12.0f * u - nameX;
-    const float shown = font::fitSize(slotName(slot), nameSize, room * (showStats ? 0.5f : 0.7f));
+    // The level tag follows the name, so without the stats column the name may take the rest.
+    const float levelTagWidth = font::measure("Lv 5", 15.0f * u) + 12.0f * u;
+    const float shown = font::fitSize(slotName(slot), nameSize, showStats ? room * 0.5f : room - levelTagWidth);
     textMiddle(slotName(slot), nameX, cy - 1.0f * u, shown, theme::kUiText);
     const float nameWidth = font::measure(slotName(slot), shown);
     std::snprintf(buffer, sizeof(buffer), "Lv %d", slot.level);
@@ -87,26 +89,29 @@ void drawWeaponRow(const GameState& state, const WeaponSlot& slot, Rectangle r, 
     }
 }
 
+// A squeezed window (a near-square one, say) uses shorter passive cells and weapon rows.
+float passiveCellHeight(bool compact) { return (compact ? 26.0f : 30.0f) * ui::u(); }
+
 // Everything in the build panel that is not a weapon row.
-float buildFixedHeight(const Player& player) {
+float buildFixedHeight(const Player& player, bool compact) {
     const float u = ui::u();
     const float passiveRows = static_cast<float>((player.passiveCount + 1) / 2);
-    return 28.0f * u + 30.0f * u + 20.0f * u + 8.0f * u + (player.passiveCount > 0 ? 20.0f * u + passiveRows * 30.0f * u : 0.0f);
+    return 28.0f * u + 30.0f * u + 20.0f * u + 8.0f * u + (player.passiveCount > 0 ? 20.0f * u + passiveRows * passiveCellHeight(compact) : 0.0f);
 }
 
 // Weapon rows shrink a little when the window is short, but never below readable.
-float buildRowHeight(const Player& player, float availableHeight) {
+float buildRowHeight(const Player& player, float availableHeight, bool compact) {
     const float u = ui::u();
     const float wanted = (ui::layout().portrait ? 44.0f : 38.0f) * u;
-    const float room = (availableHeight - buildFixedHeight(player)) / static_cast<float>(std::max(1, player.weaponCount));
-    return std::max(26.0f * u, std::min(wanted, room));
+    const float room = (availableHeight - buildFixedHeight(player, compact)) / static_cast<float>(std::max(1, player.weaponCount));
+    return std::max((compact ? 22.0f : 26.0f) * u, std::min(wanted, room));
 }
 
-float buildHeight(const Player& player, float rowHeight) {
-    return buildFixedHeight(player) + rowHeight * static_cast<float>(player.weaponCount);
+float buildHeight(const Player& player, float rowHeight, bool compact) {
+    return buildFixedHeight(player, compact) + rowHeight * static_cast<float>(player.weaponCount);
 }
 
-void drawBuild(const GameState& state, Rectangle r, bool showStats, float rowHeight) {
+void drawBuild(const GameState& state, Rectangle r, bool showStats, float rowHeight, bool compact) {
     const float u = ui::u();
     const Player& player = state.player;
     panel(r, theme::kUiPanel, theme::kUiBorder, 16.0f * u);
@@ -135,18 +140,31 @@ void drawBuild(const GameState& state, Rectangle r, bool showStats, float rowHei
         text("PASSIVES", r.x + pad, y, 14.0f * u, theme::kUiTextDim, font::Align::Left, 2.0f * u);
         y += 20.0f * u;
         const float cellWidth = (r.width - pad * 1.2f) * 0.5f;
-        const float cellHeight = 30.0f * u;
+        const float cellHeight = passiveCellHeight(compact);
         for (int i = 0; i < player.passiveCount; ++i) {
             const PassiveSlot& passive = player.passives[i];
             const Rectangle cell{r.x + pad * 0.6f + static_cast<float>(i % 2) * cellWidth, y + static_cast<float>(i / 2) * cellHeight, cellWidth - 6.0f * u, cellHeight - 2.0f * u};
             drawPassiveIcon(passive.id, cell.x + 14.0f * u, cell.y + cell.height * 0.5f, 24.0f * u, tint(theme::kUiGem));
             std::snprintf(buffer, sizeof(buffer), "%s %d", passiveName(passive.id), passive.level);
-            textMiddle(buffer, cell.x + 32.0f * u, cell.y + cell.height * 0.5f, font::fitSize(buffer, 17.0f * u, cell.width * 0.5f), theme::kUiText);
             char effect[32];
             passiveEffect(player, passive.id, effect, sizeof(effect));
+            // In a narrow panel the name and the full effect would run into each other. Every
+            // effect then keeps only its number (the name already says what it is).
+            const float textRoom = cell.width - 32.0f * u;
+            if (textRoom < 200.0f * u) {
+                for (char* c = effect; *c; ++c) {
+                    if (*c == ' ') { *c = '\0'; break; }
+                }
+            }
+            const float effectWidth = font::measure(effect, 16.0f * u);
+            textMiddle(buffer, cell.x + 32.0f * u, cell.y + cell.height * 0.5f, font::fitSize(buffer, 17.0f * u, textRoom - effectWidth - 8.0f * u), theme::kUiText);
             textMiddle(effect, cell.x + cell.width, cell.y + cell.height * 0.5f, 16.0f * u, theme::kNewBest, font::Align::Right);
         }
+        y += static_cast<float>((player.passiveCount + 1) / 2) * cellHeight;
     }
+    // The panel, and how far its content really reaches, for the layout tests.
+    registerExtent("Build", r);
+    registerExtent("Build content", Rectangle{r.x, r.y, r.width, y - r.y});
 }
 
 // The level this run is on, in its own color, so it is clear what the run counts towards.
@@ -167,18 +185,20 @@ PauseAction drawPauseMenu(const GameState& state) {
     PauseAction action = PauseAction::None;
     DrawRectangle(0, 0, static_cast<int>(l.w), static_cast<int>(l.h), tint(theme::kScreenScrim));
 
-    const bool wide = !l.portrait && l.width() >= 760.0f * u;
-    navigate(g_nav, 4);
+    // Two panes need room for the buttons and a readable build list. A 4:3 window is wide
+    // enough for both, but not for the 760 design units the roomier look would want.
+    const bool wide = !l.portrait && l.width() >= 690.0f * u;
     const char* const labels[4] = {"Resume", "Settings", "Restart", "Quit to Title"};
 
     if (wide) {
+        navigate(g_nav, 4);
         const float menuWidth = 290.0f * u;
         const float gap = 26.0f * u;
         const float buildWidth = std::min(l.width() - menuWidth - gap, 600.0f * u);
         const float total = menuWidth + gap + buildWidth;
         const float x = l.centerX() - total * 0.5f;
-        const float rowHeight = buildRowHeight(state.player, l.height());
-        const float height = buildHeight(state.player, rowHeight);
+        const float rowHeight = buildRowHeight(state.player, l.height(), false);
+        const float height = buildHeight(state.player, rowHeight, false);
         textShadowed("PAUSED", x, l.top + 4.0f * u, 46.0f * u, theme::kUiAccent, font::Align::Left, 4.0f * u);
         drawLevelTag(state.run.difficulty, x, l.top + 56.0f * u, font::Align::Left);
         float y = l.top + 86.0f * u;
@@ -190,28 +210,47 @@ PauseAction drawPauseMenu(const GameState& state) {
             }
             y += h + 12.0f * u;
         }
-        drawBuild(state, Rectangle{x + menuWidth + gap, l.top + (l.height() - height) * 0.5f, buildWidth, height}, true, rowHeight);
+        drawBuild(state, Rectangle{x + menuWidth + gap, l.top + (l.height() - height) * 0.5f, buildWidth, height}, buildWidth >= 520.0f * u, rowHeight, false);
     } else {
         const float width = std::min(l.width(), 600.0f * u);
         const float x = l.centerX() - width * 0.5f;
-        const float buttonHeight = tall(52.0f * u);
         const float gap = 8.0f * u;
-        const float buttonsHeight = buttonHeight * 4.0f + gap * 3.0f;
-        const float titleHeight = 72.0f * u;
         const float between = 16.0f * u;
+
+        // First the roomy layout: a column of four buttons under the build list.
+        float buttonHeight = tall(52.0f * u);
+        float buttonsHeight = buttonHeight * 4.0f + gap * 3.0f;
+        float titleHeight = 72.0f * u;
+        float availableTotal = l.height() - titleHeight - between - buttonsHeight;
+        bool compact = false;
+        bool grid = false;
+        // If the whole build list can't fit above the buttons (a window that is nearly square),
+        // the buttons go two by two and the list gets shorter rows, so nothing runs under them.
+        if (buildHeight(state.player, 26.0f * u, false) > availableTotal) {
+            compact = true;
+            grid = true;
+            buttonHeight = tall(48.0f * u);
+            buttonsHeight = buttonHeight * 2.0f + gap;
+            titleHeight = 56.0f * u;
+            availableTotal = l.height() - titleHeight - between - buttonsHeight;
+        }
+        navigate(g_nav, 4, grid);  // Two by two buttons also move with left and right.
         // Title, build and buttons form one group, centered, so a tall phone has no big hole.
-        const float availableTotal = l.height() - titleHeight - between - buttonsHeight;
-        const float rowHeight = buildRowHeight(state.player, availableTotal);
-        const float panelHeight = std::min(availableTotal, buildHeight(state.player, rowHeight));
+        const float rowHeight = buildRowHeight(state.player, availableTotal, compact);
+        const float panelHeight = std::min(availableTotal, buildHeight(state.player, rowHeight, compact));
         const float groupTop = l.top + (l.height() - (titleHeight + panelHeight + between + buttonsHeight)) * 0.5f;
-        textShadowed("PAUSED", l.centerX(), groupTop, 40.0f * u, theme::kUiAccent, font::Align::Center, 4.0f * u);
-        drawLevelTag(state.run.difficulty, l.centerX(), groupTop + 44.0f * u, font::Align::Center);
+        textShadowed("PAUSED", l.centerX(), groupTop, (compact ? 34.0f : 40.0f) * u, theme::kUiAccent, font::Align::Center, 4.0f * u);
+        drawLevelTag(state.run.difficulty, l.centerX(), groupTop + (compact ? 36.0f : 44.0f) * u, font::Align::Center);
         const float buildTop = groupTop + titleHeight;
         const float buttonsTop = buildTop + panelHeight + between;
-        drawBuild(state, Rectangle{x, buildTop, width, panelHeight}, false, rowHeight);
+        drawBuild(state, Rectangle{x, buildTop, width, panelHeight}, false, rowHeight, compact);
         for (int i = 0; i < 4; ++i) {
-            if (button(g_nav, i, Rectangle{x, buttonsTop + static_cast<float>(i) * (buttonHeight + gap), width, buttonHeight}, labels[i],
-                       i == 0 ? ButtonLook::Primary : ButtonLook::Normal, i == 0 ? promptPause() : nullptr)) {
+            Rectangle rect{x, buttonsTop + static_cast<float>(i) * (buttonHeight + gap), width, buttonHeight};
+            if (grid) {
+                const float cell = (width - gap) * 0.5f;
+                rect = Rectangle{x + static_cast<float>(i % 2) * (cell + gap), buttonsTop + static_cast<float>(i / 2) * (buttonHeight + gap), cell, buttonHeight};
+            }
+            if (button(g_nav, i, rect, labels[i], i == 0 ? ButtonLook::Primary : ButtonLook::Normal, i == 0 ? promptPause() : nullptr)) {
                 action = static_cast<PauseAction>(i + 1);
             }
         }

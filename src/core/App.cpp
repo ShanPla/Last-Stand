@@ -602,7 +602,7 @@ const char* queryState() {
 // What the screens look like right now, for the browser tests: which screen, the
 // settings, the best run, and the position of every button in drawing buffer pixels.
 const char* queryUi() {
-    static char json[4096];
+    static char json[8192];
     const Settings& st = save::current().settings;
     const SaveData& saved = save::current();
     const BestRun& best = saved.bestFor(saved.difficulty);  // For the level the title has selected.
@@ -614,6 +614,7 @@ const char* queryUi() {
                           "\"bestTime\":%.1f,\"bestKills\":%d,\"bestLevel\":%d,\"wins\":%d,\"runs\":%d,"
                           "\"joystick\":%d,\"won\":%d,\"newBest\":%d,\"moveTime\":%.2f,\"safe\":[%.1f,%.1f,%.1f,%.1f],"
                           "\"safeRect\":[%.1f,%.1f,%.1f,%.1f],\"selected\":\"%s\",\"difficulty\":%d,\"map\":%d,\"summaryDifficulty\":%d,"
+                          "\"audio\":%d,\"duck\":%.3f,\"fontBytes\":%d,"
                           "\"bests\":[[%.1f,%d,%d,%d,%d],[%.1f,%d,%d,%d,%d],[%.1f,%d,%d,%d,%d]],\"buttons\":[",
                           screenName(), g_inDemo ? 1 : 0, devices[static_cast<int>(g_input.lastDevice)], GetScreenWidth(), GetScreenHeight(),
                           static_cast<double>(ui::u()), static_cast<double>(st.musicVolume), static_cast<double>(st.effectsVolume),
@@ -625,11 +626,19 @@ const char* queryUi() {
                           static_cast<double>(insets.bottom), static_cast<double>(ui::layout().left), static_cast<double>(ui::layout().top),
                           static_cast<double>(ui::layout().right), static_cast<double>(ui::layout().bottom), ui::selectedName(),
                           static_cast<int>(saved.difficulty), saved.map, static_cast<int>(g_summary.difficulty),
+                          audio::isRunning() ? 1 : 0, static_cast<double>(audio::duckLevel()), font::memoryBytes(),
                           static_cast<double>(saved.best[0].bestTimeSeconds), saved.best[0].mostKills, saved.best[0].highestLevel, saved.best[0].wins, saved.best[0].runs,
                           static_cast<double>(saved.best[1].bestTimeSeconds), saved.best[1].mostKills, saved.best[1].highestLevel, saved.best[1].wins, saved.best[1].runs,
                           static_cast<double>(saved.best[2].bestTimeSeconds), saved.best[2].mostKills, saved.best[2].highestLevel, saved.best[2].wins, saved.best[2].runs);
     for (int i = 0; i < ui::registeredCount() && n < static_cast<int>(sizeof(json)) - 160; ++i) {
         const ui::Registered& r = ui::registered(i);
+        n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "%s{\"n\":\"%s\",\"x\":%.1f,\"y\":%.1f,\"w\":%.1f,\"h\":%.1f}",
+                           i > 0 ? "," : "", r.name, static_cast<double>(r.rect.x), static_cast<double>(r.rect.y),
+                           static_cast<double>(r.rect.width), static_cast<double>(r.rect.height));
+    }
+    n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "],\"extents\":[");
+    for (int i = 0; i < ui::extentCount() && n < static_cast<int>(sizeof(json)) - 160; ++i) {
+        const ui::Registered& r = ui::extent(i);
         n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "%s{\"n\":\"%s\",\"x\":%.1f,\"y\":%.1f,\"w\":%.1f,\"h\":%.1f}",
                            i > 0 ? "," : "", r.name, static_cast<double>(r.rect.x), static_cast<double>(r.rect.y),
                            static_cast<double>(r.rect.width), static_cast<double>(r.rect.height));

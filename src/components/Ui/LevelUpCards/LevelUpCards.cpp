@@ -19,6 +19,11 @@ namespace {
 
 constexpr float kInputDelaySeconds = 0.35f;  // Stops a held key or fast tap choosing by accident.
 constexpr int kMaxRows = 5;
+// Slot sizes of the held build shown under the cards, in design units. The layout reserves
+// room with the same numbers the strip is drawn with.
+constexpr float kBuildWeaponSlot = 34.0f;
+constexpr float kBuildPassiveSlot = 28.0f;
+constexpr float kBuildStripWidth = 430.0f;  // The widest strip: six weapons and six passives.
 constexpr int kWeaponTypes = static_cast<int>(WeaponId::Count);
 
 float g_openTime = 0.0f;
@@ -339,24 +344,36 @@ Metrics computeMetrics(const Layout& l, int count) {
         for (int i = 0; i < count; ++i) m.cards[i] = Rectangle{startX + static_cast<float>(i) * (cardW + gap), startY, cardW, cardH};
         m.reroll = Rectangle{startX + total - 230.0f * u, rowY, 230.0f * u, rowH};
         m.buildX = startX;
-        m.buildY = rowY + (rowH - weaponSlotsHeight(34.0f * u)) * 0.5f;
+        m.buildY = rowY + (rowH - weaponSlotsHeight(kBuildWeaponSlot * u)) * 0.5f;
     } else {
         const float top = l.top + 70.0f * u;
         const float rerollH = tall(46.0f * u);
-        const float buildH = weaponSlotsHeight(32.0f * u);
-        const float bottomBlock = rerollH + 10.0f * u + buildH + 6.0f * u;
-        const float availableH = l.bottom - bottomBlock - top;
+        const float buildH = weaponSlotsHeight(kBuildWeaponSlot * u);
+        // On a landscape window that is wide enough, the reroll button shares a row with the
+        // build strip. Under it, a 4:3 screen has no room left for three whole cards.
+        const float besideWidth = std::min(l.width(), 660.0f * u);
+        const float besideReroll = besideWidth - (kBuildStripWidth + 12.0f) * u;
+        const bool beside = !l.portrait && besideReroll >= 150.0f * u;
+        const float rowH = beside ? std::max(rerollH, buildH) : rerollH + 10.0f * u + buildH;
+        const float availableH = l.bottom - (rowH + 6.0f * u) - top;
         const float rowGap = 12.0f * u;
-        const float cardH = std::max(120.0f * u, std::min(230.0f * u, (availableH - rowGap * static_cast<float>(count - 1)) / static_cast<float>(count)));
-        const float cardW = std::min(l.width(), 620.0f * u);
+        const float cardH = std::max(108.0f * u, std::min(230.0f * u, (availableH - rowGap * static_cast<float>(count - 1)) / static_cast<float>(count)));
+        const float cardW = beside ? besideWidth : std::min(l.width(), 620.0f * u);
         const float x = l.centerX() - cardW * 0.5f;
         const float stack = cardH * static_cast<float>(count) + rowGap * static_cast<float>(count - 1);
         const float startY = top + std::max(0.0f, (availableH - stack) * 0.5f);
         for (int i = 0; i < count; ++i) m.cards[i] = Rectangle{x, startY + static_cast<float>(i) * (cardH + rowGap), cardW, cardH};
         const float below = startY + stack + 12.0f * u;
-        m.reroll = Rectangle{x, below, cardW, rerollH};
-        m.buildX = x;
-        m.buildY = below + rerollH + 10.0f * u;
+        if (beside) {
+            const float rerollW = std::min(230.0f * u, besideReroll);
+            m.reroll = Rectangle{x + cardW - rerollW, below + (rowH - rerollH) * 0.5f, rerollW, rerollH};
+            m.buildX = x;
+            m.buildY = below + (rowH - buildH) * 0.5f;
+        } else {
+            m.reroll = Rectangle{x, below, cardW, rerollH};
+            m.buildX = x;
+            m.buildY = below + rerollH + 10.0f * u;
+        }
     }
     return m;
 }
@@ -593,9 +610,11 @@ LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal) {
     if (left > 0 && ready && choice.card < 0 && (rerollPressed || in.reroll)) choice.reroll = true;
 
     // The held build, so the player can see what they own.
-    const float weaponSlot = 34.0f * u;
+    const float weaponSlot = kBuildWeaponSlot * u;
     const float used = drawWeaponSlots(state, m.buildX, m.buildY, weaponSlot);
-    drawPassiveSlots(state, m.buildX + used + 18.0f * u, m.buildY + (weaponSlot - 28.0f * u) * 0.5f, 28.0f * u);
+    const float passivesUsed = drawPassiveSlots(state, m.buildX + used + 18.0f * u, m.buildY + (weaponSlot - kBuildPassiveSlot * u) * 0.5f, kBuildPassiveSlot * u);
+    // The strip's real extent, for the layout tests.
+    registerExtent("Build strip",Rectangle{m.buildX, m.buildY, used + 18.0f * u + passivesUsed, weaponSlotsHeight(weaponSlot)});
 
     if (choice.card >= 0) {
         audio::playUi(audio::UiSound::CardPick);
