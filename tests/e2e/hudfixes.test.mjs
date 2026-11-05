@@ -2,7 +2,7 @@
 // best run must be visible on the title screen, and the touch joystick must stay in one place.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, launchChrome, openGame, startGame, waitScreen, debug, CMD, readUi, readState, stickHome, findButton } from './harness.mjs';
+import { startServer, launchChrome, openGame, startGame, waitScreen, debug, CMD, readUi, readState, stickHome, findButton, clickButton } from './harness.mjs';
 
 let web;
 let browser;
@@ -97,6 +97,28 @@ for (const options of shapes) {
     await context.close();
   });
 }
+
+test('the best run panel fits one line with no runs, and grows to hold the figures after one', async () => {
+  const { context, page, problems } = await openGame(browser, `${web.url}?debug`, { viewport: { width: 1280, height: 720 } });
+  await waitScreen(page, 'title');
+  await page.waitForTimeout(400);
+  const empty = extent(await readUi(page), 'best run');
+  assert.ok(empty, 'the panel shows before any run');
+  await debug(page, CMD.startRun);
+  await waitScreen(page, 'playing');
+  await debug(page, CMD.setTime, 60);
+  await debug(page, CMD.forceDeath);
+  await waitScreen(page, 'over');
+  await page.waitForTimeout(1200);
+  await clickButton(page, 'Quit');
+  await waitScreen(page, 'title');
+  await page.waitForTimeout(400);
+  const filled = extent(await readUi(page), 'best run');
+  assert.ok(filled.h > empty.h, `with figures it must be taller: ${empty.h} then ${filled.h}`);
+  assert.ok(Math.abs(filled.y + filled.h - (empty.y + empty.h)) < 1, 'it grows upward from the same corner');
+  assert.deepEqual(problems, []);
+  await context.close();
+});
 
 for (const options of [phone, shapes[2]]) {
   test(`the touch joystick stays in its place at ${label(options)}`, async () => {

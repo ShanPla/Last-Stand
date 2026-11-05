@@ -180,7 +180,9 @@ TitleAction drawTitleScreen(SaveData& data) {
 
     // Best run for the chosen level, under the buttons if there is room. A wide window has no
     // room in the column, but it has the whole demo side, so the record goes in a corner there.
-    const float bestHeight = 24.0f * u + 34.0f * u + 22.0f * u;
+    // With no runs yet there is one line of text and no figures, so the panel fits that.
+    const bool anyRuns = data.bestFor(data.difficulty).runs > 0;
+    const float bestHeight = 24.0f * u + (anyRuns ? 34.0f * u + 22.0f * u : 24.0f * u);
     if (roomForBest && y + 76.0f * u < l.bottom) {
         drawBest(data.bestFor(data.difficulty), data.difficulty, buttonX, y, buttonWidth);
         registerExtent("best run", Rectangle{buttonX, y, buttonWidth, bestHeight});
