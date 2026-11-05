@@ -64,11 +64,13 @@ Color duneTexel(const Desert& d, int x, int y, int strength, int blotch, uint32_
     return rampTone(kSand, 4, std::clamp(blotch / 2 + t * 128 / kDunePeriod, 0, 255), noise);
 }
 
-void paintBase(Paint& p, const Desert& d) {
+void paintBase(Paint& p, const Desert& d, int rowFrom, int rowTo) {
     unsigned char a[kFieldRows][kFieldColumns];
     unsigned char b[kFieldRows][kFieldColumns];
     unsigned char blotch[kFieldRows][kFieldColumns];
-    for (int row = 0; row < kFieldRows; ++row) {
+    // Only the field rows these chunk rows use. The grid stays fixed to the chunk's top
+    // edge, so the picture doesn't depend on how the rows were split up.
+    for (int row = rowFrom >> kFieldStepShift; row <= (rowTo - 1) >> kFieldStepShift; ++row) {
         const int y = p.top() + (row << kFieldStepShift);
         for (int col = 0; col < kFieldColumns; ++col) {
             const int x = p.left() + (col << kFieldStepShift);
@@ -77,7 +79,7 @@ void paintBase(Paint& p, const Desert& d) {
             blotch[row][col] = static_cast<unsigned char>(softNoise(x + d.windX, y + d.windY, 5, 4));
         }
     }
-    for (int ly = 0; ly < kChunkHeight; ++ly) {
+    for (int ly = rowFrom; ly < rowTo; ++ly) {
         const int y = p.top() + ly;
         const int row = ly >> kFieldStepShift;
         for (int lx = 0; lx < kChunkWidth; ++lx) {
@@ -327,8 +329,9 @@ int driftNoise(const Desert& d, int x, int y) {
     return streaks + (softNoise(x + d.windY, y + d.windX, 8, 7) - 128) / 2;
 }
 
-void paintTerrain(Paint& paint, const Desert& desert) {
-    paintBase(paint, desert);
+void paintTerrainRows(Paint& paint, const Desert& desert, int rowFrom, int rowTo) { paintBase(paint, desert, rowFrom, rowTo); }
+
+void paintTerrainMarks(Paint& paint, const Desert& desert) {
     paintCracks(paint, desert);
     paintTracks(paint, desert);
     paintScatter(paint, desert);

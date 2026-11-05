@@ -7,6 +7,7 @@
 // choice comes from a hash of a place and the run's seed.
 namespace ls::maps::wasteland {
 
-int renderChunk(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights);
+void paintGroundRows(uint64_t seed, int chunkX, int chunkY, Color* pixels, int rowFrom, int rowTo);
+int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights);
 
 }  // namespace ls::maps::wasteland

@@ -35,6 +35,12 @@ inline constexpr int kMaxLightsPerChunk = 12;
 // its lights into lights, and returns how many. It uses no global state.
 int renderChunk(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights);
 
+// The same painting in two stages, so it can be spread over several frames on a slow device.
+// First the bare ground, in any bands of rows, which must cover the chunk from top to bottom.
+// Then the details over it. The result is exactly what renderChunk paints in one go.
+void paintGroundRows(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, int rowFrom, int rowTo);
+int paintDetails(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights);
+
 // What to show if a chunk is somehow not ready yet.
 Color fallbackGround(MapId map);
 

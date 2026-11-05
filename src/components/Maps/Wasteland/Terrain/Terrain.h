@@ -11,6 +11,9 @@ namespace ls::maps::wasteland {
 // Blown sand across a road. Grows from 0 to 255, in long streaks along the wind.
 int driftNoise(const Desert& desert, int x, int y);
 
-void paintTerrain(Paint& paint, const Desert& desert);
+// The kind of land under some rows of the chunk. Every row must be done before the marks.
+void paintTerrainRows(Paint& paint, const Desert& desert, int rowFrom, int rowTo);
+// Cracks, tracks, scattered small things and fences, over the finished land.
+void paintTerrainMarks(Paint& paint, const Desert& desert);
 
 }  // namespace ls::maps::wasteland

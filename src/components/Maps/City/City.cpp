@@ -72,8 +72,8 @@ Color sidewalkTexel(int gx, int gy, uint32_t noise) {
     return kSidewalk[tone];
 }
 
-void paintBase(Paint& p, const Roads& roads) {
-    for (int y = p.top(); y < p.bottom(); ++y) {
+void paintBase(Paint& p, const Roads& roads, int rowFrom, int rowTo) {
+    for (int y = p.top() + rowFrom; y < p.top() + rowTo; ++y) {
         const int ly = y - p.top();
         for (int x = p.left(); x < p.right(); ++x) {
             const int lx = x - p.left();
@@ -336,12 +336,15 @@ void paintCrossing(Paint& p, uint64_t seed, int i, int j) {
 
 }  // namespace
 
-int renderChunk(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* outLights) {
+void paintGroundRows(uint64_t seed, int chunkX, int chunkY, Color* pixels, int rowFrom, int rowTo) {
+    Paint paint(pixels, chunkX * kChunkWidth, chunkY * kChunkHeight, kChunkWidth, kChunkHeight);
+    paintBase(paint, roadsAround(seed, chunkX, chunkY), rowFrom, rowTo);
+}
+
+int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* outLights) {
     Paint paint(pixels, chunkX * kChunkWidth, chunkY * kChunkHeight, kChunkWidth, kChunkHeight);
     LightList lights{outLights, 0, &paint};
-
     const Roads roads = roadsAround(seed, chunkX, chunkY);
-    paintBase(paint, roads);
 
     // Lots stay inside their own chunk, so each chunk paints only its own.
     {

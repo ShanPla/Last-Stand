@@ -20,13 +20,27 @@ const char* name(MapId map) {
     return name(kDefaultMap);
 }
 
-int renderChunk(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights) {
+void paintGroundRows(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, int rowFrom, int rowTo) {
     switch (map) {
-        case MapId::City: return city::renderChunk(seed, chunkX, chunkY, pixels, lights);
-        case MapId::Wasteland: return wasteland::renderChunk(seed, chunkX, chunkY, pixels, lights);
+        case MapId::City: city::paintGroundRows(seed, chunkX, chunkY, pixels, rowFrom, rowTo); return;
+        case MapId::Wasteland: wasteland::paintGroundRows(seed, chunkX, chunkY, pixels, rowFrom, rowTo); return;
         case MapId::Count: break;
     }
-    return city::renderChunk(seed, chunkX, chunkY, pixels, lights);
+    city::paintGroundRows(seed, chunkX, chunkY, pixels, rowFrom, rowTo);
+}
+
+int paintDetails(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights) {
+    switch (map) {
+        case MapId::City: return city::paintDetails(seed, chunkX, chunkY, pixels, lights);
+        case MapId::Wasteland: return wasteland::paintDetails(seed, chunkX, chunkY, pixels, lights);
+        case MapId::Count: break;
+    }
+    return city::paintDetails(seed, chunkX, chunkY, pixels, lights);
+}
+
+int renderChunk(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights) {
+    paintGroundRows(map, seed, chunkX, chunkY, pixels, 0, kChunkHeight);
+    return paintDetails(map, seed, chunkX, chunkY, pixels, lights);
 }
 
 Color fallbackGround(MapId map) {

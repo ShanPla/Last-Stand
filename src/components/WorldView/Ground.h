@@ -7,8 +7,8 @@
 #include <cstdint>
 
 // Keeps a small pool of painted chunks as textures, and draws the visible ones as a
-// handful of quads. Painting a chunk takes real time, so at most one is painted per
-// frame, ahead of the camera, and crossing a chunk edge never causes a hitch.
+// handful of quads. Painting a chunk takes real time, so one is painted at a time, ahead of
+// the camera and a piece per frame, and crossing a chunk edge never causes a hitch.
 namespace ls::worldview {
 
 void initGround();

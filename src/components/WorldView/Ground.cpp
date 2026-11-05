@@ -58,7 +58,25 @@ bool g_halfResolution = false;
 uint32_t g_frame = 0;
 uint64_t g_seed = 0;
 int g_paintCount = 0;
+int g_paintStages = 0;
+int g_paintsInOneGo = 0;
 maps::MapId g_map = maps::kDefaultMap;  // The map the pool's chunks were painted for.
+
+// A chunk ahead of the camera isn't needed yet, so it is painted a piece per frame: the bare
+// ground in a few bands of rows, then the details and the upload. On a slow phone a whole
+// chunk takes long enough to drop a frame on every border crossed, and the pieces don't.
+// There is only ever one of these, and g_pixels holds its picture so far.
+constexpr int kGroundBands = 3;
+constexpr int kBandRows = maps::kChunkHeight / kGroundBands + 1;
+
+struct PaintJob {
+    bool active = false;
+    int x = 0;
+    int y = 0;
+    int bandsDone = 0;
+};
+
+PaintJob g_job;
 
 struct ChunkRange {
     int x0, y0, x1, y1;  // Inclusive.
@@ -104,9 +122,9 @@ void loadPoolTextures() {
     }
 }
 
-void paintChunk(Chunk& chunk, int x, int y, uint64_t seed) {
+// Fills in everything about a chunk except its lights, and sends g_pixels to its texture.
+void storeChunk(Chunk& chunk, int x, int y, uint64_t seed) {
     g_paintCount++;
-    chunk.lightCount = maps::renderChunk(g_map, seed, x, y, g_pixels, chunk.lights);
     chunk.carCount = maps::obstaclesInTile(g_map, seed, x, y, chunk.cars, maps::kMaxObstaclesPerTile);
     chunk.x = x;
     chunk.y = y;
@@ -123,6 +141,16 @@ void paintChunk(Chunk& chunk, int x, int y, uint64_t seed) {
     } else {
         UpdateTexture(chunk.texture, g_pixels);
     }
+}
+
+// Anything on screen must be there now, so this one is painted whole. It needs g_pixels,
+// which ends whatever job was using them.
+void paintWhole(Chunk& chunk, int x, int y, uint64_t seed) {
+    g_job.active = false;
+    g_paintStages++;
+    g_paintsInOneGo++;
+    chunk.lightCount = maps::renderChunk(g_map, seed, x, y, g_pixels, chunk.lights);
+    storeChunk(chunk, x, y, seed);
 }
 
 // A slot keeps its old chunk until something needs the room, so after a new run starts it can
@@ -147,11 +175,36 @@ Chunk& evictionTarget(const ChunkRange& visible, uint64_t seed) {
     return *best;
 }
 
+// Does the next piece of the job. The slot is only chosen for the last piece, so a slot
+// keeps showing its old chunk for as long as it can.
+void stepPaintJob(const ChunkRange& visible, uint64_t seed) {
+    g_paintStages++;
+    if (g_job.bandsDone < kGroundBands) {
+        const int rowFrom = g_job.bandsDone * kBandRows;
+        const int rowTo = std::min(rowFrom + kBandRows, static_cast<int>(maps::kChunkHeight));
+        maps::paintGroundRows(g_map, seed, g_job.x, g_job.y, g_pixels, rowFrom, rowTo);
+        g_job.bandsDone++;
+        return;
+    }
+    Chunk& chunk = evictionTarget(visible, seed);
+    chunk.lightCount = maps::paintDetails(g_map, seed, g_job.x, g_job.y, g_pixels, chunk.lights);
+    storeChunk(chunk, g_job.x, g_job.y, seed);
+    g_job.active = false;
+}
+
 }  // namespace
 
 void initGround() { loadPoolTextures(); }
 
 int groundPaintCount() { return g_paintCount; }
+
+// For the timing hook below. Marks the slot as empty, so the real picture gets painted again.
+void uploadSpareForTiming() {
+    Chunk& spare = g_pool[kPoolSize - 1];
+    spare.ready = false;
+    spare.lightCount = 0;
+    UpdateTexture(spare.texture, g_pixels);
+}
 
 void setGroundHalfResolution(bool half) {
     if (half == g_halfResolution) return;
@@ -161,10 +214,13 @@ void setGroundHalfResolution(bool half) {
 
 void updateGround(const View& view, uint64_t seed, maps::MapId map) {
     g_frame++;
+    // A new seed makes the picture so far wrong.
+    if (seed != g_seed) g_job.active = false;
     g_seed = seed;
     // A new map makes every painted chunk wrong, along with its lights. Only the flags
     // change here: the textures stay, and get painted over.
     if (map != g_map) {
+        g_job.active = false;
         g_map = map;
         for (Chunk& chunk : g_pool) {
             chunk.ready = false;
@@ -181,12 +237,16 @@ void updateGround(const View& view, uint64_t seed, maps::MapId map) {
             if (Chunk* chunk = findChunk(x, y, seed)) {
                 chunk->lastUsed = g_frame;
             } else {
-                paintChunk(evictionTarget(visible, seed), x, y, seed);
+                paintWhole(evictionTarget(visible, seed), x, y, seed);
             }
         }
     }
 
-    // One chunk per frame ahead of the camera, so walking never causes a hitch.
+    // One piece of one chunk per frame ahead of the camera, so walking never causes a hitch.
+    bool anyMissing = false;
+    bool jobStillNeeded = false;
+    int firstMissingX = 0;
+    int firstMissingY = 0;
     for (int y = ahead.y0; y <= ahead.y1; ++y) {
         for (int x = ahead.x0; x <= ahead.x1; ++x) {
             if (x >= visible.x0 && x <= visible.x1 && y >= visible.y0 && y <= visible.y1) continue;
@@ -194,10 +254,21 @@ void updateGround(const View& view, uint64_t seed, maps::MapId map) {
                 chunk->lastUsed = g_frame;
                 continue;
             }
-            paintChunk(evictionTarget(visible, seed), x, y, seed);
-            return;
+            if (!anyMissing) {
+                anyMissing = true;
+                firstMissingX = x;
+                firstMissingY = y;
+            }
+            if (g_job.active && g_job.x == x && g_job.y == y) jobStillNeeded = true;
         }
     }
+    // Walking away from a chunk being painted drops it, as something nearer needs the time.
+    if (!jobStillNeeded) g_job.active = false;
+    if (!g_job.active) {
+        if (!anyMissing) return;
+        g_job = PaintJob{true, firstMissingX, firstMissingY, 0};
+    }
+    stepPaintJob(visible, seed);
 }
 
 namespace {
@@ -435,6 +506,7 @@ EMSCRIPTEN_KEEPALIVE const char* ls_check_car_marks(int map, int seed, int reach
     int strayPixels = 0;
     int fewestMarked = 1 << 30;
     maps::Light lights[maps::kMaxLightsPerChunk];
+    worldview::g_job.active = false;  // This paints over the job's picture.
     for (int y = -reach; y <= reach; ++y) {
         for (int x = -reach; x <= reach; ++x) {
             maps::renderChunk(id, static_cast<uint64_t>(seed), x, y, worldview::g_pixels, lights);
@@ -469,6 +541,81 @@ EMSCRIPTEN_KEEPALIVE const char* ls_check_car_marks(int map, int seed, int reach
         }
     }
     std::snprintf(json, sizeof(json), "{\"cars\":%d,\"strayPixels\":%d,\"fewestMarked\":%d}", cars, strayPixels, cars > 0 ? fewestMarked : 0);
+    return json;
+}
+
+// Test hook: pieces of painting done so far, as a plain number, cheap enough to read every frame.
+EMSCRIPTEN_KEEPALIVE int ls_ground_paints() { return ls::worldview::g_paintStages; }
+
+// Test hook: chunks that couldn't wait, and were painted whole in one frame.
+EMSCRIPTEN_KEEPALIVE int ls_ground_whole_paints() { return ls::worldview::g_paintsInOneGo; }
+
+// Test hook: paints chunks both ways, whole and in the job's pieces, and counts the pixels
+// that differ. It must be zero, or walking would show a different map than jumping does.
+EMSCRIPTEN_KEEPALIVE const char* ls_check_staged_paint(int map, int seed, int reach) {
+    using namespace ls;
+    static char json[64];
+    static Color whole[maps::kChunkWidth * maps::kChunkHeight];
+    const maps::MapId id = maps::mapFromIndex(map);
+    const uint64_t wide = static_cast<uint64_t>(seed);
+    worldview::g_job.active = false;
+    int chunks = 0;
+    int differentPixels = 0;
+    int differentLights = 0;
+    maps::Light wholeLights[maps::kMaxLightsPerChunk];
+    maps::Light stagedLights[maps::kMaxLightsPerChunk];
+    for (int y = -reach; y <= reach; ++y) {
+        for (int x = -reach; x <= reach; ++x) {
+            // The buffer starts dirty on purpose, as it does in play.
+            const int wholeCount = maps::renderChunk(id, wide, x, y, whole, wholeLights);
+            for (int band = 0; band < worldview::kGroundBands; ++band) {
+                const int rowFrom = band * worldview::kBandRows;
+                maps::paintGroundRows(id, wide, x, y, worldview::g_pixels, rowFrom, std::min(rowFrom + worldview::kBandRows, static_cast<int>(maps::kChunkHeight)));
+            }
+            const int stagedCount = maps::paintDetails(id, wide, x, y, worldview::g_pixels, stagedLights);
+            for (int i = 0; i < maps::kChunkWidth * maps::kChunkHeight; ++i) {
+                const Color& a = whole[i];
+                const Color& b = worldview::g_pixels[i];
+                if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) differentPixels++;
+            }
+            if (wholeCount != stagedCount) differentLights++;
+            chunks++;
+        }
+    }
+    std::snprintf(json, sizeof(json), "{\"chunks\":%d,\"pixels\":%d,\"lights\":%d}", chunks, differentPixels, differentLights);
+    return json;
+}
+
+// Test hook: times the painting of a square of chunks, one at a time, so the cost of walking
+// over a chunk border can be measured on its own. Each picture also goes up to a spare chunk.
+EMSCRIPTEN_KEEPALIVE const char* ls_time_chunks(int map, int seed, int reach) {
+    using namespace ls;
+    static char json[192];
+    const maps::MapId id = maps::mapFromIndex(map);
+    worldview::g_job.active = false;  // This paints over the job's picture.
+    double groundTotal = 0.0, groundMost = 0.0, detailsTotal = 0.0, detailsMost = 0.0, uploadTotal = 0.0, uploadMost = 0.0;
+    int count = 0;
+    maps::Light lights[maps::kMaxLightsPerChunk];
+    for (int y = -reach; y <= reach; ++y) {
+        for (int x = -reach; x <= reach; ++x) {
+            const double start = GetTime();
+            maps::paintGroundRows(id, static_cast<uint64_t>(seed), x, y, worldview::g_pixels, 0, maps::kChunkHeight);
+            const double grounded = GetTime();
+            maps::paintDetails(id, static_cast<uint64_t>(seed), x, y, worldview::g_pixels, lights);
+            const double painted = GetTime();
+            worldview::uploadSpareForTiming();
+            const double uploaded = GetTime();
+            groundTotal += grounded - start;
+            groundMost = std::max(groundMost, grounded - start);
+            detailsTotal += painted - grounded;
+            detailsMost = std::max(detailsMost, painted - grounded);
+            uploadTotal += uploaded - painted;
+            uploadMost = std::max(uploadMost, uploaded - painted);
+            count++;
+        }
+    }
+    std::snprintf(json, sizeof(json), "{\"chunks\":%d,\"groundAvg\":%.3f,\"groundMost\":%.3f,\"detailsAvg\":%.3f,\"detailsMost\":%.3f,\"uploadAvg\":%.3f,\"uploadMost\":%.3f}", count, groundTotal * 1000.0 / count,
+                  groundMost * 1000.0, detailsTotal * 1000.0 / count, detailsMost * 1000.0, uploadTotal * 1000.0 / count, uploadMost * 1000.0);
     return json;
 }
 }

@@ -8,14 +8,19 @@
 
 namespace ls::maps::wasteland {
 
-int renderChunk(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* outLights) {
+void paintGroundRows(uint64_t seed, int chunkX, int chunkY, Color* pixels, int rowFrom, int rowTo) {
+    Paint paint(pixels, chunkX * kChunkWidth, chunkY * kChunkHeight, kChunkWidth, kChunkHeight);
+    paintTerrainRows(paint, desertFor(seed), rowFrom, rowTo);
+}
+
+int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* outLights) {
     Paint paint(pixels, chunkX * kChunkWidth, chunkY * kChunkHeight, kChunkWidth, kChunkHeight);
     LightList lights{outLights, 0, &paint};
     const Desert desert = desertFor(seed);
 
     // Each layer only covers the one before it where it has something to say, so where
     // sand has blown over a road the real desert still shows through.
-    paintTerrain(paint, desert);
+    paintTerrainMarks(paint, desert);
     paintRoads(paint, desert, lights);
     paintSites(paint, desert, lights);
     return lights.count;
