@@ -3,7 +3,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  startServer, launchChrome, openGame, countColorNearCenter, readState, readUi, debug, CMD, startGame, waitScreen, findButton, tapButton,
+  startServer, launchChrome, openGame, countColorNearCenter, readState, readUi, debug, CMD, startGame, waitScreen, findButton, tapButton, stickHome
 } from './harness.mjs';
 
 let web;
@@ -68,8 +68,9 @@ test('touch drag moves the player, and a tap picks a card on a phone', async () 
   await page.waitForTimeout(600);
   const client = await context.newCDPSession(page);
   const touch = (type, points) => client.send('Input.dispatchTouchEvent', { type, touchPoints: points });
-  await touch('touchStart', [{ x: 195, y: 500 }]);
-  await touch('touchMove', [{ x: 280, y: 500 }]);
+  const stick = await stickHome(page);
+  await touch('touchStart', [{ x: stick.x, y: stick.y }]);
+  await touch('touchMove', [{ x: stick.x + 85, y: stick.y }]);
   await page.waitForTimeout(800);
   await touch('touchEnd', []);
   const state = await readState(page);

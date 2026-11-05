@@ -18,12 +18,13 @@ constexpr int kMaxBlockers = 8;
 constexpr double kMouseAfterTouchSeconds = 1.0;  // Mouse movement this soon after a touch is the touch itself.
 
 constexpr int kMaxFingers = 8;  // raylib keeps at most this many touch points.
+constexpr float kStickGrabReach = 1.8f;  // A thumb landing this many radii from the stick still takes it.
 
 bool g_touching = false;
 int g_stickId = -1;  // Touch id of the finger steering the joystick, or -1 for none.
 int g_knownIds[kMaxFingers];  // Fingers seen last frame, to spot the ones that just landed.
 int g_knownCount = 0;
-Vec2 g_touchOrigin;
+Vec2 g_stickHome;
 int g_stickMenuX = 0;  // Remembers stick direction, so a held stick moves one step.
 int g_stickMenuY = 0;
 bool g_joystickEnabled = true;
@@ -187,9 +188,11 @@ void readTouch(Snapshot& s) {
             s.pointer = positions[i];
             s.anyPress = true;
         }
-        if (g_stickId == -1 && g_joystickEnabled && !insideBlocker(start)) {
+        // A thumb can't see the stick under it and won't land exactly on it, so the reach is
+        // wider than the stick. Touches elsewhere leave the player's view of the map free.
+        const float reach = joystickRadius() * kStickGrabReach;
+        if (g_stickId == -1 && g_joystickEnabled && !insideBlocker(start) && distanceSq(start, g_stickHome) <= reach * reach) {
             g_stickId = ids[i];
-            g_touchOrigin = start;
         }
     }
     g_knownCount = points;
@@ -201,20 +204,17 @@ void readTouch(Snapshot& s) {
 
     const int stick = g_stickId == -1 ? -1 : indexOfId(ids, points, g_stickId);
     if (stick >= 0 && g_joystickEnabled) {
-        // The joystick floats: its center follows the thumb if the thumb goes past
-        // the edge, so changing direction never needs a long drag back.
+        // The stick stays put, so it is always in the same place under the thumb. A thumb past
+        // its edge just means full speed in that direction.
         const Vec2 pos = positions[stick];
         const float radius = joystickRadius();
-        Vec2 delta = pos - g_touchOrigin;
+        Vec2 delta = pos - g_stickHome;
         const float len = length(delta);
-        if (len > radius) {
-            g_touchOrigin += delta * ((len - radius) / len);
-            delta = pos - g_touchOrigin;
-        }
+        if (len > radius) delta = delta * (radius / len);
         s.moveX = delta.x / radius;
         s.moveY = delta.y / radius;
         s.joystickActive = true;
-        s.joystickOrigin = g_touchOrigin;
+        s.joystickOrigin = g_stickHome;
         s.joystickKnob = pos;
     }
 }
@@ -251,6 +251,8 @@ float joystickRadius() {
 }
 
 void setJoystickEnabled(bool enabled) { g_joystickEnabled = enabled; }
+
+void setJoystickHome(Vec2 home) { g_stickHome = home; }
 
 void setTouchBlockers(const Rect* rects, int count) {
     g_blockerCount = std::min(count, kMaxBlockers);

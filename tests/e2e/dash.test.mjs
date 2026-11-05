@@ -3,7 +3,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  startServer, launchChrome, openGame, readState, readUi, debug, CMD, waitScreen, findButton, startGame, installFakePad, padPress,
+  startServer, launchChrome, openGame, readState, readUi, debug, CMD, waitScreen, findButton, startGame, installFakePad, padPress, stickHome
 } from './harness.mjs';
 
 let web;
@@ -292,6 +292,7 @@ test('touching the dash button does not start the joystick, and dragging elsewhe
   await tapStartIfNeeded(page);
   await resetCooldown(page);
   const dash = await findButton(page, 'Dash');
+  const stick = await stickHome(page);
   // A finger down on the button, held, with a drag: no joystick.
   const session = await context.newCDPSession(page);
   await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: dash.cx, y: dash.cy, id: 1 }] });
@@ -302,9 +303,9 @@ test('touching the dash button does not start the joystick, and dragging elsewhe
   await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await page.waitForTimeout(200);
 
-  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 120, y: 500, id: 2 }] });
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: stick.x, y: stick.y, id: 2 }] });
   await page.waitForTimeout(100);
-  await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 180, y: 500, id: 2 }] });
+  await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: stick.x + 60, y: stick.y, id: 2 }] });
   await page.waitForTimeout(250);
   assert.equal((await readUi(page)).joystick, 1, 'the joystick starts elsewhere');
   await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });

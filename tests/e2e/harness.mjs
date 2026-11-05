@@ -129,6 +129,22 @@ export const readState = (page) => page.evaluate(() => JSON.parse(Module.ccall('
 
 // Screen name, settings, best run, and button rectangles. Rectangles are also given in
 // CSS pixels (cx, cy are the center), because that is what the mouse and touch use.
+// The middle of the touch joystick, in page pixels. It only reports itself while it is drawn,
+// which is during play on a touch screen, so this waits for it.
+export async function stickHome(page) {
+  const box = await page.evaluate(async () => {
+    for (let i = 0; i < 100; i++) {
+      const ui = JSON.parse(Module.ccall('ls_query_ui', 'string', [], []));
+      const found = ui.extents.find((e) => e.n === 'joystick');
+      if (found) return { ...found, ratio: window.devicePixelRatio };
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return null;
+  });
+  if (!box) throw new Error('the joystick never appeared');
+  return { x: (box.x + box.w / 2) / box.ratio, y: (box.y + box.h / 2) / box.ratio, radius: box.w / 2 / box.ratio };
+}
+
 export const readUi = (page) => page.evaluate(() => {
   const ui = JSON.parse(Module.ccall('ls_query_ui', 'string', [], []));
   const sx = innerWidth / ui.width;

@@ -4,7 +4,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  startServer, launchChrome, openGame, readState, readUi, debug, CMD, waitScreen, findButton,
+  startServer, launchChrome, openGame, readState, readUi, debug, CMD, waitScreen, findButton, stickHome
 } from './harness.mjs';
 
 let web;
@@ -36,6 +36,7 @@ async function startRun() {
   const dash = await findButton(page, 'Dash');
   const pause = await findButton(page, 'Pause');
   const session = await context.newCDPSession(page);
+  stick = await stickHome(page);
   return { context, page, problems, dash, pause, session };
 }
 
@@ -43,6 +44,10 @@ async function startRun() {
 // For touchEnd it wants only the fingers that lift, and the rest stay down.
 const send = (session, type, fingers) =>
   session.send('Input.dispatchTouchEvent', { type, touchPoints: fingers.map(([id, x, y]) => ({ x, y, id })) });
+
+// A finger on the stick, this far to the side of its middle.
+let stick;
+const at = (id, dx) => [id, stick.x + dx, stick.y];
 
 const joystick = async (page) => (await readUi(page)).joystick;
 
@@ -61,9 +66,9 @@ test('a thumb resting on Dash does not stop the other thumb steering', async () 
   await page.waitForTimeout(150);
   const start = await readState(page);
   // The steering thumb lands after the Dash thumb, and drags left.
-  await send(session, 'touchStart', [dashFinger, [2, 220, 500]]);
+  await send(session, 'touchStart', [dashFinger, at(2, 0)]);
   await page.waitForTimeout(100);
-  await send(session, 'touchMove', [dashFinger, [2, 150, 500]]);
+  await send(session, 'touchMove', [dashFinger, at(2, -50)]);
   await page.waitForTimeout(500);
   assert.equal(await joystick(page), 1, 'the steering thumb drives the joystick');
   const moved = (await readState(page)).x - start.x;
@@ -79,16 +84,16 @@ test('a thumb resting on Dash does not stop the other thumb steering', async () 
 
 test('lifting the steering thumb while a thumb rests on Dash stops the player, and does not steer toward Dash', async () => {
   const { context, page, problems, dash, session } = await startRun();
-  await send(session, 'touchStart', [[2, 220, 500]]);
+  await send(session, 'touchStart', [at(2, 0)]);
   await page.waitForTimeout(100);
-  await send(session, 'touchMove', [[2, 150, 500]]);
+  await send(session, 'touchMove', [at(2, -50)]);
   await page.waitForTimeout(300);
   assert.equal(await joystick(page), 1, 'steering to begin with');
   // The Dash thumb lands and stays, then the steering thumb lifts.
   const dashFinger = [1, dash.cx, dash.cy];
-  await send(session, 'touchStart', [[2, 150, 500], dashFinger]);
+  await send(session, 'touchStart', [at(2, -50), dashFinger]);
   await page.waitForTimeout(150);
-  await send(session, 'touchEnd', [[2, 150, 500]]);
+  await send(session, 'touchEnd', [at(2, -50)]);
   await page.waitForTimeout(250);
   assert.equal(await joystick(page), 0, 'no steering finger is down, so no joystick');
   const drift = await driftX(page, 600);
@@ -101,14 +106,14 @@ test('lifting the steering thumb while a thumb rests on Dash stops the player, a
 test('a Dash finger with the lower touch id landing mid-drag does not take over the joystick', async () => {
   const { context, page, problems, dash, session } = await startRun();
   // The steering finger has the higher id, so a list sorted by id puts Dash first.
-  const steer = (x) => [7, x, 500];
-  await send(session, 'touchStart', [steer(220)]);
+  const steer = (dx) => at(7, dx);
+  await send(session, 'touchStart', [steer(0)]);
   await page.waitForTimeout(100);
-  await send(session, 'touchMove', [steer(150)]);
+  await send(session, 'touchMove', [steer(-50)]);
   await page.waitForTimeout(300);
   assert.equal(await joystick(page), 1);
   const dashFinger = [1, dash.cx, dash.cy];
-  await send(session, 'touchStart', [dashFinger, steer(150)]);
+  await send(session, 'touchStart', [dashFinger, steer(-50)]);
   const before = await readState(page);
   await page.waitForTimeout(600);
   const after = await readState(page);
@@ -126,20 +131,20 @@ test('after the steering thumb lifts, a new finger away from the buttons steers 
   const dashFinger = [1, dash.cx, dash.cy];
   await send(session, 'touchStart', [dashFinger]);
   await page.waitForTimeout(100);
-  await send(session, 'touchStart', [dashFinger, [2, 220, 500]]);
+  await send(session, 'touchStart', [dashFinger, at(2, 0)]);
   await page.waitForTimeout(100);
-  await send(session, 'touchMove', [dashFinger, [2, 150, 500]]);
+  await send(session, 'touchMove', [dashFinger, at(2, -50)]);
   await page.waitForTimeout(250);
   assert.equal(await joystick(page), 1);
   // Steering thumb lifts; the Dash thumb stays.
-  await send(session, 'touchEnd', [[2, 150, 500]]);
+  await send(session, 'touchEnd', [at(2, -50)]);
   await page.waitForTimeout(250);
   assert.equal(await joystick(page), 0, 'the joystick ended with its finger');
   // A fresh finger lands in the open and steers right.
   const start = await readState(page);
-  await send(session, 'touchStart', [dashFinger, [3, 150, 500]]);
+  await send(session, 'touchStart', [dashFinger, at(3, 0)]);
   await page.waitForTimeout(100);
-  await send(session, 'touchMove', [dashFinger, [3, 220, 500]]);
+  await send(session, 'touchMove', [dashFinger, at(3, 50)]);
   await page.waitForTimeout(500);
   assert.equal(await joystick(page), 1, 'a new finger steers');
   assert.ok((await readState(page)).x - start.x > 30, 'and the player ran right');
@@ -150,13 +155,13 @@ test('after the steering thumb lifts, a new finger away from the buttons steers 
 
 test('the Pause button still works while a thumb is steering', async () => {
   const { context, page, problems, pause, session } = await startRun();
-  await send(session, 'touchStart', [[2, 220, 500]]);
+  await send(session, 'touchStart', [at(2, 0)]);
   await page.waitForTimeout(100);
-  await send(session, 'touchMove', [[2, 150, 500]]);
+  await send(session, 'touchMove', [at(2, -50)]);
   await page.waitForTimeout(250);
   assert.equal(await joystick(page), 1);
   const pauseFinger = [1, pause.cx, pause.cy];
-  await send(session, 'touchStart', [[2, 150, 500], pauseFinger]);
+  await send(session, 'touchStart', [at(2, -50), pauseFinger]);
   await page.waitForTimeout(50);
   await send(session, 'touchEnd', [pauseFinger]);
   await waitScreen(page, 'paused');
@@ -168,12 +173,12 @@ test('the Pause button still works while a thumb is steering', async () => {
 test('the Dash button still dashes with a tap while a thumb is steering', async () => {
   const { context, page, problems, dash, session } = await startRun();
   await debug(page, CMD.setDashCooldown, 0);
-  await send(session, 'touchStart', [[2, 220, 500]]);
+  await send(session, 'touchStart', [at(2, 0)]);
   await page.waitForTimeout(100);
-  await send(session, 'touchMove', [[2, 150, 500]]);
+  await send(session, 'touchMove', [at(2, -50)]);
   await page.waitForTimeout(250);
   const dashFinger = [1, dash.cx, dash.cy];
-  await send(session, 'touchStart', [[2, 150, 500], dashFinger]);
+  await send(session, 'touchStart', [at(2, -50), dashFinger]);
   await page.waitForTimeout(50);
   await send(session, 'touchEnd', [dashFinger]);
   await page.waitForFunction(() => JSON.parse(Module.ccall('ls_query_state', 'string', [], [])).dashCooldown > 0, null, { timeout: 5000 });

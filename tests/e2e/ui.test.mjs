@@ -4,7 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   startServer, launchChrome, openGame, readState, readUi, debug, CMD, waitScreen, waitSelected, findButton, clickButton, tapButton, startGame, watchProblems,
-  installFakePad, padPress,
+  installFakePad, padPress, stickHome
 } from './harness.mjs';
 
 let web;
@@ -650,7 +650,7 @@ test('a win is counted', async () => {
 
 // ---- Touch joystick -------------------------------------------------------------
 
-test('the touch joystick appears under the thumb and moves the player', async () => {
+test('the touch joystick steers from its fixed place and moves the player', async () => {
   const { context, page, problems } = await open(phone);
   await waitScreen(page, 'title');
   await tapButton(page, 'PLAY');
@@ -659,8 +659,9 @@ test('the touch joystick appears under the thumb and moves the player', async ()
   const client = await context.newCDPSession(page);
   const touch = (type, points) => client.send('Input.dispatchTouchEvent', { type, touchPoints: points });
   const before = await readState(page);
-  await touch('touchStart', [{ x: 120, y: 620 }]);
-  await touch('touchMove', [{ x: 200, y: 620 }]);
+  const stick = await stickHome(page);
+  await touch('touchStart', [{ x: stick.x, y: stick.y }]);
+  await touch('touchMove', [{ x: stick.x + 80, y: stick.y }]);
   await page.waitForTimeout(700);
   assert.equal((await readUi(page)).joystick, 1, 'the joystick is active while a thumb is down');
   await page.screenshot({ path: 'tests/e2e/screenshots/screen-portrait-joystick.png' });

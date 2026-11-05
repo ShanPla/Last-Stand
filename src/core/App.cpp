@@ -394,7 +394,8 @@ static void drawUiPass(float dtReal, bool playing) {
         const ui::HudPresses presses = ui::drawHud(*g_state, hintAlpha, playing);
         if (presses.pause) pauseGame();
         else if (presses.dash) g_pendingDash = true;
-        if (g_input.joystickActive && playing) ui::drawVirtualJoystick(g_input);
+        // Always there on a touch screen, so the thumb knows where to go before it lands.
+        if (playing && g_input.lastDevice == input::Device::Touch) ui::drawVirtualJoystick(g_input);
     }
 
     switch (g_screen) {
@@ -486,6 +487,7 @@ void frame() {
     const bool running = !g_inDemo && g_screen == Screen::Playing;
     const bool playing = running && g_state->run.phase == RunPhase::Playing;
     input::setJoystickEnabled(playing);
+    input::setJoystickHome(ui::joystickHome());
     const input::Rect blockers[2] = {ui::pauseButtonRect(), ui::dashButtonRect()};
     input::setTouchBlockers(blockers, 2);
     input::update(g_input);

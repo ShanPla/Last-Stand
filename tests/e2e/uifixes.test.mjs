@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  startServer, launchChrome, openGame, watchProblems, CMD, debug, readState, readUi, waitScreen, waitSelected, findButton, startGame,
+  startServer, launchChrome, openGame, watchProblems, CMD, debug, readState, readUi, waitScreen, waitSelected, findButton, startGame, stickHome
 } from './harness.mjs';
 
 let web;
@@ -114,11 +114,16 @@ test('a save that cannot be read is not written over with defaults', async () =>
 
 test('a cancelled touch clears the joystick and the player stops', async () => {
   const { context, page, problems } = await open(phone);
-  await startGame(page);
+  await waitScreen(page, 'title');
+  await page.waitForTimeout(150);
+  const play = await findButton(page, 'PLAY');
+  await page.touchscreen.tap(play.cx, play.cy);
+  await waitScreen(page, 'playing');
   const cdp = await context.newCDPSession(page);
   const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchCancel' ? [] : [{ x, y, id: 1 }] });
-  await touch('touchStart', 120, 500);
-  await touch('touchMove', 220, 500);
+  const stick = await stickHome(page);
+  await touch('touchStart', stick.x, stick.y);
+  await touch('touchMove', stick.x + 60, stick.y);
   await page.waitForFunction(() => JSON.parse(Module.ccall('ls_query_ui', 'string', [], [])).joystick === 1, null, { timeout: 3000 });
   // The system takes the touch away: there is a cancel and no end.
   await touch('touchCancel');
@@ -128,8 +133,8 @@ test('a cancelled touch clears the joystick and the player stops', async () => {
   const second = await readState(page);
   assert.ok(Math.hypot(second.x - first.x, second.y - first.y) < 1, 'the player kept running with no finger down');
   // A new touch afterwards starts fresh.
-  await touch('touchStart', 100, 400);
-  await touch('touchMove', 100, 300);
+  await touch('touchStart', stick.x, stick.y);
+  await touch('touchMove', stick.x, stick.y - 60);
   await page.waitForFunction(() => JSON.parse(Module.ccall('ls_query_ui', 'string', [], [])).joystick === 1, null, { timeout: 3000 });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await page.waitForFunction(() => JSON.parse(Module.ccall('ls_query_ui', 'string', [], [])).joystick === 0, null, { timeout: 3000 });

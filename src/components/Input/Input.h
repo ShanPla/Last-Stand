@@ -43,7 +43,7 @@ struct Snapshot {
     Vec2 mouse;
     bool mouseMoved = false;
 
-    // Floating joystick state, for drawing it.
+    // Joystick state, for drawing it. The origin is the stick's fixed place on the screen.
     bool joystickActive = false;
     Vec2 joystickOrigin;
     Vec2 joystickKnob;
@@ -56,11 +56,15 @@ struct Rect {
     float h = 0.0f;
 };
 
-// Radius of the floating joystick, in drawing buffer pixels.
+// Radius of the joystick, in drawing buffer pixels.
 float joystickRadius();
 
 // The joystick only exists while playing. Menus turn it off.
 void setJoystickEnabled(bool enabled);
+
+// Where the stick sits, in drawing buffer pixels. Set it every frame, because it follows the
+// window size. A finger must land near this to steer.
+void setJoystickHome(Vec2 home);
 
 // A touch that starts inside one of these presses a button, and never starts the
 // joystick. Set it every frame. The list is copied, and at most 8 rectangles are kept.

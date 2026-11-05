@@ -1,5 +1,7 @@
 #include "components/Ui/Hud/Hud.h"
 
+#include "components/Ui/VirtualJoystick/VirtualJoystick.h"
+
 #include "components/Ui/BuildStrip/BuildStrip.h"
 #include "components/Ui/Icons/Icons.h"
 #include "components/Ui/Widgets/Widgets.h"
@@ -121,7 +123,7 @@ void drawDash(const Layout& l, const Player& player, Rectangle r) {
 
 const char* moveHint() {
     switch (input().lastDevice) {
-        case input::Device::Touch: return "Drag to move, tap DASH to dash";
+        case input::Device::Touch: return "Use the stick to move, tap DASH to dash";
         case input::Device::Gamepad: return "Left stick to move, RB to dash";
         default: return "WASD or arrows to move, Space to dash";
     }
@@ -140,6 +142,10 @@ void drawControlsHint(const Layout& l, float alpha) {
     // On a phone the dash button sits in the lower corner, so the hint rises above it.
     const Rectangle dash = dashRect(l);
     if (touchLayout() && plate.x + plate.width > dash.x - 8.0f * l.u) plate.y = dash.y - height - 12.0f * l.u;
+    // The same goes for the stick in the other corner.
+    const float stickTop = joystickHome().y - input::joystickRadius();
+    if (touchLayout() && plate.x < joystickHome().x + input::joystickRadius() + 8.0f * l.u) plate.y = std::min(plate.y, stickTop - height - 12.0f * l.u);
+    registerExtent("controls hint", plate);
     panel(plate, withAlpha(theme::kHudPlate, alpha * 1.4f), withAlpha(theme::kUiBorder, alpha), 0.0f);
     const float fitted = font::fitSize(first, size, w - 24.0f * l.u);
     text(first, plate.x + w * 0.5f, plate.y + height * 0.1f, fitted, withAlpha(theme::kUiText, alpha), font::Align::Center);
