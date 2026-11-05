@@ -33,6 +33,10 @@ void applySettings(const Settings& settings);
 void setQuality(int quality);
 int quality();
 
+// Call once for every frame with its real length. On a device that stays too slow during a
+// run, this drops the quality to 0, and it stays there: bouncing between looks would be worse.
+void watchFrameTime(float frameSeconds, bool fighting);
+
 // Empties everything, for a new run or the title screen.
 void reset();
 

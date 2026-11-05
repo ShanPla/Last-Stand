@@ -4,6 +4,7 @@
 #include "components/Effects/Bursts/Bursts.h"
 #include "components/Effects/DamageNumbers/DamageNumbers.h"
 #include "components/Effects/FlashLimiter/FlashLimiter.h"
+#include "components/Effects/FrameWatch/FrameWatch.h"
 #include "components/Effects/Glow/Glow.h"
 #include "components/Effects/HitFlash/HitFlash.h"
 #include "components/Effects/HitPause/HitPause.h"
@@ -444,6 +445,12 @@ void setQuality(int quality) {
 }
 
 int quality() { return g_quality; }
+
+void watchFrameTime(float frameSeconds, bool fighting) {
+    // Lives on through a reset: what a device can do doesn't change with a new run.
+    static FrameWatch watch;
+    if (watch.update(frameSeconds, fighting) && g_quality > 0) setQuality(0);
+}
 
 void reset() {
     clearParticles();

@@ -315,18 +315,13 @@ void runDemo(float dtReal) {
 // ---- Weak devices ---------------------------------------------------------------
 
 // A phone that can't hold a steady frame rate loses the extras: the glow, the stains and
-// half the particles. It only ever steps down, as bouncing between looks would be worse.
-// Only frames that ran a fight count, so a slow first second of loading can't trigger it.
-constexpr float kSlowFrameMs = 26.0f;       // Worse than about 38 frames a second.
-constexpr float kSlowForSeconds = 4.0f;
+// half the particles. Only frames that ran a fight can count against it, and the menus
+// show what this screen's normal rate is. See FrameWatch for how the two are compared.
 bool g_qualityPinned = false;               // Debug only: a test chose the quality itself.
-float g_slowSeconds = 0.0f;
 
 void watchFrameRate(float rawDt) {
-    if (g_qualityPinned || effects::quality() == 0 || g_inDemo || g_screen != Screen::Playing || g_state->run.phase != RunPhase::Playing) return;
-    if (rawDt > 0.25f) return;  // A hidden tab or a stall says nothing about the GPU.
-    g_slowSeconds = g_frameMs > kSlowFrameMs ? g_slowSeconds + rawDt : 0.0f;
-    if (g_slowSeconds > kSlowForSeconds) effects::setQuality(0);
+    if (g_qualityPinned) return;
+    effects::watchFrameTime(rawDt, !g_inDemo && g_screen == Screen::Playing && g_state->run.phase == RunPhase::Playing);
 }
 
 // ---- Drawing --------------------------------------------------------------------
