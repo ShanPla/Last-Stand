@@ -26,4 +26,7 @@ void drawLightSprites(const View& view, const DayLook& look, uint32_t tick, bool
 // quality 0 paints chunks at half resolution, to save memory on weak devices.
 void setGroundHalfResolution(bool half);
 
+// For the browser tests: chunks painted so far. Standing still, this must stop rising.
+int groundPaintCount();
+
 }  // namespace ls::worldview

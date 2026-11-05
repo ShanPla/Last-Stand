@@ -160,6 +160,8 @@ float figureHalfWidth(const Enemy& enemy) {
     return kHalfWidths[static_cast<int>(enemy.type)] * (enemy.elite ? 1.7f : 1.3f);
 }
 
+float longShadowReach(const Enemy& enemy, float shadowLength) { return figureHeight(enemy) * shadowLength * kShadowLeanX; }
+
 bool figureTouchesTarget(const View& view, const GameState& state, const Enemy& enemy, const ScreenPoint& feet) {
     const ZombieLook zombie = lookOf(state, enemy, feet);
     const int x = roundToInt(feet.x);
@@ -177,7 +179,7 @@ void drawZombieShadow(const Enemy& enemy, const ScreenPoint& feet) {
 void drawZombieLongShadow(const GameState& state, const Enemy& enemy, const ScreenPoint& feet, const DayLook& look) {
     const ZombieLook zombie = lookOf(state, enemy, feet);
     const float height = static_cast<float>(zombie.sprite->h);
-    shadowQuad(*zombie.sprite, roundToInt(feet.x), roundToInt(feet.y), zombie.mirror, height * look.shadowLength * 0.72f, -height * look.shadowLength * 0.26f);
+    shadowQuad(*zombie.sprite, roundToInt(feet.x), roundToInt(feet.y), zombie.mirror, height * look.shadowLength * kShadowLeanX, -height * look.shadowLength * kShadowLeanY);
 }
 
 void drawZombie(const GameState& state, const Enemy& enemy, const ScreenPoint& feet) {
@@ -395,7 +397,7 @@ void drawSoldierShadow(const GameState& state, const ScreenPoint& feet, const Da
         const Heading heading = soldierHeading(state);
         const SpriteRef& body = soldierBody(heading.facing, bodyPose(state.run.tick));
         const float height = static_cast<float>(body.h);
-        shadowQuad(body, x, y, heading.mirror, height * look.shadowLength * 0.72f, -height * look.shadowLength * 0.26f);
+        shadowQuad(body, x, y, heading.mirror, height * look.shadowLength * kShadowLeanX, -height * look.shadowLength * kShadowLeanY);
     }
 }
 

@@ -27,6 +27,9 @@ bool drawTelegraph(const View& view, const GameState& state, const Enemy& enemy,
 // figures that are off screen.
 float figureHeight(const Enemy& enemy);
 float figureHalfWidth(const Enemy& enemy);
+// How far right of its feet a figure's long sun shadow reaches, at scale 1. A figure past
+// the left edge can still throw this much shadow into the picture.
+float longShadowReach(const Enemy& enemy, float shadowLength);
 // True when any part of the figure's real sprite is inside the picture. figureHeight
 // and figureHalfWidth are deliberately generous, so they can't answer this.
 bool figureTouchesTarget(const View& view, const GameState& state, const Enemy& enemy, const ScreenPoint& feet);

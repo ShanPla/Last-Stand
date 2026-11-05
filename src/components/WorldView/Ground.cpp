@@ -20,7 +20,15 @@ constexpr int kPoolSize = 24;
 // Painted one chunk's width ahead of what can be seen, so it is ready in time.
 constexpr float kPaintAheadWorld = 200.0f;
 
-constexpr float kPoolReachWorld = 120.0f;
+// How far from the picture a chunk can be and still hold a light that shows in it, in world
+// units. A pool reaches about 105 from its center at the player's depth, and more at the top
+// of the picture, where one art pixel covers more ground. A bulb stands well above its foot.
+// Each light is then checked on its own, so being generous here only costs a comparison.
+constexpr float kLightReachWorld = 200.0f;
+
+// How far a flame or bulb sprite reaches around its own point, in art pixels.
+constexpr float kLightSpriteSide = 24.0f;
+constexpr float kLightSpriteTall = 30.0f;
 
 struct Chunk {
     int x = 0;
@@ -39,6 +47,7 @@ Color g_halfPixels[(maps::kChunkWidth / 2) * (maps::kChunkHeight / 2)];
 bool g_halfResolution = false;
 uint32_t g_frame = 0;
 uint64_t g_seed = 0;
+int g_paintCount = 0;
 maps::MapId g_map = maps::kDefaultMap;  // The map the pool's chunks were painted for.
 
 struct ChunkRange {
@@ -86,6 +95,7 @@ void loadPoolTextures() {
 }
 
 void paintChunk(Chunk& chunk, int x, int y, uint64_t seed) {
+    g_paintCount++;
     chunk.lightCount = maps::renderChunk(g_map, seed, x, y, g_pixels, chunk.lights);
     chunk.x = x;
     chunk.y = y;
@@ -102,6 +112,12 @@ void paintChunk(Chunk& chunk, int x, int y, uint64_t seed) {
     } else {
         UpdateTexture(chunk.texture, g_pixels);
     }
+}
+
+// A slot keeps its old chunk until something needs the room, so after a new run starts it can
+// still hold lights from the old seed. The seed check keeps those ghosts out of the picture.
+bool lightsCount(const Chunk& chunk, const ChunkRange& range) {
+    return chunk.ready && chunk.seed == g_seed && chunk.x >= range.x0 && chunk.x <= range.x1 && chunk.y >= range.y0 && chunk.y <= range.y1;
 }
 
 // The chunk that was used longest ago, skipping any that are on screen right now.
@@ -123,6 +139,8 @@ Chunk& evictionTarget(const ChunkRange& visible, uint64_t seed) {
 }  // namespace
 
 void initGround() { loadPoolTextures(); }
+
+int groundPaintCount() { return g_paintCount; }
 
 void setGroundHalfResolution(bool half) {
     if (half == g_halfResolution) return;
@@ -230,10 +248,10 @@ void drawGround(const View& view, const DayLook& look) {
 
 void drawLightPools(const View& view, const DayLook& look, uint32_t tick, bool flicker) {
     if (look.lampLevel <= 0.01f) return;
-    const ChunkRange visible = visibleChunks(view, kPoolReachWorld);
+    const ChunkRange visible = visibleChunks(view, kLightReachWorld);
+    const SpriteRef& pool = itemSprite(Item::LightPool);
     for (const Chunk& chunk : g_pool) {
-        if (!chunk.ready) continue;
-        if (chunk.x < visible.x0 || chunk.x > visible.x1 || chunk.y < visible.y0 || chunk.y > visible.y1) continue;
+        if (!lightsCount(chunk, visible)) continue;
         for (int i = 0; i < chunk.lightCount; ++i) {
             const maps::Light& light = chunk.lights[i];
             const bool fire = light.kind == maps::LightKind::Fire;
@@ -246,28 +264,32 @@ void drawLightPools(const View& view, const DayLook& look, uint32_t tick, bool f
                 else if (((tick / 8u + seed) & 127u) < 3u) level *= 0.55f;
             }
             const ScreenPoint point = project(view, light.world);
-            if (!onTarget(view, point, 70.0f, 40.0f, 40.0f)) continue;
             // Lamps are wide, and fires warm and small.
             const float size = point.scale * (fire ? 0.8f : 1.0f);
+            // The pool grows with depth, so its margin must too, or it pops at the edges.
+            const float halfWide = static_cast<float>(pool.w) * 0.5f * size;
+            const float halfTall = static_cast<float>(pool.h) * 0.5f * size;
+            if (!onTarget(view, point, halfWide, halfTall, halfTall)) continue;
             const uint8_t row = fire ? kRowFireLight : kRowLampLight;
-            poolQuad(itemSprite(Item::LightPool), point.x, point.y, size, row, level);
+            poolQuad(pool, point.x, point.y, size, row, level);
             // Multiplying can only double a color, and asphalt is dark, so the bright
             // middle of the pool takes a second, smaller layer.
-            poolQuad(itemSprite(Item::LightPool), point.x, point.y, size * 0.6f, row, level);
+            poolQuad(pool, point.x, point.y, size * 0.6f, row, level);
         }
     }
 }
 
 void drawLightSprites(const View& view, const DayLook& look, uint32_t tick, bool flicker) {
-    const ChunkRange visible = visibleChunks(view, 60.0f);
+    const ChunkRange visible = visibleChunks(view, kLightReachWorld);
     constexpr Item kFireFrames[4] = {Item::FireA, Item::FireB, Item::FireC, Item::FireD};
     for (const Chunk& chunk : g_pool) {
-        if (!chunk.ready) continue;
-        if (chunk.x < visible.x0 || chunk.x > visible.x1 || chunk.y < visible.y0 || chunk.y > visible.y1) continue;
+        if (!lightsCount(chunk, visible)) continue;
         for (int i = 0; i < chunk.lightCount; ++i) {
             const maps::Light& light = chunk.lights[i];
             const ScreenPoint point = project(view, light.world);
-            if (!onTarget(view, point, 24.0f, 60.0f, 8.0f)) continue;
+            // A flame or bulb stands above its foot, so the foot may be well below the picture.
+            const float above = light.height * point.scale + kLightSpriteTall;
+            if (!onTarget(view, point, kLightSpriteSide, above, 8.0f)) continue;
             const uint32_t seed = hashPosition(light.world);
             if (light.kind == maps::LightKind::Fire) {
                 // Fires burn all day, so these show whatever the time.

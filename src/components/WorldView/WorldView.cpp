@@ -172,7 +172,7 @@ Vec2 aimCamera(const GameState& state, float alpha) {
 
 // --- Figures -----------------------------------------------------------------
 
-int collectVisibleZombies(const GameState& state, float alpha) {
+int collectVisibleZombies(const GameState& state, float alpha, float shadowLength) {
     int visible = 0;
     int flashing = 0;
     bool bossSeen = false;
@@ -185,7 +185,11 @@ int collectVisibleZombies(const GameState& state, float alpha) {
         const ScreenPoint feet = project(g_view, lerp(enemy.prevPos, enemy.pos, alpha));
         const float side = figureHalfWidth(enemy) * feet.scale;
         const float above = figureHeight(enemy) * feet.scale;
-        if (!onTarget(g_view, feet, side, above, 12.0f)) continue;
+        // The sun's shadows lean right, so a figure past the left edge can still throw one
+        // into the picture, and it needs that much more room on that side only.
+        const float leftRoom = side + longShadowReach(enemy, shadowLength) * feet.scale;
+        const bool inPicture = feet.x > -leftRoom && feet.x < static_cast<float>(g_view.width) + side && feet.y > -12.0f && feet.y < static_cast<float>(g_view.height) + above;
+        if (!inPicture) continue;
         VisibleFigure& figure = g_visible[visible++];
         figure.feet = feet;
         figure.enemyIndex = static_cast<uint16_t>(i);
@@ -339,7 +343,7 @@ void draw(const GameState& state, float alpha) {
     const uint32_t tick = state.run.tick;
     const bool flicker = effects::flickerAllowed() && g_quality > 0;
 
-    const int zombies = collectVisibleZombies(state, alpha);
+    const int zombies = collectVisibleZombies(state, alpha, look.shadowLength);
     VisibleFigure& playerFigure = g_visible[zombies];
     playerFigure.feet = project(g_view, playerWorld);
     playerFigure.enemyIndex = static_cast<uint16_t>(kPlayerSlot);
