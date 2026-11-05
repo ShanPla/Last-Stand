@@ -62,6 +62,18 @@ struct VisibleFigure {
 VisibleFigure g_visible[kMaxEnemies + 1];
 uint16_t g_drawOrder[kMaxEnemies + 1];
 int g_bucketStarts[kSortBuckets + 1];
+// Zombies warning of an attack, in or out of the picture. Filled by the same walk that finds
+// the visible figures, so it costs a comparison per zombie and no second loop.
+uint16_t g_telegraphs[kMaxEnemies];
+int g_telegraphCount = 0;
+
+// Only read by the browser tests, through ls_query_world.
+int g_telegraphsShown = 0;
+const GameState* g_lastDrawnState = nullptr;
+
+// The last run the renderer saw, so it can notice a new one. App starts runs on its own.
+uint64_t g_seenSeed = 0;
+uint32_t g_seenTick = 0;
 
 RenderTexture2D g_target{};
 int g_targetScreenWidth = 0;
@@ -161,8 +173,12 @@ int collectVisibleZombies(const GameState& state, float alpha) {
     int visible = 0;
     int flashing = 0;
     bool bossSeen = false;
+    g_telegraphCount = 0;
     for (int i = 0; i < state.enemies.count; ++i) {
         const Enemy& enemy = state.enemies[i];
+        // Checked before the figure is culled: a warning line must show even when the
+        // zombie itself stands outside the picture.
+        if (isTelegraphing(enemy)) g_telegraphs[g_telegraphCount++] = static_cast<uint16_t>(i);
         const ScreenPoint feet = project(g_view, lerp(enemy.prevPos, enemy.pos, alpha));
         const float side = figureHalfWidth(enemy) * feet.scale;
         const float above = figureHeight(enemy) * feet.scale;
@@ -382,7 +398,12 @@ void draw(const GameState& state, float alpha) {
     for (int i = 0; i < zombies; ++i) {
         const VisibleFigure& figure = g_visible[i];
         const Enemy& enemy = state.enemies[figure.enemyIndex];
-        if (hasOverlay(enemy)) drawZombieOverlay(g_view, state, enemy, figure.feet, lerp(enemy.prevPos, enemy.pos, alpha));
+        if (enemy.elite) drawEliteBar(state, enemy, figure.feet);
+    }
+    g_telegraphsShown = 0;
+    for (int i = 0; i < g_telegraphCount; ++i) {
+        const Enemy& enemy = state.enemies[g_telegraphs[i]];
+        if (drawTelegraph(g_view, state, enemy, lerp(enemy.prevPos, enemy.pos, alpha))) g_telegraphsShown++;
     }
     drawBladeTrails(g_view, state, alpha);
     drawSoldierRingOverCrowd(g_view, ringCenter);

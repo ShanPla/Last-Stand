@@ -25,6 +25,14 @@ constexpr float kHalfWidths[static_cast<int>(EnemyType::Count)] = {16, 16, 24, 1
 constexpr float kEliteSizeBoost = 1.36f;  // Elites are bigger than their radius alone.
 
 constexpr float kChargerDashLength = balance::kChargerDashSeconds * balance::kChargerDashSpeed;
+constexpr float kBossDashLength = balance::kBossDashSpeed * balance::kBossDashSeconds;
+
+// How a long sun shadow leans, for each figure height of shadow length.
+constexpr float kShadowLeanX = 0.72f;
+constexpr float kShadowLeanY = 0.26f;
+
+// How far a warning line's arrows and edges stick out beside the line, in art pixels.
+constexpr float kLineSideRoom = 12.0f;
 
 Figure figureOf(const GameState& state, const Enemy& enemy) {
     if (enemy.type == EnemyType::Boss) return static_cast<Figure>(static_cast<int>(Figure::Boss1) + std::min<int>(state.run.bossPhase, 2));
@@ -182,28 +190,41 @@ void drawZombie(const GameState& state, const Enemy& enemy, const ScreenPoint& f
     spriteQuad(*zombie.sprite, roundToInt(feet.x), roundToInt(feet.y), zombie.mirror, zombie.row, zombie.grade, 255, flash);
 }
 
-bool hasOverlay(const Enemy& enemy) {
-    if (enemy.elite) return true;
+void drawEliteBar(const GameState& state, const Enemy& enemy, const ScreenPoint& feet) {
+    // A small bar on whole pixels, just above the figure.
+    const SpriteRef& sprite = figureSprite(figureOf(state, enemy), stepForEnemy(enemy, feet.scale), kFacingSide, 0);
+    const float width = std::max(14.0f, static_cast<float>(sprite.w));
+    const float left = static_cast<float>(roundToInt(feet.x - width * 0.5f));
+    const float top = static_cast<float>(roundToInt(feet.y) - sprite.footY - 5);
+    const float fraction = clampf(enemy.hp / std::max(1.0f, enemy.maxHp), 0.0f, 1.0f);
+    const auto rect = [](float x, float y, float w, float h, Color color) {
+        quad(Vec2{x, y}, Vec2{x, y + h}, Vec2{x + w, y + h}, Vec2{x + w, y}, color);
+    };
+    rect(left - 1.0f, top - 1.0f, width + 2.0f, 4.0f, theme::kEliteBarBack);
+    rect(left, top, static_cast<float>(roundToInt(width * fraction)), 2.0f, theme::kEliteBarFill);
+}
+
+bool isTelegraphing(const Enemy& enemy) {
     if (enemy.type == EnemyType::Charger) return enemy.state == enemies::kChargerTelegraph;
     if (enemy.type == EnemyType::Boss) return enemy.state == enemies::kBossRingCharge || enemy.state == enemies::kBossDashCharge;
     return false;
 }
 
-void drawZombieOverlay(const View& view, const GameState& state, const Enemy& enemy, const ScreenPoint& feet, Vec2 worldFeet) {
+namespace {
+
+// A line can cross the picture even when both of its ends are outside, so this tests the
+// box around the whole line. A diagonal that only clips the box corner draws for nothing,
+// which is harmless, as the GPU cuts it away.
+bool lineCouldShow(const View& view, const ScreenPoint& a, const ScreenPoint& b) {
+    return std::max(a.x, b.x) > -kLineSideRoom && std::min(a.x, b.x) < static_cast<float>(view.width) + kLineSideRoom &&
+           std::max(a.y, b.y) > -kLineSideRoom && std::min(a.y, b.y) < static_cast<float>(view.height) + kLineSideRoom;
+}
+
+}  // namespace
+
+bool drawTelegraph(const View& view, const GameState& state, const Enemy& enemy, Vec2 worldFeet) {
     const uint32_t tick = state.run.tick;
-    if (enemy.elite) {
-        // A small bar on whole pixels, just above the figure.
-        const SpriteRef& sprite = figureSprite(figureOf(state, enemy), stepForEnemy(enemy, feet.scale), kFacingSide, 0);
-        const float width = std::max(14.0f, static_cast<float>(sprite.w));
-        const float left = static_cast<float>(roundToInt(feet.x - width * 0.5f));
-        const float top = static_cast<float>(roundToInt(feet.y) - sprite.footY - 5);
-        const float fraction = clampf(enemy.hp / std::max(1.0f, enemy.maxHp), 0.0f, 1.0f);
-        const auto rect = [](float x, float y, float w, float h, Color color) {
-            quad(Vec2{x, y}, Vec2{x, y + h}, Vec2{x + w, y + h}, Vec2{x + w, y}, color);
-        };
-        rect(left - 1.0f, top - 1.0f, width + 2.0f, 4.0f, theme::kEliteBarBack);
-        rect(left, top, static_cast<float>(roundToInt(width * fraction)), 2.0f, theme::kEliteBarFill);
-    }
+    bool shown = false;
 
     if (enemy.type == EnemyType::Charger && enemy.state == enemies::kChargerTelegraph) {
         // A warning line along the locked direction, as far as the dash will reach.
@@ -211,6 +232,8 @@ void drawZombieOverlay(const View& view, const GameState& state, const Enemy& en
         const Vec2 end = worldFeet + enemy.dir * kChargerDashLength;
         const ScreenPoint a = project(view, start);
         const ScreenPoint b = project(view, end);
+        if (!lineCouldShow(view, a, b)) return false;
+        shown = true;
         const bool flash = !effects::flickerAllowed() || ((tick >> 2) & 1u) != 0u;
         const Vec2 from{a.x, a.y};
         const Vec2 to{b.x, b.y};
@@ -232,15 +255,24 @@ void drawZombieOverlay(const View& view, const GameState& state, const Enemy& en
         // The ring tightens as the timer runs out, so the moment of attack can be read.
         const float t = clampf(enemy.timer / balance::kBossTelegraphSeconds, 0.0f, 1.0f);
         const float radius = enemy.radius * (1.3f + 1.2f * t);
-        groundRing(view, worldFeet, radius, 10.0f, 3, fade(theme::kBossChargeRing, 1.0f - 0.4f * t));
+        const ScreenPoint a = project(view, worldFeet);
+        // Generous, because perspective swells the near half of a ring.
+        const float ringReach = (radius + 10.0f) * kArtPerWorld * a.scale * 1.5f;
+        if (onTarget(view, a, ringReach, ringReach, ringReach)) {
+            shown = true;
+            groundRing(view, worldFeet, radius, 10.0f, 3, fade(theme::kBossChargeRing, 1.0f - 0.4f * t));
+        }
         if (enemy.state == enemies::kBossDashCharge) {
-            const ScreenPoint a = project(view, worldFeet);
-            const ScreenPoint b = project(view, worldFeet + enemy.dir * balance::kBossDashSpeed * balance::kBossDashSeconds);
-            thickLine(Vec2{a.x, a.y}, Vec2{b.x, b.y}, 7.0f, fade(theme::kHostileDark, 0.75f));
-            const bool flash = !effects::flickerAllowed() || ((tick >> 2) & 1u) != 0u;
-            thickLine(Vec2{a.x, a.y}, Vec2{b.x, b.y}, 5.0f, fade(theme::kChargerLine, flash ? 1.0f : 0.65f));
+            const ScreenPoint b = project(view, worldFeet + enemy.dir * kBossDashLength);
+            if (lineCouldShow(view, a, b)) {
+                shown = true;
+                thickLine(Vec2{a.x, a.y}, Vec2{b.x, b.y}, 7.0f, fade(theme::kHostileDark, 0.75f));
+                const bool flash = !effects::flickerAllowed() || ((tick >> 2) & 1u) != 0u;
+                thickLine(Vec2{a.x, a.y}, Vec2{b.x, b.y}, 5.0f, fade(theme::kChargerLine, flash ? 1.0f : 0.65f));
+            }
         }
     }
+    return shown;
 }
 
 // --- Soldier ------------------------------------------------------------------

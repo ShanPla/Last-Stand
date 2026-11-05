@@ -13,10 +13,15 @@ void drawZombieShadow(const Enemy& enemy, const ScreenPoint& feet);
 void drawZombieLongShadow(const GameState& state, const Enemy& enemy, const ScreenPoint& feet, const DayLook& look);
 void drawZombie(const GameState& state, const Enemy& enemy, const ScreenPoint& feet);
 
-// Flat overlays that must stay readable above the crowd: the Charger's warning line,
-// and the HP bar over elites and the boss's charge ring.
-void drawZombieOverlay(const View& view, const GameState& state, const Enemy& enemy, const ScreenPoint& feet, Vec2 worldFeet);
-bool hasOverlay(const Enemy& enemy);
+// The small HP bar over an elite. A flat shape, drawn above the crowd.
+void drawEliteBar(const GameState& state, const Enemy& enemy, const ScreenPoint& feet);
+
+// True while a zombie is warning of an attack: the Charger's line, the boss's ring and line.
+bool isTelegraphing(const Enemy& enemy);
+// Draws that warning as flat shapes above the crowd. It needs no figure on screen, because
+// the warning can cross the picture while the zombie stands outside it. Returns whether
+// any of it could reach the picture.
+bool drawTelegraph(const View& view, const GameState& state, const Enemy& enemy, Vec2 worldFeet);
 
 // How far a figure reaches from its feet, in art pixels at scale 1, for skipping
 // figures that are off screen.
