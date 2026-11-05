@@ -17,7 +17,9 @@ permissions:
 
 jobs:
   windows:
-    runs-on: windows-latest
+    # A fixed image, because the build preset names Visual Studio 2022, and windows-latest
+    # moves on to newer versions by itself.
+    runs-on: windows-2022
     env:
       # A pushed tag names itself. A manual run is given the tag as an input.
       TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
