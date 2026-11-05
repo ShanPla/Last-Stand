@@ -22,6 +22,9 @@ inline constexpr int kMaxZones = 256;
 inline constexpr int kMaxGems = 800;
 inline constexpr int kMaxPickups = 32;
 inline constexpr int kMaxEvents = 512;
+// How full the event list may get before each kind of event stops being added.
+inline constexpr int kEventLimitHits = 256;
+inline constexpr int kEventLimitCommon = 448;
 inline constexpr int kMaxHeldWeapons = 6;
 inline constexpr int kMaxHeldPassives = 6;
 inline constexpr int kMaxLevelPerItem = 5;
@@ -229,9 +232,27 @@ struct GameState {
     float timeSeconds() const { return static_cast<float>(run.tick) * kDt; }
 };
 
-// Records an event. Dropped silently if the frame's list is full, because events
-// only drive presentation, so losing one never changes the simulation.
+// The list is shared by every step of a frame, and hits are pushed before the kills,
+// level-ups and deaths of the same step. So frequent events stop early, which keeps
+// room for the rarer ones that matter more. Rare events may use the whole list.
+inline constexpr int eventLimit(EventType type) {
+    switch (type) {
+        case EventType::EnemyHit:
+            return kEventLimitHits;
+        case EventType::EnemyKilled:
+        case EventType::GemCollected:
+        case EventType::WeaponFired:
+        case EventType::Explosion:
+            return kEventLimitCommon;
+        default:
+            return kMaxEvents;
+    }
+}
+
+// Records an event, unless its kind has reached its limit. Events only drive
+// presentation, so losing one never changes the simulation.
 inline void pushEvent(GameState& state, EventType type, Vec2 pos, float value = 0.0f, uint8_t detail = 0, bool flag = false) {
+    if (state.events.count >= eventLimit(type)) return;
     if (SimEvent* event = state.events.add()) {
         event->type = type;
         event->pos = pos;

@@ -292,3 +292,77 @@ TEST_CASE("collecting a pickup doesn't change which one is the oldest") {
     CHECK(holdsNumber(*state, 102));
 }
 
+// --- Event list ------------------------------------------------------------------
+
+TEST_CASE("a flood of frequent events can't crowd out the ones that matter") {
+    auto state = makeRun();
+    for (int i = 0; i < kMaxEvents * 2; ++i) pushEvent(*state, EventType::EnemyHit, Vec2{});
+    CHECK(state->events.count == kEventLimitHits);
+    pushEvent(*state, EventType::EnemyKilled, Vec2{});
+    CHECK(countEvents(*state, EventType::EnemyKilled) == 1);
+
+    for (int i = 0; i < kMaxEvents * 2; ++i) pushEvent(*state, EventType::EnemyKilled, Vec2{});
+    CHECK(state->events.count == kEventLimitCommon);
+
+    const EventType rare[] = {EventType::LevelUp,    EventType::PickupCollected, EventType::BombBlast,
+                              EventType::BossKilled, EventType::EliteKilled,     EventType::PlayerDied};
+    for (const EventType type : rare) {
+        pushEvent(*state, type, Vec2{});
+        CHECK(countEvents(*state, type) == 1);
+    }
+}
+
+TEST_CASE("the event limits leave room for every tier") {
+    static_assert(kEventLimitHits < kEventLimitCommon);
+    static_assert(kEventLimitCommon < kMaxEvents);
+    CHECK(eventLimit(EventType::PlayerDied) == kMaxEvents);
+}
+
+namespace {
+
+// A bomb at the player's feet, and more zombies around than the event list has slots.
+std::unique_ptr<GameState> bombInHugeCrowd() {
+    auto state = makeRun();
+    state->player.weaponCount = 0;  // So only the bomb makes hits.
+    for (int i = 0; i < kMaxEvents + 300; ++i) {
+        const Vec2 pos = fromAngle(static_cast<float>(i) * 0.7f) * (200.0f + static_cast<float>(i % 400));
+        REQUIRE(enemies::spawn(*state, EnemyType::Walker, pos, false));
+    }
+    pickups::spawnPickup(*state, state->player.pos, PickupType::Bomb);
+    return state;
+}
+
+}  // namespace
+
+TEST_CASE("a bomb in a huge crowd keeps its blast, pickup, kill and level-up events") {
+    auto state = bombInHugeCrowd();
+    // A gem at the player's feet brings a level-up in the same step.
+    pickups::dropGem(*state, state->player.pos, balance::xpForLevel(1));
+
+    sim::step(*state, InputFrame{});
+
+    CHECK(state->run.kills >= kMaxEvents);  // There really was a flood.
+    CHECK(countEvents(*state, EventType::BombBlast) == 1);
+    CHECK(countEvents(*state, EventType::PickupCollected) == 1);
+    CHECK(countEvents(*state, EventType::EnemyKilled) > 0);
+    CHECK(countEvents(*state, EventType::LevelUp) == 1);
+}
+
+TEST_CASE("a death later in a frame that opened with a bomb still sends its event") {
+    // The app clears the list once a frame, and a frame can run several steps.
+    auto state = bombInHugeCrowd();
+    sim::step(*state, InputFrame{});
+    REQUIRE(countEvents(*state, EventType::BombBlast) == 1);
+
+    // That many kills overflow the gem pool into a level-up. Skip it to carry on playing.
+    state->run.phase = RunPhase::Playing;
+    state->run.pendingLevels = 0;
+    state->player.hp = 1.0f;
+    state->player.invulnerable = 0.0f;
+    REQUIRE(enemies::spawn(*state, EnemyType::Walker, state->player.pos + Vec2{5.0f, 0.0f}, false));
+    sim::step(*state, InputFrame{});
+
+    REQUIRE(state->run.phase == RunPhase::Dead);
+    CHECK(countEvents(*state, EventType::PlayerDied) == 1);
+}
+
