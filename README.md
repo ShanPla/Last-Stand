@@ -30,7 +30,7 @@ Survive 10 minutes against a growing horde, then fight the final boss. You only 
 | Device | Move | Dash | Menus |
 |---|---|---|---|
 | Keyboard | WASD or arrow keys | Space or Shift | Arrow keys, Enter, Esc |
-| Touch | Drag anywhere for a floating joystick | The DASH button in the lower right corner | Tap |
+| Touch | The stick in the lower left corner | The DASH button in the lower right corner | Tap |
 | Gamepad | Left stick | Right shoulder button | D-pad or stick, A, B, Start |
 | Mouse | Not used for moving | Click the dash icon under the weapons | Click |
 
@@ -59,7 +59,7 @@ Measured on a laptop with an Intel UHD integrated GPU, in headless Chrome. Real 
 | Stress test: 2,000 zombies and 3,000 shots at 1920x1080 | Locked at the 144 Hz display, with a 99th percentile frame gap of 7.3 ms |
 | 2,000 zombies at phone size, with the processor slowed 6 times as a stand-in for a weak phone | Average above 30 fps, though single frames drop below it. This does not slow the graphics chip |
 | Compressed download | About 391 KB on a first visit |
-| Tests | 249 unit test cases and 231 browser tests, all passing |
+| Tests | 249 unit test cases and 250 browser tests, all passing |
 
 Balance is checked by bots that play 100 games per setting on seeds not used for tuning:
 

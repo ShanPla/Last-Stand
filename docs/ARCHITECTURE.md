@@ -992,7 +992,7 @@ The rest of the game never asks which device is in use. The gameplay reads `move
 Details:
 
 - **Movement.** Keyboard (WASD and arrows) sets a direction. A gamepad stick, if moved past a dead zone, replaces it. A touch joystick replaces that. The simulation clamps the length so diagonals are not faster.
-- **Touch joystick.** The first touch starts a floating joystick anywhere on the screen. If the thumb slides past the edge, the joystick's center follows, so changing direction needs no long drag back. A touch that begins on the pause button, the dash button or in a menu does not start the joystick.
+- **Touch joystick.** The stick has one fixed place, in the lower left corner of the safe area, across from the dash button. It is drawn faintly until a thumb is on it. A thumb landing within 1.8 stick radii takes it, because a thumb can't see exactly where it lands, and a touch elsewhere does nothing. Pushing past the edge means full speed in that direction, and the stick stays put. Earlier versions used a floating stick that appeared under the thumb, and it was changed after playtesting.
 - **The joystick finger is followed by its touch id.** raylib's list of touches is not stable: it shifts when a finger lifts, so index 0 is not always the same finger. `readTouch` in [`Input.cpp`](../src/components/Input/Input.cpp) remembers the id of the finger that is steering (`g_stickId`) and looks that finger up each frame. If it lifts, the joystick ends and never jumps to another finger. A second finger resting on a button therefore does not take over the steering. A touch the browser cancelled (an edge swipe, a call) is dropped by checking the browser's own finger count, so the joystick can never get stuck.
 - **Dash.** Space or Shift, or the gamepad's right shoulder button, or the on-screen dash button. Space is also the confirm key in menus, so the game only treats it as a dash while a run is being played. The HUD and the how-to-play text show Space as the dash key.
 - **Gamepad menus.** The D-pad and the left stick navigate. Stick movement past a threshold counts as one press, remembered so a held stick moves one step.
@@ -1271,7 +1271,7 @@ The tests also take a **real pixel check** ([`countColorNearCenter`](../tests/e2
 
 The functional tests run Chrome with a software renderer, so they check behavior, not speed. [`perf.mjs`](../tests/e2e/perf.mjs) is run by hand and uses the machine's real GPU.
 
-**Measured result.** The last full browser run passed **231 of 231** tests, with none skipped.
+**Measured result.** The last full browser run passed **250 of 250** tests, with none skipped.
 
 ### Performance
 
