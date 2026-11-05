@@ -9,6 +9,7 @@ import { startServer, launchChrome, openGame as openPage, startGame, watchProble
 
 // Debug command numbers. Edit these here if the app's numbering changes.
 const kSetSeed = 3;
+const kClearWalkSeed = 4;
 const kShowcase = 17;      // Value -1: an empty world, with the clock stopped.
 const kSetRunTime = 12;    // In seconds.
 const kMovePlayerX = 18;
@@ -141,9 +142,9 @@ test('walking far in every direction keeps drawing ground and raises no errors',
 // test reads it from there, so it cannot drift from the game by keeping its own copy. If
 // the line is reworded the test fails loudly rather than guessing.
 function readChunkSize() {
-  const header = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/components/Maps/Maps.h');
+  const header = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/components/Maps/Layout/Layout.h');
   const match = /kChunkWorldSize\s*=\s*([\d.]+)f?\s*;/.exec(readFileSync(header, 'utf8'));
-  assert.ok(match, 'could not find kChunkWorldSize in Maps.h');
+  assert.ok(match, 'could not find kChunkWorldSize in Layout.h');
   return { size: Number(match[1]), header };
 }
 
@@ -153,10 +154,13 @@ test('real walking with the keyboard crosses chunk borders with no errors', asyn
   // The built game is only as new as its last build. A chunk size changed since then would
   // make the test walk to borders that the old build does not have.
   const built = statSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../build/web/index.wasm')).mtimeMs;
-  assert.ok(built >= statSync(header).mtimeMs, 'Maps.h is newer than the web build: rebuild the game before running this test');
+  assert.ok(built >= statSync(header).mtimeMs, 'Layout.h is newer than the web build: rebuild the game before running this test');
 
   // ?debug is only used to cause a level-up on demand. All movement below is real keys.
   const { context, page, problems } = await openGame(browser, `${web.url}?debug`, { viewport: { width: 640, height: 360 } });
+  // Cars are solid, and a player holding one key straight at a car stays there. This seed has
+  // none on the way, which ObstacleTests would notice if the layout's rules ever changed it.
+  await command(page, kSetSeed, kClearWalkSeed);
   const chunkOf = (value) => Math.floor(value / chunkSize);
   const start = await readState(page);
   assert.equal(chunkOf(start.x), 0);

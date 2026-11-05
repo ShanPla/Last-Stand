@@ -33,6 +33,7 @@ struct Options {
     long long traceSeed = -1;  // Play one game and print what happens around the player.
     bool correlation = true;
     Difficulty difficulty = Difficulty::Normal;
+    maps::MapId map = maps::kDefaultMap;
     std::string csvFolder;  // Empty means no CSV.
 };
 
@@ -42,6 +43,7 @@ void printHelp() {
         "  --seeds N            games per profile (default 30)\n"
         "  --first-seed S       first seed; seeds run S, S+1, ... (default 1000)\n"
         "  --difficulty D       easy, normal or hard (default normal), for games, wave tables and solo test\n"
+        "  --map M              city or wasteland (default city), where the solid cars stand\n"
         "  --profile NAME       novice, average, skilled or all (default all)\n"
         "  --threads N          worker threads (default: all cores)\n"
         "  --runs               list every run on one line\n"
@@ -71,6 +73,14 @@ bool parseArgs(int argc, char** argv, Options& options) {
             else if (name == "hard") options.difficulty = Difficulty::Hard;
             else {
                 std::fprintf(stderr, "Unknown difficulty: %s (use easy, normal or hard)\n", name.c_str());
+                return false;
+            }
+        } else if (arg == "--map" && hasValue) {
+            const std::string name = argv[++i];
+            if (name == "city") options.map = maps::MapId::City;
+            else if (name == "wasteland") options.map = maps::MapId::Wasteland;
+            else {
+                std::fprintf(stderr, "Unknown map: %s (use city or wasteland)\n", name.c_str());
                 return false;
             }
         } else if (arg == "--first-seed" && hasValue) {
@@ -116,6 +126,7 @@ int main(int argc, char** argv) {
     Options options;
     if (!parseArgs(argc, argv, options)) return 1;
     setGameDifficulty(options.difficulty);
+    setGameMap(options.map);
     if (options.threads == 0) options.threads = static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
     const auto started = std::chrono::steady_clock::now();
     const auto elapsed = [&]() {
@@ -150,6 +161,7 @@ int main(int argc, char** argv) {
         std::printf("Last Stand balance report: %d seeds per profile, first seed %llu\n", options.seeds,
                     static_cast<unsigned long long>(options.firstSeed));
         printDifficultyHeader(stdout, options.difficulty);
+        std::printf("Map: %s\n", options.map == maps::MapId::Wasteland ? "wasteland" : "city");
         printWaveAnalysis(stdout, options.difficulty);
         for (const ProfileRuns& group : groups) {
             printProfileReport(stdout, group, options.correlation && group.profile == &skilled());

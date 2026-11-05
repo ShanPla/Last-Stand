@@ -1,5 +1,6 @@
 #include "components/WorldView/Ground.h"
 
+#include "components/Maps/Paint/Paint.h"
 #include "components/WorldView/Draw.h"
 #include "components/WorldView/Shaders.h"
 #include "data/Theme.h"
@@ -7,10 +8,18 @@
 #include "raylib.h"
 #include "rlgl.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace ls::worldview {
+
+// One chunk being painted. It only holds pictures while they are on their way to the GPU.
+static Color g_pixels[maps::kChunkWidth * maps::kChunkHeight];
 
 namespace {
 
@@ -39,10 +48,11 @@ struct Chunk {
     Texture2D texture{};
     maps::Light lights[maps::kMaxLightsPerChunk];
     int lightCount = 0;
+    maps::Obstacle cars[maps::kMaxObstaclesPerTile];
+    int carCount = 0;
 };
 
 Chunk g_pool[kPoolSize];
-Color g_pixels[maps::kChunkWidth * maps::kChunkHeight];
 Color g_halfPixels[(maps::kChunkWidth / 2) * (maps::kChunkHeight / 2)];
 bool g_halfResolution = false;
 uint32_t g_frame = 0;
@@ -97,6 +107,7 @@ void loadPoolTextures() {
 void paintChunk(Chunk& chunk, int x, int y, uint64_t seed) {
     g_paintCount++;
     chunk.lightCount = maps::renderChunk(g_map, seed, x, y, g_pixels, chunk.lights);
+    chunk.carCount = maps::obstaclesInTile(g_map, seed, x, y, chunk.cars, maps::kMaxObstaclesPerTile);
     chunk.x = x;
     chunk.y = y;
     chunk.seed = seed;
@@ -148,13 +159,13 @@ void setGroundHalfResolution(bool half) {
     if (g_pool[0].texture.id != 0) loadPoolTextures();
 }
 
-void updateGround(const View& view, uint64_t seed) {
+void updateGround(const View& view, uint64_t seed, maps::MapId map) {
     g_frame++;
     g_seed = seed;
     // A new map makes every painted chunk wrong, along with its lights. Only the flags
     // change here: the textures stay, and get painted over.
-    if (maps::current() != g_map) {
-        g_map = maps::current();
+    if (map != g_map) {
+        g_map = map;
         for (Chunk& chunk : g_pool) {
             chunk.ready = false;
             chunk.lightCount = 0;
@@ -189,8 +200,11 @@ void updateGround(const View& view, uint64_t seed) {
     }
 }
 
-void drawGround(const View& view, const DayLook& look) {
-    const GroundShader& ground = groundShader();
+namespace {
+
+// project() written as a matrix. The fourth row is the depth, which makes the GPU
+// do the same divide per pixel. The target's y runs down from its top edge.
+Matrix groundMatrix(const View& view) {
     const float w = static_cast<float>(view.width);
     const float h = static_cast<float>(view.height);
     const float ax = view.anchorX;
@@ -198,8 +212,6 @@ void drawGround(const View& view, const DayLook& look) {
     const float k = kArtPerWorld;
     const float ky = kArtPerWorld * kTiltSquash;
 
-    // project() written as a matrix. The fourth row is the depth, which makes the GPU
-    // do the same divide per pixel. The target's y runs down from its top edge.
     Matrix matrix{};
     const float centerX = 2.0f * ax / w - 1.0f;
     const float centerY = 1.0f - 2.0f * ay / h;
@@ -211,9 +223,15 @@ void drawGround(const View& view, const DayLook& look) {
     matrix.m10 = 1.0f;
     matrix.m7 = -kPerspective;
     matrix.m15 = 1.0f;
+    return matrix;
+}
 
+}  // namespace
+
+void drawGround(const View& view, const DayLook& look) {
+    const GroundShader& ground = groundShader();
     const float saturation = look.groundSaturation;
-    SetShaderValueMatrix(ground.shader, ground.projection, matrix);
+    SetShaderValueMatrix(ground.shader, ground.projection, groundMatrix(view));
     SetShaderValue(ground.shader, ground.tint, look.groundTint, SHADER_UNIFORM_VEC3);
     SetShaderValue(ground.shader, ground.saturation, &saturation, SHADER_UNIFORM_FLOAT);
     SetShaderValue(ground.shader, ground.lift, look.groundLift, SHADER_UNIFORM_VEC3);
@@ -244,6 +262,101 @@ void drawGround(const View& view, const DayLook& look) {
     }
     rlSetTexture(0);
     EndShaderMode();
+}
+
+namespace {
+
+// A car's near edge on the ground, where it meets the row of whoever stands in front of it.
+float carFeetRow(const View& view, const maps::Obstacle& car) {
+    return project(view, Vec2{car.center.x, car.center.y + car.half.y}).y;
+}
+
+}  // namespace
+
+void drawCarDepth(const View& view) {
+    const CarDepthShader& depth = carDepthShader();
+    SetShaderValueMatrix(depth.shader, depth.projection, groundMatrix(view));
+    BeginShaderMode(depth.shader);
+    rlEnableDepthTest();
+    rlColorMask(false, false, false, false);
+    const ChunkRange visible = visibleChunks(view, 0.0f);
+    for (int y = visible.y0; y <= visible.y1; ++y) {
+        for (int x = visible.x0; x <= visible.x1; ++x) {
+            const Chunk* chunk = findChunk(x, y, g_seed);
+            if (!chunk || chunk->carCount == 0) continue;
+            const int chunkLeft = x * maps::kChunkWidth;
+            const int chunkTop = y * maps::kChunkHeight;
+            rlSetTexture(chunk->texture.id);
+            rlBegin(RL_QUADS);
+            for (int i = 0; i < chunk->carCount; ++i) {
+                const maps::Obstacle& car = chunk->cars[i];
+                // A car over a chunk edge is in both lists, and each draws its own part.
+                const maps::TexelRect rect = maps::spriteRect(car);
+                const int x0 = std::max(rect.x0, chunkLeft);
+                const int y0 = std::max(rect.y0, chunkTop);
+                const int x1 = std::min(rect.x1, chunkLeft + maps::kChunkWidth);
+                const int y1 = std::min(rect.y1, chunkTop + maps::kChunkHeight);
+                if (x0 >= x1 || y0 >= y1) continue;
+                const float left = static_cast<float>(x0) / maps::kTexelsPerWorldX - view.focusX;
+                const float right = static_cast<float>(x1) / maps::kTexelsPerWorldX - view.focusX;
+                const float top = static_cast<float>(y0) / maps::kTexelsPerWorldY - view.focusY;
+                const float bottom = static_cast<float>(y1) / maps::kTexelsPerWorldY - view.focusY;
+                const float u0 = static_cast<float>(x0 - chunkLeft) / static_cast<float>(maps::kChunkWidth);
+                const float u1 = static_cast<float>(x1 - chunkLeft) / static_cast<float>(maps::kChunkWidth);
+                const float v0 = static_cast<float>(y0 - chunkTop) / static_cast<float>(maps::kChunkHeight);
+                const float v1 = static_cast<float>(y1 - chunkTop) / static_cast<float>(maps::kChunkHeight);
+                const float z = depthOfRow(view, carFeetRow(view, car));
+                rlColor4ub(255, 255, 255, 255);
+                rlTexCoord2f(u0, v0);
+                rlVertex3f(left, top, z);
+                rlTexCoord2f(u0, v1);
+                rlVertex3f(left, bottom, z);
+                rlTexCoord2f(u1, v1);
+                rlVertex3f(right, bottom, z);
+                rlTexCoord2f(u1, v0);
+                rlVertex3f(right, top, z);
+            }
+            rlEnd();
+        }
+    }
+    rlSetTexture(0);
+    // Flushes what was queued while the depth test is still on, before it changes back.
+    EndShaderMode();
+    rlColorMask(true, true, true, true);
+    rlDisableDepthTest();
+}
+
+int carsOnScreen(const View& view, CarOnScreen* cars) {
+    int count = 0;
+    const ChunkRange visible = visibleChunks(view, 0.0f);
+    for (int y = visible.y0; y <= visible.y1; ++y) {
+        for (int x = visible.x0; x <= visible.x1; ++x) {
+            const Chunk* chunk = findChunk(x, y, g_seed);
+            if (!chunk) continue;
+            for (int i = 0; i < chunk->carCount && count < kMaxCarsOnScreen; ++i) {
+                const maps::Obstacle& car = chunk->cars[i];
+                const maps::TexelRect rect = maps::spriteRect(car);
+                const Vec2 topLeft{static_cast<float>(rect.x0) / maps::kTexelsPerWorldX, static_cast<float>(rect.y0) / maps::kTexelsPerWorldY};
+                const Vec2 bottomRight{static_cast<float>(rect.x1) / maps::kTexelsPerWorldX, static_cast<float>(rect.y1) / maps::kTexelsPerWorldY};
+                const ScreenPoint a = project(view, topLeft);
+                const ScreenPoint b = project(view, Vec2{bottomRight.x, topLeft.y});
+                const ScreenPoint c = project(view, Vec2{topLeft.x, bottomRight.y});
+                const ScreenPoint d = project(view, bottomRight);
+                CarOnScreen shown;
+                shown.left = std::min(a.x, c.x);
+                shown.right = std::max(b.x, d.x);
+                shown.top = a.y;
+                shown.bottom = c.y;
+                if (shown.right < 0.0f || shown.left > static_cast<float>(view.width) || shown.bottom < 0.0f || shown.top > static_cast<float>(view.height)) continue;
+                shown.feetRow = carFeetRow(view, car);
+                shown.depth = depthOfRow(view, shown.feetRow);
+                shown.boxMin = car.center - car.half;
+                shown.boxMax = car.center + car.half;
+                cars[count++] = shown;
+            }
+        }
+    }
+    return count;
 }
 
 void drawLightPools(const View& view, const DayLook& look, uint32_t tick, bool flicker) {
@@ -307,3 +420,56 @@ void drawLightSprites(const View& view, const DayLook& look, uint32_t tick, bool
 }
 
 }  // namespace ls::worldview
+
+#ifdef __EMSCRIPTEN__
+extern "C" {
+// Test hook: paints the chunks around the start and compares them with the simulation's list
+// of cars. Every pixel marked as car must be inside some car's picture, and every car wholly
+// inside a chunk must have a good amount of marked pixels. This is what proves the painters and
+// the layout can't disagree. It repaints, so it is slow, and nothing but the tests calls it.
+EMSCRIPTEN_KEEPALIVE const char* ls_check_car_marks(int map, int seed, int reach) {
+    using namespace ls;
+    static char json[96];
+    const maps::MapId id = maps::mapFromIndex(map);
+    int cars = 0;
+    int strayPixels = 0;
+    int fewestMarked = 1 << 30;
+    maps::Light lights[maps::kMaxLightsPerChunk];
+    for (int y = -reach; y <= reach; ++y) {
+        for (int x = -reach; x <= reach; ++x) {
+            maps::renderChunk(id, static_cast<uint64_t>(seed), x, y, worldview::g_pixels, lights);
+            maps::Obstacle list[maps::kMaxObstaclesPerTile];
+            const int count = maps::obstaclesInTile(id, static_cast<uint64_t>(seed), x, y, list, maps::kMaxObstaclesPerTile);
+            const int left = x * maps::kChunkWidth;
+            const int top = y * maps::kChunkHeight;
+            for (int py = 0; py < maps::kChunkHeight; ++py) {
+                for (int px = 0; px < maps::kChunkWidth; ++px) {
+                    if (worldview::g_pixels[py * maps::kChunkWidth + px].a != maps::kCarBody) continue;
+                    bool inside = false;
+                    for (int i = 0; i < count && !inside; ++i) {
+                        const maps::TexelRect rect = maps::spriteRect(list[i]);
+                        // Sand heaped against a wreck and its pebbles stray a little outside.
+                        inside = left + px >= rect.x0 - 24 && left + px < rect.x1 + 24 && top + py >= rect.y0 - 6 && top + py < rect.y1 + 8;
+                    }
+                    if (!inside) strayPixels++;
+                }
+            }
+            for (int i = 0; i < count; ++i) {
+                const maps::TexelRect rect = maps::spriteRect(list[i]);
+                if (rect.x0 < left || rect.y0 < top || rect.x1 > left + maps::kChunkWidth || rect.y1 > top + maps::kChunkHeight) continue;
+                int marked = 0;
+                for (int py = rect.y0; py < rect.y1; ++py) {
+                    for (int px = rect.x0; px < rect.x1; ++px) {
+                        if (worldview::g_pixels[(py - top) * maps::kChunkWidth + (px - left)].a == maps::kCarBody) marked++;
+                    }
+                }
+                fewestMarked = std::min(fewestMarked, marked);
+                cars++;
+            }
+        }
+    }
+    std::snprintf(json, sizeof(json), "{\"cars\":%d,\"strayPixels\":%d,\"fewestMarked\":%d}", cars, strayPixels, cars > 0 ? fewestMarked : 0);
+    return json;
+}
+}
+#endif

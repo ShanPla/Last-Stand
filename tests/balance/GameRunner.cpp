@@ -1,6 +1,7 @@
 #include "GameRunner.h"
 
 #include "Stats.h"
+#include "components/Obstacles/Obstacles.h"
 #include "components/Weapons/Weapons.h"
 
 #include <algorithm>
@@ -12,6 +13,9 @@ namespace ls::tools {
 namespace {
 
 Difficulty g_difficulty = Difficulty::Normal;
+maps::MapId g_map = maps::kDefaultMap;
+
+constexpr float kCarHugDistance = 60.0f;
 
 // Adds up time spent held, dry and fully dry for this one step.
 void trackWeapons(const GameState& state, RunResult& result) {
@@ -76,6 +80,7 @@ void readEvents(const GameState& state, RunResult& result, int hitSource) {
                 break;
             case EventType::BossKilled: result.bossKilled = true; break;
             case EventType::PlayerDashed: ++result.dashes; break;
+            case EventType::ZombieUnstuck: ++result.zombiesUnstuck; break;
             case EventType::PlayerHit:
                 result.damageTaken += event.value;
                 result.damageBySource[hitSource] += event.value;
@@ -121,10 +126,12 @@ void traceLine(std::FILE* out, const GameState& state) {
 }  // namespace
 
 void setGameDifficulty(Difficulty difficulty) { g_difficulty = difficulty; }
+void setGameMap(maps::MapId map) { g_map = map; }
+maps::MapId gameMap() { return g_map; }
 
 RunResult playGame(const BotProfile& profile, uint64_t seed, int favoriteWeapon, std::FILE* trace) {
     auto state = std::make_unique<GameState>();
-    sim::newRun(*state, seed, g_difficulty);
+    sim::newRun(*state, seed, g_difficulty, g_map);
     // A focus run starts with the favorite next to the Rifle, so every weapon gets the same head start.
     if (favoriteWeapon >= 0) weapons::grant(*state, static_cast<WeaponId>(favoriteWeapon));
     Bot bot(profile, seed, favoriteWeapon);
@@ -157,6 +164,7 @@ RunResult playGame(const BotProfile& profile, uint64_t seed, int favoriteWeapon,
         result.playedSeconds += kDt;
         result.peakZombies = std::max(result.peakZombies, state->enemies.count);
         trackWeapons(*state, result);
+        if (obstacles::distanceToNearestCar(*state, state->player.pos, kCarHugDistance) < kCarHugDistance) result.carHugSeconds += kDt;
         if (result.bossReached) {
             result.bossDamageTaken += result.damageTaken - damageBefore;
             result.bossLowestHp = std::min(result.bossLowestHp, std::max(0.0f, state->player.hp));

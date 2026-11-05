@@ -27,6 +27,11 @@ void setQuality(int quality);
 // value goes back to following the run. theme::kDuskSeconds is the title screen's mood.
 void setFixedDayTime(float seconds);
 
+// Debug only: outlines each car's solid box over the picture, for lining the two up.
+void setShowCarBoxes(bool show);
+// Debug only: with this off, cars hide nothing, so tests can compare the two pictures.
+void setCarCover(bool on);
+
 // Debug only: fills the pools with one of every world object, so every shape can be
 // seen. extraZombies adds a mixed crowd, for checking the cheap figures. A negative
 // value leaves the world empty and stops the clock, for checking the ground. The values
@@ -36,6 +41,10 @@ inline constexpr int kSceneChargerAway = -101;     // The same, aiming out of th
 inline constexpr int kSceneBossOffLeft = -102;     // A boss charging a dash from off the left edge.
 inline constexpr int kSceneOnlyMines = -103;       // Landmines as the only weapon, and one target.
 inline constexpr int kSceneWalkerOffLeft = -104;   // Just past the left edge, with only its shadow showing.
+inline constexpr int kSceneCarEmpty = -105;        // A car, with the soldier beside it.
+inline constexpr int kSceneCarBehind = -106;       // The same, with a zombie behind the car.
+inline constexpr int kSceneCarFront = -107;        // The same, with a zombie in front of the car.
+inline constexpr int kSceneCarBoth = -108;         // The same, with both.
 void setupShowcase(GameState& state, int extraZombies);
 
 // Debug only: keeps the showcase animating while the simulation is held still.

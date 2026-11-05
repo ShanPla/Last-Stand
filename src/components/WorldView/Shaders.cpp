@@ -87,6 +87,34 @@ void main() {
 }
 )";
 
+// A car is part of the painted ground, so it can't be drawn in front of a zombie. Instead its
+// pixels go into the depth buffer at the depth of the car's near edge, and a zombie further
+// back then fails the depth test on them. Its position works like the ground's, with the
+// depth carried in z. Multiplying by w cancels the divide the GPU does afterward, so the
+// depth stays the same across the whole car, even with the perspective.
+constexpr const char* kCarDepthVertex = LS_GLSL_HEADER R"(
+in vec3 vertexPosition;
+in vec2 vertexTexCoord;
+uniform mat4 uProjection;
+out vec2 vUv;
+void main() {
+    vUv = vertexTexCoord;
+    gl_Position = uProjection * vec4(vertexPosition.xy, 0.0, 1.0);
+    gl_Position.z = (1.0 - 2.0 * vertexPosition.z) * gl_Position.w;
+}
+)";
+
+// The painters leave the alpha of a car's pixels at zero. Everything else is thrown away.
+constexpr const char* kCarDepthFragment = LS_GLSL_HEADER R"(
+in vec2 vUv;
+out vec4 fragColor;
+uniform sampler2D texture0;
+void main() {
+    if (texture(texture0, vUv).a > 0.5) discard;
+    fragColor = vec4(0.0);
+}
+)";
+
 constexpr const char* kPresentVertex = LS_GLSL_HEADER R"(
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
@@ -123,6 +151,7 @@ void main() {
 
 PaletteShader g_palette;
 GroundShader g_ground;
+CarDepthShader g_carDepth;
 PresentShader g_present;
 
 }  // namespace
@@ -143,6 +172,9 @@ void loadShaders() {
     g_ground.saturation = GetShaderLocation(g_ground.shader, "uSaturation");
     g_ground.lift = GetShaderLocation(g_ground.shader, "uLift");
 
+    g_carDepth.shader = LoadShaderFromMemory(kCarDepthVertex, kCarDepthFragment);
+    g_carDepth.projection = GetShaderLocation(g_carDepth.shader, "uProjection");
+
     g_present.shader = LoadShaderFromMemory(kPresentVertex, kPresentFragment);
     g_present.textureSize = GetShaderLocation(g_present.shader, "uTextureSize");
     g_present.pixelScale = GetShaderLocation(g_present.shader, "uPixelScale");
@@ -151,6 +183,7 @@ void loadShaders() {
 
 const PaletteShader& paletteShader() { return g_palette; }
 const GroundShader& groundShader() { return g_ground; }
+const CarDepthShader& carDepthShader() { return g_carDepth; }
 const PresentShader& presentShader() { return g_present; }
 
 }  // namespace ls::worldview

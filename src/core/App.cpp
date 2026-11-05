@@ -72,6 +72,8 @@ enum DebugCommand {
     kDash = 40,          // Presses dash, as the key would.
     kHoldSim = 41,       // 1 holds the simulation still (the screen still draws), 0 lets it run. For screenshots.
     kSetDashCooldown = 42,  // Percent of the full cooldown left.
+    kShowCarBoxes = 43,  // 1 outlines each car's solid box over the picture.
+    kCarCover = 44,      // 0 stops cars hiding what stands behind them, for comparing pictures.
 };
 
 // Which screen is showing. Level-up is not here: it is a phase of a running game.
@@ -179,13 +181,12 @@ void setScreen(Screen screen) {
 // in circles, enemies kept topped up, and no way to be hurt. It is never saved and
 // never makes sound, because only a real run sends events to audio.
 // The title's choice of map shows in the demo behind it, and in the next run.
-void applySelectedMap() { maps::setCurrent(maps::mapFromIndex(save::current().map)); }
+maps::MapId selectedMap() { return maps::mapFromIndex(save::current().map); }
 
 void startDemo() {
-    applySelectedMap();
     worldview::setFixedDayTime(theme::kDuskSeconds);
     effects::reset();
-    sim::newRun(*g_state, kDemoSeed);
+    sim::newRun(*g_state, kDemoSeed, Difficulty::Normal, selectedMap());
     for (WeaponId id : {WeaponId::Shotgun, WeaponId::Smg, WeaponId::Flamethrower, WeaponId::Tesla, WeaponId::Blades}) {
         weapons::grant(*g_state, id);
     }
@@ -200,10 +201,9 @@ void startDemo() {
 }
 
 void startRun(uint64_t seed) {
-    applySelectedMap();
     worldview::setFixedDayTime(-1.0f);
     effects::reset();
-    sim::newRun(*g_state, seed != 0 ? seed : pickSeed(), save::current().difficulty);
+    sim::newRun(*g_state, seed != 0 ? seed : pickSeed(), save::current().difficulty, selectedMap());
     g_inDemo = false;
     g_accumulator = 0.0f;
     g_pendingChoice = ui::LevelUpChoice{};
@@ -403,7 +403,7 @@ static void drawUiPass(float dtReal, bool playing) {
             const ui::TitleAction action = ui::drawTitleScreen(save::current());
             // The choice is kept at once, so it is there next time even if the page closes now.
             if (save::current().difficulty != before || save::current().map != mapBefore) persist();
-            if (save::current().map != mapBefore) applySelectedMap();
+            if (save::current().map != mapBefore) sim::setMap(*g_state, selectedMap());
             if (action == ui::TitleAction::Play) startRun(0);
             else if (action == ui::TitleAction::Settings) openSettings(Screen::Title);
             else if (action == ui::TitleAction::HowToPlay) {
@@ -653,7 +653,7 @@ void debugCommand(int command, int value) {
     // Any other debug command hands control back to the simulation, except the ones
     // that only move the camera or the clock, which also work while it is held still.
     const bool keepsShowcase = command == kSetTime || command == kMovePlayerX || command == kMovePlayerY || command == kSetQuality || command == kSetShake ||
-                               command == kSetFlash || command == kSetDamageNumbers || command == kSetReducedMotion || command == kPushEvent || command == kResetFxCounters || command == kSetMap;
+                               command == kSetFlash || command == kSetDamageNumbers || command == kSetReducedMotion || command == kPushEvent || command == kResetFxCounters || command == kSetMap || command == kShowCarBoxes || command == kCarCover;
     if (!keepsShowcase) g_showcase = command == kShowcase;
     switch (command) {
         case kShowcase: worldview::setupShowcase(s, value); break;
@@ -699,7 +699,10 @@ void debugCommand(int command, int value) {
                 s.events.clear();
             }
             break;
-        case kSetMap: maps::setCurrent(maps::mapFromIndex(value)); break;
+        case kSetMap:
+            save::current().map = static_cast<int>(maps::mapFromIndex(value));
+            sim::setMap(s, selectedMap());
+            break;
         case kStressEnemies: sim::setStressTargets(s, value, s.run.debugProjectileTarget); break;
         case kStressProjectiles: sim::setStressTargets(s, s.run.debugEnemyTarget, value); break;
         case kSetSeed:
@@ -762,6 +765,8 @@ void debugCommand(int command, int value) {
             break;
         case kDash: g_pendingDash = true; break;
         case kHoldSim: g_holdSim = value != 0; break;
+        case kShowCarBoxes: worldview::setShowCarBoxes(value != 0); break;
+        case kCarCover: worldview::setCarCover(value != 0); break;
         case kSetDashCooldown: s.player.dashCooldown = balance::kDashCooldownSeconds * static_cast<float>(value) / 100.0f; break;
         case kLevelUp:
             if (!g_inDemo) upgrades::addXp(s, std::max(1, s.player.xpToNext - s.player.xp));

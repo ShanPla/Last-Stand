@@ -515,6 +515,7 @@ void consumeEvents(const GameState& state, bool quiet) {
                 if (nearView(event.pos) || distanceSq(event.pos, state.player.pos) < kShakeReach * kShakeReach) onExplosion(state, event, quiet);
                 break;
             case EventType::PlayerDashed: onPlayerDashed(state, event); break;
+            case EventType::ZombieUnstuck: break;
             case EventType::ReloadStarted:
             case EventType::WeaponDry: break;
         }

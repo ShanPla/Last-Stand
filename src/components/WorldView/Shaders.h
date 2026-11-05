@@ -18,6 +18,12 @@ struct GroundShader {
     int lift;
 };
 
+// Writes a car's pixels into the depth buffer and draws nothing.
+struct CarDepthShader {
+    Shader shader;
+    int projection;
+};
+
 struct PresentShader {
     Shader shader;
     int textureSize;
@@ -29,6 +35,7 @@ struct PresentShader {
 void loadShaders();
 const PaletteShader& paletteShader();
 const GroundShader& groundShader();
+const CarDepthShader& carDepthShader();
 const PresentShader& presentShader();
 
 }  // namespace ls::worldview

@@ -12,6 +12,8 @@ void drawZombieShadow(const Enemy& enemy, const ScreenPoint& feet);
 // A long sun shadow in the shape of the figure. Costs one more quad per figure.
 void drawZombieLongShadow(const GameState& state, const Enemy& enemy, const ScreenPoint& feet, const DayLook& look);
 void drawZombie(const GameState& state, const Enemy& enemy, const ScreenPoint& feet);
+// A faint copy of the zombie, cropped to a rectangle of the picture, for showing through a car.
+void drawZombieSilhouette(const GameState& state, const Enemy& enemy, const ScreenPoint& feet, uint8_t alpha, float left, float top, float right, float bottom);
 
 // The small HP bar over an elite. A flat shape, drawn above the crowd.
 void drawEliteBar(const GameState& state, const Enemy& enemy, const ScreenPoint& feet);

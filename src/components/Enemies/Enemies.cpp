@@ -8,6 +8,7 @@
 #include "components/Enemies/Runner/Runner.h"
 #include "components/Enemies/Spitter/Spitter.h"
 #include "components/Enemies/Walker/Walker.h"
+#include "components/Obstacles/Obstacles.h"
 #include "components/Pickups/Pickups.h"
 #include "components/Player/Player.h"
 #include "data/Balance.h"
@@ -91,6 +92,54 @@ void recycleIfFar(const GameState& state, Enemy& enemy) {
     }
 }
 
+// The boss walks straight through cars, because it is wider than a car is deep, its attacks
+// assume straight paths, and it should look like it is crushing them. A dashing Charger keeps
+// its locked direction on purpose: that is how it ends up crashing.
+bool ignoresCars(const Enemy& enemy) { return enemy.type == EnemyType::Boss; }
+bool goesAroundCars(const Enemy& enemy) { return !ignoresCars(enemy) && !(enemy.type == EnemyType::Charger && enemy.state == kChargerDash); }
+
+float carRadius(const Enemy& enemy) { return enemy.radius * balance::kZombieCarRadiusShare; }
+
+// The velocity that goes around a car, and the count of how long it has been at it.
+Vec2 aroundCars(const GameState& state, Enemy& enemy, Vec2 wanted) {
+    if (!goesAroundCars(enemy)) return wanted;
+    // Heading for the player, the way around is judged by the player's position. A Spitter
+    // backing off or circling is heading somewhere else, so it is judged by its own heading.
+    const Vec2 toPlayer = state.player.pos - enemy.pos;
+    const Vec2 target = dot(wanted, toPlayer) > 0.0f ? state.player.pos : enemy.pos + wanted;
+    const Vec2 steered = obstacles::steerAround(state, enemy.pos, carRadius(enemy), wanted, target, enemy.id);
+    if (steered.x != wanted.x || steered.y != wanted.y) enemy.stuck++;
+    else if (enemy.stuck > 0) enemy.stuck--;
+    return steered;
+}
+
+// Runs after everything that moves zombies in a step, so nothing can leave one inside a car.
+void settleAgainstCars(GameState& state) {
+    const Vec2 playerPos = state.player.pos;
+    for (int i = 0; i < state.enemies.count; ++i) {
+        Enemy& enemy = state.enemies[i];
+        if (ignoresCars(enemy)) continue;
+        const obstacles::Push push = obstacles::resolveCircle(state, enemy.pos, carRadius(enemy));
+        if (push.hit && enemy.type == EnemyType::Charger && enemy.state == kChargerDash) {
+            // A crash: it bounces off and is stunned for a moment, which is the player's reward.
+            enemy.state = kChargerRecover;
+            enemy.timer = balance::kChargerCrashSeconds;
+            enemy.knock = enemy.dir * -balance::kChargerCrashKnock;
+        }
+        // No pathfinding means a zombie can get caught in the pocket between two cars. If it
+        // has spent far too long going around them it is moved past the car, because a zombie
+        // that never arrives would make hiding behind a car safe.
+        if (enemy.stuck < balance::kZombieStuckSteps) continue;
+        enemy.stuck = 0;
+        Vec2 corner;
+        if (!obstacles::cornerToward(state, enemy.pos, carRadius(enemy), playerPos, &corner)) continue;
+        enemy.pos = corner;
+        obstacles::resolveCircle(state, enemy.pos, carRadius(enemy));
+        enemy.prevPos = enemy.pos;
+        pushEvent(state, EventType::ZombieUnstuck, enemy.pos);
+    }
+}
+
 }  // namespace
 
 Enemy* spawn(GameState& state, EnemyType type, Vec2 pos, bool elite) {
@@ -103,7 +152,6 @@ Enemy* spawn(GameState& state, EnemyType type, Vec2 pos, bool elite) {
     const float hpScale = isBoss ? 1.0f : balance::enemyHpScale(seconds) * balance::difficultyTuning(state.run.difficulty).enemyHp;
     const float damageScale = isBoss ? 1.0f : balance::enemyDamageScale(seconds);
     enemy->pos = pos;
-    enemy->prevPos = pos;
     enemy->type = type;
     enemy->elite = elite;
     enemy->id = state.run.nextId++;
@@ -114,6 +162,9 @@ Enemy* spawn(GameState& state, EnemyType type, Vec2 pos, bool elite) {
     enemy->contactDamage = stats.contactDamage * damageScale * (elite ? balance::kElite_DamageMult : 1.0f);
     // The boss waits one full interval before its first attack, so it can walk in.
     if (isBoss) enemy->timer = balance::kBossAttackInterval[0];
+    // Nothing spawns inside a car. The boss doesn't care, and arrives through them.
+    if (!isBoss) obstacles::resolveCircle(state, enemy->pos, carRadius(*enemy));
+    enemy->prevPos = enemy->pos;
     return enemy;
 }
 
@@ -130,7 +181,7 @@ void update(GameState& state) {
 
         // The crowd moves around the boss. It must not be held back by the zombies it walks through.
         const Vec2 push = enemy.type == EnemyType::Boss ? Vec2{} : separation(state, enemy, i);
-        const Vec2 velocity = behaviourVelocity(state, enemy) + enemy.knock + push;
+        const Vec2 velocity = aroundCars(state, enemy, behaviourVelocity(state, enemy)) + enemy.knock + push;
         enemy.pos += velocity * kDt;
         enemy.knock *= knockDecay;
         recycleIfFar(state, enemy);
@@ -141,6 +192,8 @@ void update(GameState& state) {
         }
     }
     pushCrowdOutOfWideEnemies(state);
+    // After the crowd pushes, or they would put zombies back into cars.
+    settleAgainstCars(state);
     // Rebuilt after moving, so weapons this step test against current positions.
     state.enemyGrid.build(state.enemies.items, state.enemies.count);
 }

@@ -13,6 +13,10 @@
 //
 // What this cannot catch: a new field that fits into existing padding, so the struct does
 // not grow. Padding is only the gap the compiler leaves for alignment.
+//
+// GameState::obstacleCache is not listed on purpose: it is worked out only from run.map,
+// run.seed and player.pos, which are all listed and hashed, so it can't change a later step
+// on its own. A unit test checks that it always equals a fresh computation.
 
 #include "components/Enemies/Enemies.h"
 #include "components/Pickups/Pickups.h"
@@ -99,10 +103,10 @@ inline const StructInfo& rngInfo() {
 }
 
 inline const StructInfo& enemyInfo() {
-    static const StructInfo info{"Enemy", sizeof(Enemy), 1,
+    static const StructInfo info{"Enemy", sizeof(Enemy), 3,
         {LS_FLT(Enemy, pos), LS_DRAW(Enemy, prevPos), LS_FLT(Enemy, knock), LS_FLT(Enemy, dir), LS_FLT(Enemy, hp),
          LS_FLT(Enemy, maxHp), LS_FLT(Enemy, radius), LS_FLT(Enemy, speed), LS_FLT(Enemy, contactDamage),
-         LS_FLT(Enemy, timer), LS_DRAW(Enemy, flash), LS_FLT(Enemy, bladeCooldown), LS_NUM(Enemy, id),
+         LS_FLT(Enemy, timer), LS_DRAW(Enemy, flash), LS_FLT(Enemy, bladeCooldown), LS_NUM(Enemy, id), LS_NUM(Enemy, stuck),
          LS_NUM(Enemy, type), LS_NUM(Enemy, state), LS_NUM(Enemy, elite)}, &untouchedBytes<Enemy>};
     return info;
 }
@@ -178,8 +182,8 @@ inline const StructInfo& playerInfo() {
 }
 
 inline const StructInfo& runStateInfo() {
-    static const StructInfo info{"RunState", sizeof(RunState), 8,
-        {LS_NUM(RunState, phase), LS_NUM(RunState, difficulty), LS_NUM(RunState, seed), LS_NUM(RunState, tick),
+    static const StructInfo info{"RunState", sizeof(RunState), 7,
+        {LS_NUM(RunState, phase), LS_NUM(RunState, difficulty), LS_NUM(RunState, map), LS_NUM(RunState, seed), LS_NUM(RunState, tick),
          LS_NUM(RunState, nextId), LS_NUM(RunState, kills), LS_NUM(RunState, rerollsLeft), LS_NUM(RunState, pendingLevels),
          LS_NEST(RunState, offers), LS_NUM(RunState, offerCount), LS_FLT(RunState, damageByWeapon),
          LS_FLT(RunState, waveAccumulators), LS_NUM(RunState, nextEliteEvent), LS_NUM(RunState, nextPickupDropKills),

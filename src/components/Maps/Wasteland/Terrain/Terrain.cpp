@@ -12,28 +12,13 @@ using namespace theme;
 
 namespace {
 
-enum Salt : uint32_t { kSaltFields = 301, kSaltScatter = 307, kSaltTracks = 311, kSaltFences = 313 };
+enum Salt : uint32_t { kSaltScatter = 307, kSaltTracks = 311, kSaltFences = 313 };
 
 // Large fields are only worked out every 4 texels. Speckle hides the steps, and a chunk
 // paints about 16 times fewer noise lookups.
 constexpr int kFieldStepShift = 2;
 constexpr int kFieldColumns = kChunkWidth >> kFieldStepShift;
 constexpr int kFieldRows = kChunkHeight >> kFieldStepShift;
-
-int fieldA(const Desert& d, int x, int y) { return (softNoise(x + d.ax, y + d.ay, 10, 9) * 3 + softNoise(x + d.bx, y + d.ay, 7, 6)) / 4; }
-int fieldB(const Desert& d, int x, int y) { return (softNoise(x + d.bx, y + d.by, 10, 9) * 3 + softNoise(x + d.ax, y + d.by, 7, 6)) / 4; }
-
-// Most of the desert stays open sand. The two fields cut it into broad regions.
-constexpr int kDunesAbove = 146;
-constexpr int kFlatsBelow = 108;
-
-Zone classify(int a, int b) {
-    if (a > kDunesAbove) return Zone::Dunes;
-    if (a < kFlatsBelow) return b < 128 ? Zone::Pan : Zone::Reg;
-    if (b > 150) return Zone::Scrub;
-    if (b < 104) return Zone::RedEarth;
-    return Zone::Sand;
-}
 
 Color rampTone(const Color* ramp, int count, int blotch, uint32_t noise) {
     int tone = (blotch * count) >> 8;
@@ -103,7 +88,7 @@ void paintBase(Paint& p, const Desert& d) {
             const int fieldValueA = a[row][col] + jitter;
             const int patch = std::clamp(blotch[row][col] + jitter, 0, 255);
             Color color;
-            switch (classify(fieldValueA, b[row][col] + jitter)) {
+            switch (classifyZone(fieldValueA, b[row][col] + jitter)) {
                 case Zone::Dunes: color = duneTexel(d, x, y, fieldValueA - kDunesAbove, patch, noise); break;
                 case Zone::Pan: color = rampTone(kPan, 3, patch, noise); break;
                 case Zone::Reg:
@@ -331,22 +316,6 @@ void paintFences(Paint& p, const Desert& d) {
 }
 
 }  // namespace
-
-Desert desertFor(uint64_t seed) {
-    TileRandom random(seed, 0, 0, kSaltFields);
-    constexpr int kSlide = 1 << 20;
-    Desert d{};
-    d.seed = seed;
-    d.ax = random.range(0, kSlide);
-    d.ay = random.range(0, kSlide);
-    d.bx = random.range(0, kSlide);
-    d.by = random.range(0, kSlide);
-    d.windX = random.range(0, kSlide);
-    d.windY = random.range(0, kSlide);
-    return d;
-}
-
-Zone zoneAt(const Desert& d, int x, int y) { return classify(fieldA(d, x, y), fieldB(d, x, y)); }
 
 int driftNoise(const Desert& d, int x, int y) {
     // Sliding along the diagonal, the noise changes slowly. Across it, quickly. That

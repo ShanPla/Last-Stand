@@ -48,6 +48,8 @@ file(GLOB_RECURSE LS_SIM_SOURCES CONFIGURE_DEPENDS
   src/components/Weapons/*.cpp
   src/components/Pickups/*.cpp
   src/components/Upgrades/*.cpp
+  src/components/Obstacles/*.cpp
+  src/components/Maps/Layout/*.cpp
 )
 list(FILTER LS_SIM_SOURCES EXCLUDE REGEX "/core/(App|Platform|NativePaths)\\.cpp$")
 
@@ -81,6 +83,8 @@ if(EMSCRIPTEN)
   set_source_files_properties(${LS_ART_SOURCES} PROPERTIES COMPILE_OPTIONS "-Oz")
 endif()
 list(FILTER LS_GAME_SOURCES EXCLUDE REGEX "/components/Audio/[^/]+/")
+# The layout of a map belongs to the simulation, which is linked in already.
+list(FILTER LS_GAME_SOURCES EXCLUDE REGEX "/components/Maps/Layout/")
 file(GLOB LS_APP_SOURCE CONFIGURE_DEPENDS src/core/App.cpp)
 
 # The UI font is compiled into the program as a byte array, so the page never

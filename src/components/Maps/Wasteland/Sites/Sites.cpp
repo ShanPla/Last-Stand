@@ -13,31 +13,10 @@ using namespace theme;
 
 namespace {
 
-enum Salt : uint32_t { kSaltCell = 401, kSaltRoadside = 409, kSaltPaint = 419 };
-
 constexpr WallLook kCinderWall{kCinder, kCinderTop, 0, 4};
 constexpr WallLook kAdobeWall{kAdobe, kAdobeTop, 0, 0};
 constexpr WallLook kRustWall{kCorrugated, kCorrugated[2], 4, 0};
 constexpr WallLook kGreyWall{kCorrugatedGrey, kCorrugatedGrey[2], 4, 0};
-
-// Objects in a cluster are placed first and drawn after sorting by row, so the ones
-// nearer the camera always overlap the ones behind them.
-struct Placed {
-    int x, y, kind;
-};
-constexpr int kMaxPlaced = 24;
-
-void sortByRow(Placed* items, int count) {
-    for (int i = 1; i < count; ++i) {
-        const Placed item = items[i];
-        int k = i - 1;
-        while (k >= 0 && items[k].y > item.y) {
-            items[k + 1] = items[k];
-            --k;
-        }
-        items[k + 1] = item;
-    }
-}
 
 void concreteSlab(Paint& p, int x0, int y0, int x1, int y1) {
     // Cast in big panels, each with its own tone. The desert is taking it back: skipping
@@ -90,7 +69,7 @@ void sandOver(Paint& p, TileRandom& random, int x0, int y0, int x1, int y1, int 
 
 // A low ruin behind a cracked forecourt. Its canopy came down years ago: the sheet lies
 // across the pumps, and only the stubs of its posts still stand.
-void gasStation(Paint& p, TileRandom& r, int x0, int y0, int x1, int y1, LightList& lights) {
+void gasStation(Paint& p, TileRandom& r, int x0, int y0, int x1, int y1, CarPlan& car, LightList& lights) {
     const int w = x1 - x0;
     const int shopBack = y0 + 22;
     const int shopFront = y0 + 58;
@@ -159,7 +138,10 @@ void gasStation(Paint& p, TileRandom& r, int x0, int y0, int x1, int y1, LightLi
     lampPost(p, signOnRight ? x0 + 14 : x1 - 18, shopFront + 10, lights);
 
     // A car that never got its last tank, tires and a burning drum someone left.
-    if (r.chance(70)) carSide(p, x0 + r.range(30, w - 30), y1 - r.range(6, 16), r);
+    if (car.exists) {
+        CarMark mark(p);
+        carSide(p, car.x, car.y, car.looks);
+    }
     tirePile(p, x0 + r.range(8, 22), y1 - r.range(6, 22), r);
     barrel(p, x1 - r.range(8, 16), shopFront + r.range(14, 30), r);
     barrel(p, x1 - r.range(20, 30), shopFront + r.range(14, 30), r);
@@ -298,20 +280,24 @@ void boneField(Paint& p, TileRandom& r, int cx, int cy) {
 
 // --- Wreck yard ---------------------------------------------------------------
 
-void wreckYard(Paint& p, TileRandom& r, int cx, int cy, LightList& lights) {
+void wreckYard(Paint& p, TileRandom& r, const SiteSpot& spot, LightList& lights) {
+    const int cx = spot.x;
+    const int cy = spot.y;
     Placed items[kMaxPlaced];
-    int count = 0;
-    const int wrecks = r.range(5, 9);
-    for (int i = 0; i < wrecks; ++i) items[count++] = {cx + r.range(-170, 170), cy + r.range(-64, 72), r.range(0, 9)};
-    sortByRow(items, count);
+    const int count = planWreckYard(spot, r, items);
     wireFenceAcross(p, cx - 190, cx + 190, cy - 84);
     wireFenceAlong(p, cx - 190, cy - 84, cy + 76);
     for (int n = 0; n < count; ++n) {
         const Placed& item = items[n];
-        if (item.kind < 5) carSide(p, item.x, item.y, r);
-        else if (item.kind < 7) carOnRoof(p, item.x, item.y, r);
-        else if (item.kind == 7) busSide(p, item.x, item.y, r);
-        else tirePile(p, item.x, item.y, r);
+        CarSprite sprite;
+        if (!wreckYardSprite(item.kind, &sprite)) {
+            tirePile(p, item.x, item.y, r);
+        } else if (clearOfStart(makeObstacle(sprite, item.x, item.y))) {
+            CarMark mark(p);
+            if (sprite == CarSprite::WreckSide) carSide(p, item.x, item.y, r);
+            else if (sprite == CarSprite::WreckOnRoof) carOnRoof(p, item.x, item.y, r);
+            else busSide(p, item.x, item.y, r);
+        }
         sandMound(p, item.x + r.range(-18, 18), item.y + 2, r.range(10, 20), r.range(2, 4));
     }
     if (r.chance(60)) burningBarrel(p, cx + r.range(-120, 120), cy + r.range(-30, 40), r, lights);
@@ -365,53 +351,6 @@ void abandonedCamp(Paint& p, TileRandom& r, int cx, int cy, LightList& lights) {
 
 // --- Placing them -------------------------------------------------------------
 
-enum class SiteKind { None, Shacks, Rocks, RedRocks, Grove, Bones, Wrecks, Foundations, Camp };
-
-SiteKind pickSite(Zone zone, int roll) {
-    switch (zone) {
-        case Zone::Dunes:
-            if (roll < 56) return SiteKind::None;
-            if (roll < 68) return SiteKind::Bones;
-            if (roll < 80) return SiteKind::Wrecks;
-            if (roll < 88) return SiteKind::Rocks;
-            return SiteKind::Shacks;
-        case Zone::Pan:
-            if (roll < 26) return SiteKind::None;
-            if (roll < 60) return SiteKind::Bones;
-            if (roll < 80) return SiteKind::Foundations;
-            return SiteKind::Wrecks;
-        case Zone::Reg:
-            if (roll < 22) return SiteKind::None;
-            if (roll < 64) return SiteKind::Rocks;
-            if (roll < 78) return SiteKind::Foundations;
-            if (roll < 90) return SiteKind::Shacks;
-            return SiteKind::Wrecks;
-        case Zone::Scrub:
-            if (roll < 22) return SiteKind::None;
-            if (roll < 66) return SiteKind::Grove;
-            if (roll < 86) return SiteKind::Shacks;
-            return SiteKind::Camp;
-        case Zone::RedEarth:
-            if (roll < 22) return SiteKind::None;
-            if (roll < 72) return SiteKind::RedRocks;
-            if (roll < 86) return SiteKind::Bones;
-            return SiteKind::Grove;
-        default:
-            if (roll < 40) return SiteKind::None;
-            if (roll < 56) return SiteKind::Shacks;
-            if (roll < 68) return SiteKind::Camp;
-            if (roll < 78) return SiteKind::Bones;
-            if (roll < 88) return SiteKind::Rocks;
-            return SiteKind::Wrecks;
-    }
-}
-
-// Sites sit inside this box around their center, which is how far a chunk has to look.
-constexpr int kSiteReachX = 260;
-constexpr int kSiteReachY = 150;
-constexpr int kCellWidth = kChunkWidth * 3;
-constexpr int kCellHeight = kChunkHeight * 3;
-
 void paintCellSites(Paint& p, const Desert& d, LightList& lights) {
     const int i0 = floorDiv(p.left() - kSiteReachX - kCellWidth, kCellWidth);
     const int i1 = floorDiv(p.right() + kSiteReachX, kCellWidth);
@@ -419,14 +358,11 @@ void paintCellSites(Paint& p, const Desert& d, LightList& lights) {
     const int j1 = floorDiv(p.bottom() + kSiteReachY, kCellHeight);
     for (int j = j0; j <= j1; ++j) {
         for (int i = i0; i <= i1; ++i) {
-            TileRandom place(d.seed, i, j, kSaltCell);
-            const int cx = i * kCellWidth + place.range(kSiteReachX / 2, kCellWidth - kSiteReachX / 2);
-            const int cy = j * kCellHeight + place.range(kSiteReachY / 2, kCellHeight - kSiteReachY / 2);
-            const int roll = place.range(0, 99);
+            const SiteSpot spot = siteSpot(d.seed, i, j);
+            const int cx = spot.x;
+            const int cy = spot.y;
             if (!p.overlaps(cx - kSiteReachX, cy - kSiteReachY, cx + kSiteReachX, cy + kSiteReachY)) continue;
-            // Roads win: a site never lands on one, and they have their own stops anyway.
-            if (nearAnyRoad(d.seed, cx, cy, kSiteReachX + 20, kSiteReachY + 20)) continue;
-            const SiteKind kind = pickSite(zoneAt(d, cx, cy), roll);
+            const SiteKind kind = siteKindAt(d, spot);
             TileRandom r(d.seed, i, j, kSaltPaint);
             switch (kind) {
                 case SiteKind::Shacks: shackCluster(p, r, cx, cy, lights); break;
@@ -434,7 +370,7 @@ void paintCellSites(Paint& p, const Desert& d, LightList& lights) {
                 case SiteKind::RedRocks: outcrop(p, r, cx, cy, true); break;
                 case SiteKind::Grove: grove(p, r, cx, cy); break;
                 case SiteKind::Bones: boneField(p, r, cx, cy); break;
-                case SiteKind::Wrecks: wreckYard(p, r, cx, cy, lights); break;
+                case SiteKind::Wrecks: wreckYard(p, r, spot, lights); break;
                 case SiteKind::Foundations: foundations(p, r, cx, cy, lights); break;
                 case SiteKind::Camp: abandonedCamp(p, r, cx, cy, lights); break;
                 case SiteKind::None: break;
@@ -443,12 +379,8 @@ void paintCellSites(Paint& p, const Desert& d, LightList& lights) {
     }
 }
 
-// Highway stops: gas stations mostly, a few shack clusters. Only on straight, clear road.
-constexpr int kStopWidth = 280;
-constexpr int kStopHeight = 150;
-
 void paintRoadsideStops(Paint& p, const Desert& d, const RoadFamily& f, LightList& lights) {
-    const int stretchLength = f.across ? kChunkWidth * 6 : kChunkHeight * 6;
+    const int stretchLength = stopStretchLength(f);
     const int reachPerp = (f.across ? kStopHeight : kStopWidth) + 90;
     const int perpLow = (f.across ? p.top() : p.left()) - reachPerp;
     const int perpHigh = (f.across ? p.bottom() : p.right()) + reachPerp;
@@ -458,41 +390,16 @@ void paintRoadsideStops(Paint& p, const Desert& d, const RoadFamily& f, LightLis
         const int base = roadBase(d.seed, f, index);
         if (base + f.reach < perpLow || base - f.reach > perpHigh) continue;
         for (int stretch = floorDiv(alongLow, stretchLength); stretch <= floorDiv(alongHigh, stretchLength); ++stretch) {
-            TileRandom place(d.seed, index, stretch, f.salt + kSaltRoadside);
-            const int along = stretch * stretchLength + place.range(stretchLength / 5, stretchLength * 4 / 5);
-            const int roll = place.range(0, 99);
-            const bool highSide = !f.across && place.chance(50);
-            if (roll >= 52) continue;
-            const int c = roadCenter(d.seed, f, index, along);
-            const int half = roadHalfWidth(d.seed, f, index);
-            if (roadBurial(d.seed, f, index, along) > 40) continue;
-            const int margin = f.across ? 160 : 90;
-            if (roadCenter(d.seed, f, index, along - margin) != c || roadCenter(d.seed, f, index, along + margin) != c) continue;
-            int x0, y0;
-            if (f.across) {
-                // Always on the far side, so the forecourt faces the road and the camera.
-                x0 = along - kStopWidth / 2;
-                y0 = c - half - kStopHeight - 1;
-            } else {
-                x0 = highSide ? c + half + 2 : c - half - kStopWidth - 2;
-                y0 = along - kStopHeight / 2;
-            }
-            if (!p.overlaps(x0 - 120, y0 - 70, x0 + kStopWidth + 120, y0 + kStopHeight + 70)) continue;
-            // Another road through the lot would look wrong, so the stop moves on.
-            const int centerX = x0 + kStopWidth / 2;
-            const int centerY = y0 + kStopHeight / 2;
-            const RoadFamily& other = f.across ? kUpRoads : kAcrossRoads;
-            bool blocked = false;
-            const int otherPerp = other.across ? centerY : centerX;
-            for (int k = firstRoadNear(other, otherPerp - 300); k <= lastRoadNear(other, otherPerp + 300); ++k) {
-                const int oc = roadCenter(d.seed, other, k, other.across ? centerX : centerY);
-                const int clear = (other.across ? kStopHeight / 2 : kStopWidth / 2) + roadHalfWidth(d.seed, other, k) + 24;
-                if (std::abs(oc - otherPerp) <= clear) blocked = true;
-            }
-            if (blocked) continue;
+            const RoadStop stop = roadStopAt(d.seed, f, index, stretch);
+            if (!stop.exists) continue;
+            if (!p.overlaps(stop.x0 - 120, stop.y0 - 70, stop.x0 + kStopWidth + 120, stop.y0 + kStopHeight + 70)) continue;
             TileRandom r(d.seed, index, stretch, f.salt + kSaltRoadside + 1u);
-            if (roll < 40) gasStation(p, r, x0, y0, x0 + kStopWidth, y0 + kStopHeight, lights);
-            else shackCluster(p, r, centerX, centerY, lights);
+            if (stop.gas) {
+                CarPlan car = gasStationCar(d.seed, f, index, stretch, stop);
+                gasStation(p, r, stop.x0, stop.y0, stop.x0 + kStopWidth, stop.y0 + kStopHeight, car, lights);
+            } else {
+                shackCluster(p, r, stop.x0 + kStopWidth / 2, stop.y0 + kStopHeight / 2, lights);
+            }
         }
     }
 }

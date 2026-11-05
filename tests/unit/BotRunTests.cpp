@@ -189,9 +189,9 @@ bool stateIsSane(const GameState& s) { return stateProblem(s).empty(); }
 
 // Plays one run to its end, or to the step limit. The state is checked after every step.
 // stopAfterBoss, when above 0, ends the run that many seconds after the boss appears.
-BotResult runBot(uint64_t seed, bool invulnerable, float stopAfterBoss = 0.0f) {
+BotResult runBot(uint64_t seed, bool invulnerable, float stopAfterBoss = 0.0f, maps::MapId map = maps::kDefaultMap) {
     auto state = std::make_unique<GameState>();
-    sim::newRun(*state, seed);
+    sim::newRun(*state, seed, Difficulty::Normal, map);
     BotResult result;
     uint32_t lastTraceTick = 0;
 
@@ -283,6 +283,18 @@ TEST_CASE("bot run: each seed ends in a win or a death, and the state stays vali
         if (result.outcome == RunPhase::Won) CHECK(result.bossKilled);
         if (result.outcome == RunPhase::Dead && result.endSeconds < balance::kRunSeconds) CHECK_FALSE(result.bossSpawned);
     }
+}
+
+TEST_CASE("bot run: the desert's cars keep every step valid too") {
+    const BotResult result = runBot(404, false, 0.0f, maps::MapId::Wasteland);
+    printResult("wasteland", 404, result);
+    CHECK(result.invariantsHeld);
+    CHECK((result.outcome == RunPhase::Won || result.outcome == RunPhase::Dead));
+    CHECK(result.kills > 0);
+    const BotResult invulnerable = runBot(404, true, 0.0f, maps::MapId::Wasteland);
+    printResult("wasteland invulnerable", 404, invulnerable);
+    CHECK(invulnerable.invariantsHeld);
+    CHECK(invulnerable.bossKilled);
 }
 
 TEST_CASE("the state check catches a broken number") {

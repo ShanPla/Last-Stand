@@ -15,6 +15,9 @@ inline constexpr int kStepLimit = 20 * 60 * 60;  // 20 minutes of game time.
 // When trace is not null, a line about the player is written to it every half second.
 // Sets the difficulty for every game played after this call.
 void setGameDifficulty(Difficulty difficulty);
+// Sets the map for every game played after this call.
+void setGameMap(maps::MapId map);
+maps::MapId gameMap();
 
 RunResult playGame(const BotProfile& profile, uint64_t seed, int favoriteWeapon = -1, std::FILE* trace = nullptr);
 

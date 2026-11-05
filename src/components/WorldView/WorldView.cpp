@@ -54,6 +54,10 @@ constexpr int kSortBuckets = 512;
 constexpr float kSortMargin = 260.0f;
 
 constexpr uint8_t kSoldierSeeThrough = 130;
+// A zombie behind a car still shows at this strength, so a car never hides a threat.
+constexpr uint8_t kCarSilhouette = 130;
+// Just nearer than the car, so the silhouette passes the depth test on the car's pixels.
+constexpr float kSilhouetteDepthGap = 0.0005f;
 
 constexpr int kPlayerSlot = kMaxEnemies;  // The player takes one extra slot in the sort.
 
@@ -73,9 +77,14 @@ int g_bucketStarts[kSortBuckets + 1];
 // the visible figures, so it costs a comparison per zombie and no second loop.
 uint16_t g_telegraphs[kMaxEnemies];
 int g_telegraphCount = 0;
+CarOnScreen g_cars[kMaxCarsOnScreen];
+int g_carCount = 0;
+bool g_showCarBoxes = false;  // Debug only: outlines each car's solid box.
+bool g_carCover = true;       // Debug only: off, cars hide nothing, for comparing pictures.
 
 // Only read by the browser tests, through ls_query_world.
 int g_telegraphsShown = 0;
+int g_silhouettesShown = 0;
 const GameState* g_lastDrawnState = nullptr;
 
 // The last run the renderer saw, so it can notice a new one. App starts runs on its own.
@@ -221,6 +230,60 @@ void sortByDepth(int count) {
     for (int i = 0; i < count; ++i) g_drawOrder[g_bucketStarts[bucketOf(g_visible[i])]++] = static_cast<uint16_t>(i);
 }
 
+// The car this figure stands behind, if it overlaps one in the picture.
+const CarOnScreen* carCovering(const Enemy& enemy, const ScreenPoint& feet) {
+    const float side = figureHalfWidth(enemy) * feet.scale;
+    const float top = feet.y - figureHeight(enemy) * feet.scale;
+    for (int i = 0; i < g_carCount; ++i) {
+        const CarOnScreen& car = g_cars[i];
+        if (feet.y >= car.feetRow || feet.y < car.top) continue;
+        if (feet.x + side <= car.left || feet.x - side >= car.right || top >= car.bottom) continue;
+        return &car;
+    }
+    return nullptr;
+}
+
+void drawFigure(const GameState& state, const VisibleFigure& figure) {
+    if (figure.enemyIndex == kPlayerSlot) {
+        setSpriteDepth(depthOfRow(g_view, figure.feet.y));
+        drawSoldier(state, figure.feet, 255);
+        return;
+    }
+    const Enemy& enemy = state.enemies[figure.enemyIndex];
+    // The boss crushes through cars, so it is always drawn over them.
+    if (enemy.type == EnemyType::Boss) {
+        setSpriteDepth(kDepthNearest);
+        drawZombie(state, enemy, figure.feet);
+        return;
+    }
+    setSpriteDepth(depthOfRow(g_view, figure.feet.y));
+    drawZombie(state, enemy, figure.feet);
+    if (const CarOnScreen* car = carCovering(enemy, figure.feet)) {
+        // Right after its own figure, so zombies nearer the camera still draw over it.
+        setSpriteDepth(car->depth + kSilhouetteDepthGap);
+        drawZombieSilhouette(state, enemy, figure.feet, kCarSilhouette, car->left, car->top, car->right, car->bottom);
+        g_silhouettesShown++;
+    }
+}
+
+void drawCarBoxes() {
+    for (int i = 0; i < g_carCount; ++i) {
+        const CarOnScreen& car = g_cars[i];
+        const auto corner = [&](float x, float y) {
+            const ScreenPoint point = project(g_view, Vec2{x, y});
+            return Vec2{point.x, point.y};
+        };
+        const Vec2 a = corner(car.boxMin.x, car.boxMin.y);
+        const Vec2 b = corner(car.boxMax.x, car.boxMin.y);
+        const Vec2 c = corner(car.boxMax.x, car.boxMax.y);
+        const Vec2 d = corner(car.boxMin.x, car.boxMax.y);
+        thickLine(a, b, 1.0f, theme::kDebugCarBox);
+        thickLine(b, c, 1.0f, theme::kDebugCarBox);
+        thickLine(c, d, 1.0f, theme::kDebugCarBox);
+        thickLine(d, a, 1.0f, theme::kDebugCarBox);
+    }
+}
+
 // --- Passes ------------------------------------------------------------------
 
 void beginFlat() {
@@ -308,6 +371,8 @@ void init() {
 }
 
 void setFastMode(bool enabled) { g_fastMode = enabled; }
+void setShowCarBoxes(bool show) { g_showCarBoxes = show; }
+void setCarCover(bool on) { g_carCover = on; }
 void setFixedDayTime(float seconds) { g_fixedDayTime = seconds; }
 
 void setQuality(int quality) {
@@ -340,7 +405,7 @@ void draw(const GameState& state, float alpha) {
     if (!g_ready) init();
     fitTargetToWindow();
     const Vec2 ringCenter = aimCamera(state, alpha);
-    updateGround(g_view, state.run.seed);
+    updateGround(g_view, state.run.seed, state.run.map);
 
     const Vec2 playerWorld = lerp(state.player.prevPos, state.player.pos, alpha);
     updateSoldierAnimation(playerWorld, GetFrameTime());
@@ -357,9 +422,11 @@ void draw(const GameState& state, float alpha) {
     sortByDepth(figures);
 
     BeginTextureMode(g_target);
-    ClearBackground(maps::fallbackGround(maps::current()));
+    ClearBackground(maps::fallbackGround(state.run.map));
 
     drawGround(g_view, look);
+    if (g_carCover) drawCarDepth(g_view);
+    g_carCount = carsOnScreen(g_view, g_cars);
 
     bindPalette(look);
     if (g_quality > 0 && look.lampLevel > 0.01f) {
@@ -384,19 +451,27 @@ void draw(const GameState& state, float alpha) {
     drawSoldierRing(g_view, ringCenter);
     endFlat();
 
+    // From here to the end of the figures, a car's pixels hide what stands behind them.
+    // Only the cars write depth. Sprites just test against it, and keep their painted order.
     beginSprites();
+    rlEnableDepthTest();
+    rlDisableDepthMask();
+    setSpriteDepth(kDepthNearest);
     drawLightSprites(g_view, look, tick, flicker);
     drawCorpses(g_view, tick);
+    setSpriteDepth(kDepthNearest);
     drawGroundSprites(g_view, state, alpha);
     drawSpriteSheet();
 
     // All shadows go down before any figure, so none falls across a body.
     const bool longShadows = look.shadowLength > 0.02f;
     const int shadowBudget = g_fastMode ? kLongShadowBudgetFast : kLongShadowBudget;
+    setSpriteDepth(depthOfRow(g_view, playerFigure.feet.y));
     drawSoldierShadow(state, playerFigure.feet, look);
     for (int i = 0; i < zombies; ++i) {
         const VisibleFigure& figure = g_visible[i];
         const Enemy& enemy = state.enemies[figure.enemyIndex];
+        setSpriteDepth(depthOfRow(g_view, figure.feet.y));
         // In a very big crowd, only figures near the soldier keep the long shadow.
         const float away = std::abs(figure.feet.x - playerFigure.feet.x) + std::abs(figure.feet.y - playerFigure.feet.y);
         const bool wanted = zombies <= shadowBudget || away < kLongShadowNear || enemy.type == EnemyType::Boss;
@@ -404,15 +479,16 @@ void draw(const GameState& state, float alpha) {
         drawZombieShadow(enemy, figure.feet);
     }
 
+    setSpriteDepth(kDepthNearest);
     drawDashTrail(g_view, state, playerWorld);
-    for (int i = 0; i < figures; ++i) {
-        const VisibleFigure& figure = g_visible[g_drawOrder[i]];
-        if (figure.enemyIndex == kPlayerSlot) drawSoldier(state, figure.feet, 255);
-        else drawZombie(state, state.enemies[figure.enemyIndex], figure.feet);
-    }
+    g_silhouettesShown = 0;
+    for (int i = 0; i < figures; ++i) drawFigure(state, g_visible[g_drawOrder[i]]);
     // He shows faintly through anything standing in front of him, so he can't be lost.
+    setSpriteDepth(kDepthNearest);
     drawSoldier(state, playerFigure.feet, kSoldierSeeThrough);
     endSprites();
+    rlEnableDepthMask();
+    rlDisableDepthTest();
 
     // Above the crowd, the things that must never be lost in it.
     beginFlat();
@@ -428,6 +504,7 @@ void draw(const GameState& state, float alpha) {
     }
     drawBladeTrails(g_view, state, alpha);
     drawSoldierRingOverCrowd(g_view, ringCenter);
+    if (g_showCarBoxes) drawCarBoxes();
     endFlat();
 
     // Weak devices have no neon layer, so plain discs light up their blasts instead.
@@ -475,10 +552,27 @@ extern "C" {
 // Test hook: what the renderer drew on its last frame, which the simulation can't report.
 EMSCRIPTEN_KEEPALIVE const char* ls_query_world() {
     using namespace ls::worldview;
-    static char json[128];
+    static char json[448];
     const SoldierDebug soldier = g_lastDrawnState ? soldierDebug(*g_lastDrawnState) : SoldierDebug{};
-    std::snprintf(json, sizeof(json), "{\"telegraphing\":%d,\"telegraphsShown\":%d,\"heldGun\":%d,\"muzzleFrames\":%d,\"chunkPaints\":%d}", g_telegraphCount, g_telegraphsShown,
-                  soldier.heldGun, soldier.muzzleFrames, groundPaintCount());
+    // The car nearest the soldier, whose feet are at the anchor.
+    CarOnScreen car{};
+    float nearest = 1.0e30f;
+    for (int i = 0; i < g_carCount; ++i) {
+        const float dx = (g_cars[i].left + g_cars[i].right) * 0.5f - g_view.anchorX;
+        const float dy = (g_cars[i].top + g_cars[i].bottom) * 0.5f - g_view.anchorY;
+        if (dx * dx + dy * dy < nearest) {
+            nearest = dx * dx + dy * dy;
+            car = g_cars[i];
+        }
+    }
+    const ScreenPoint boxTopLeft = project(g_view, car.boxMin);
+    const ScreenPoint boxBottomRight = project(g_view, car.boxMax);
+    std::snprintf(json, sizeof(json),
+                  "{\"telegraphing\":%d,\"telegraphsShown\":%d,\"heldGun\":%d,\"muzzleFrames\":%d,\"chunkPaints\":%d,\"cars\":%d,\"silhouettes\":%d,\"pixelScale\":%.3f,\"car\":[%.1f,%.1f,%.1f,%.1f],\"carBox\":[%.1f,%.1f,%.1f,%.1f],\"worldBox\":[%.1f,%.1f,%.1f,%.1f]}",
+                  g_telegraphCount, g_telegraphsShown, soldier.heldGun, soldier.muzzleFrames, groundPaintCount(), g_carCount, g_silhouettesShown,
+                  static_cast<double>(g_view.pixelScale), static_cast<double>(car.left), static_cast<double>(car.top), static_cast<double>(car.right), static_cast<double>(car.bottom),
+                  static_cast<double>(boxTopLeft.x), static_cast<double>(boxTopLeft.y), static_cast<double>(boxBottomRight.x), static_cast<double>(boxBottomRight.y),
+                  static_cast<double>(car.boxMin.x), static_cast<double>(car.boxMin.y), static_cast<double>(car.boxMax.x), static_cast<double>(car.boxMax.y));
     return json;
 }
 }

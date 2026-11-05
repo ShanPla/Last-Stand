@@ -1,6 +1,7 @@
 #include "components/Enemies/Boss/Boss.h"
 #include "components/Enemies/Charger/Charger.h"
 #include "components/Enemies/Enemies.h"
+#include "components/Maps/Layout/Layout.h"
 #include "components/Weapons/Weapons.h"
 #include "core/Math.h"
 #include "components/WorldView/Showcase.h"
@@ -244,8 +245,44 @@ Enemy* placeOffLeft(GameState& state, EnemyType type, float artPixels, Vec2 dir)
     return enemy;
 }
 
+// The first car seen side-on in widening rings around the start, which is far from the player.
+bool findSideCar(const GameState& state, maps::Obstacle* found) {
+    maps::Obstacle list[maps::kMaxObstaclesPerTile];
+    for (int ring = 1; ring < 12; ++ring) {
+        for (int y = -ring; y <= ring; ++y) {
+            for (int x = -ring; x <= ring; ++x) {
+                const int count = maps::obstaclesInTile(state.run.map, state.run.seed, x, y, list, maps::kMaxObstaclesPerTile);
+                for (int i = 0; i < count; ++i) {
+                    if (list[i].sprite != maps::CarSprite::CitySide && list[i].sprite != maps::CarSprite::WreckSide) continue;
+                    *found = list[i];
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+void placeCarScene(GameState& state, int scene) {
+    maps::Obstacle car;
+    if (!findSideCar(state, &car)) return;
+    const float radius = balance::kEnemyStats[static_cast<int>(EnemyType::Walker)].radius;
+    state.player.pos = car.center + Vec2{-car.half.x - balance::kPlayerRadius - 2.0f, 0.0f};
+    state.player.prevPos = state.player.pos;
+    // Fixed ids, because a zombie's clothes come from its id, and tests compare pictures.
+    const auto place = [&](Vec2 pos, uint32_t id) {
+        if (Enemy* enemy = placeEnemy(state, EnemyType::Walker, pos, false)) enemy->id = id;
+    };
+    if (scene == kSceneCarBehind || scene == kSceneCarBoth) place(car.center + Vec2{0.0f, -car.half.y - radius}, 1u);
+    if (scene == kSceneCarFront || scene == kSceneCarBoth) place(car.center + Vec2{car.half.x * 0.5f, car.half.y + radius}, 2u);
+}
+
 void placeTestScene(GameState& state, int scene) {
     const Vec2 right{1.0f, 0.0f};
+    if (scene <= kSceneCarEmpty && scene >= kSceneCarBoth) {
+        placeCarScene(state, scene);
+        return;
+    }
     if (scene == kSceneChargerOffLeft || scene == kSceneChargerAway) {
         Enemy* charger = placeOffLeft(state, EnemyType::Charger, 120.0f, scene == kSceneChargerOffLeft ? right : Vec2{-1.0f, 0.0f});
         if (charger) charger->state = enemies::kChargerTelegraph;

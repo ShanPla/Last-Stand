@@ -2,6 +2,7 @@
 
 #include "components/Enemies/Enemies.h"
 #include "components/Enemies/Waves/Waves.h"
+#include "components/Obstacles/Obstacles.h"
 #include "components/Pickups/Pickups.h"
 #include "components/Player/Player.h"
 #include "components/Upgrades/Upgrades.h"
@@ -43,12 +44,13 @@ void applyStressTargets(GameState& state) {
 
 }  // namespace
 
-void newRun(GameState& state, uint64_t seed, Difficulty difficulty) {
+void newRun(GameState& state, uint64_t seed, Difficulty difficulty, maps::MapId map) {
     state.rng = Rng{};
     state.rng.seed(seed);
     state.run = RunState{};
     state.run.seed = seed;
     state.run.difficulty = difficulty;
+    state.run.map = map;
     state.run.rerollsLeft = balance::kStartingRerolls;
     state.run.nextPickupDropKills = balance::kKillsPerPickupDrop;
     state.enemies.clear();
@@ -62,6 +64,16 @@ void newRun(GameState& state, uint64_t seed, Difficulty difficulty) {
     upgrades::recomputeStats(state);
     state.player.hp = state.player.maxHp;
     weapons::grant(state, WeaponId::Rifle);
+    obstacles::invalidate(state);
+    obstacles::update(state);
+    obstacles::resolveCircle(state, state.player.pos, balance::kPlayerRadius);
+    state.player.prevPos = state.player.pos;
+}
+
+void setMap(GameState& state, maps::MapId map) {
+    state.run.map = map;
+    obstacles::invalidate(state);
+    obstacles::update(state);
 }
 
 void step(GameState& state, const InputFrame& input) {
@@ -80,6 +92,7 @@ void step(GameState& state, const InputFrame& input) {
     }
 
     run.tick++;
+    obstacles::update(state);
     applyStressTargets(state);
     player::update(state, input.moveX, input.moveY, input.dash);
     waves::update(state);
@@ -128,7 +141,8 @@ uint64_t stateHash(const GameState& state) {
 
     // Everything below can change what a later step does. What is left out is only
     // for drawing: previous positions (derived from the last step), hit flashes,
-    // the event list (cleared by its reader) and the enemy grid (rebuilt each step).
+    // the event list (cleared by its reader), the enemy grid (rebuilt each step) and the
+    // obstacle cache (worked out from the map, the seed and the player's tile).
     // A new field that a step reads must be added here, or the determinism tests
     // cannot see it.
     mixBytes(&state.rng.state, sizeof(state.rng.state));
@@ -137,6 +151,7 @@ uint64_t stateHash(const GameState& state) {
     const RunState& run = state.run;
     mix(run.phase);
     mix(run.difficulty);
+    mix(run.map);
     mixBytes(&run.seed, sizeof(run.seed));
     mix(run.tick);
     mix(run.nextId);
@@ -212,6 +227,7 @@ uint64_t stateHash(const GameState& state) {
         mix(enemy.timer);
         mix(enemy.bladeCooldown);
         mix(enemy.id);
+        mix(enemy.stuck);
         mix(enemy.type);
         mix(enemy.state);
         mix(enemy.elite);

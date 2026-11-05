@@ -192,6 +192,11 @@ void drawZombie(const GameState& state, const Enemy& enemy, const ScreenPoint& f
     spriteQuad(*zombie.sprite, roundToInt(feet.x), roundToInt(feet.y), zombie.mirror, zombie.row, zombie.grade, 255, flash);
 }
 
+void drawZombieSilhouette(const GameState& state, const Enemy& enemy, const ScreenPoint& feet, uint8_t alpha, float left, float top, float right, float bottom) {
+    const ZombieLook zombie = lookOf(state, enemy, feet);
+    spriteQuadCropped(*zombie.sprite, roundToInt(feet.x), roundToInt(feet.y), zombie.mirror, zombie.row, zombie.grade, alpha, 0, left, top, right, bottom);
+}
+
 void drawEliteBar(const GameState& state, const Enemy& enemy, const ScreenPoint& feet) {
     // A small bar on whole pixels, just above the figure.
     const SpriteRef& sprite = figureSprite(figureOf(state, enemy), stepForEnemy(enemy, feet.scale), kFacingSide, 0);
@@ -539,6 +544,7 @@ void drawCorpses(const View& view, uint32_t tick) {
         }
         const ScreenPoint feet = project(view, corpse.world);
         if (!onTarget(view, feet, 50.0f, 40.0f, 30.0f)) continue;
+        setSpriteDepth(depthOfRow(view, feet.y));
         const int frame = age >= kFallTicks ? kCorpseFrames - 1 : static_cast<int>(age * kCorpseFrames / kFallTicks);
         const Figure figure = corpse.type == EnemyType::Boss ? Figure::Boss1 : static_cast<Figure>(static_cast<int>(corpse.type));
         const int step = corpse.type == EnemyType::Boss ? stepFor(feet.scale, kStepBossFirst, kStepBossLast) : stepFor(feet.scale, 0, kStepNormalLast);

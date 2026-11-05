@@ -1,6 +1,7 @@
 #include "components/Pickups/Pickups.h"
 
 #include "components/Enemies/Enemies.h"
+#include "components/Obstacles/Obstacles.h"
 #include "components/Player/Player.h"
 #include "components/Upgrades/Upgrades.h"
 #include "components/Weapons/Weapons.h"
@@ -82,7 +83,9 @@ void collectPickups(GameState& state) {
 void spawnPickup(GameState& state, Vec2 pos, PickupType type) {
     if (state.pickups.count >= state.pickups.capacity()) removeKeepingOrder(state, 0);
     Pickup* pickup = state.pickups.add();
+    // Nothing lands inside a car, where it could never be reached.
     pickup->pos = pos;
+    obstacles::resolveCircle(state, pickup->pos, balance::kItemCarRadius);
     pickup->type = type;
 }
 
@@ -94,7 +97,8 @@ void dropGem(GameState& state, Vec2 pos, int xp) {
         return;
     }
     gem->pos = pos;
-    gem->prevPos = pos;
+    obstacles::resolveCircle(state, gem->pos, balance::kItemCarRadius);
+    gem->prevPos = gem->pos;
     gem->xp = xp;
 }
 

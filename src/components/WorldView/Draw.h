@@ -71,6 +71,21 @@ void groundRing(const View& view, Vec2 center, float radius, float width, int st
 
 inline constexpr float kAtlasTexel = 1.0f / static_cast<float>(kAtlasSize);
 
+// How near the camera a sprite is, for cars covering what stands behind them. Sprites still
+// draw back to front. This only decides whether a car's pixels hide them. 0 is the top
+// of the sorted range and 1 the bottom, nearest the camera.
+inline constexpr float kDepthNearest = 0.999f;
+inline constexpr float kDepthMargin = 260.0f;  // Art pixels past the picture, for tall figures.
+
+inline float depthOfRow(const View& view, float row) {
+    return clampf((row + kDepthMargin) / (static_cast<float>(view.height) + kDepthMargin * 2.0f), 0.001f, kDepthNearest);
+}
+
+// raylib's own 2D camera maps a vertex's z to the depth buffer as -2z - 1, so this z lands
+// at 1 - 2 * depth, the same place the car shader puts a car with that depth.
+inline float g_spriteZ = kDepthNearest - 1.0f;
+inline void setSpriteDepth(float depth) { g_spriteZ = depth - 1.0f; }
+
 // Grade 255 means the time of day tints this sprite, and 0 means it stays true. flash
 // is how far it mixes toward the hit flash color, and must stay under 255.
 inline void spriteQuad(const SpriteRef& ref, int x, int y, bool mirror, uint8_t row, uint8_t grade = 255, uint8_t alpha = 255, uint8_t flash = 0) {
@@ -87,13 +102,42 @@ inline void spriteQuad(const SpriteRef& ref, int x, int y, bool mirror, uint8_t 
     const float texRight = mirror ? u0 : u1;
     rlColor4ub(row, grade, flash, alpha);
     rlTexCoord2f(texLeft, v0);
-    rlVertex2f(l, t);
+    rlVertex3f(l, t, g_spriteZ);
     rlTexCoord2f(texLeft, v1);
-    rlVertex2f(l, b);
+    rlVertex3f(l, b, g_spriteZ);
     rlTexCoord2f(texRight, v1);
-    rlVertex2f(r, b);
+    rlVertex3f(r, b, g_spriteZ);
     rlTexCoord2f(texRight, v0);
-    rlVertex2f(r, t);
+    rlVertex3f(r, t, g_spriteZ);
+}
+
+// The same sprite, showing only the part inside a rectangle of the picture. That keeps a
+// figure's silhouette to the car it stands behind.
+inline void spriteQuadCropped(const SpriteRef& ref, int x, int y, bool mirror, uint8_t row, uint8_t grade, uint8_t alpha, uint8_t flash, float cropLeft, float cropTop, float cropRight, float cropBottom) {
+    const float left = static_cast<float>(mirror ? x - (ref.w - ref.footX) : x - ref.footX);
+    const float top = static_cast<float>(y - ref.footY);
+    const float width = static_cast<float>(ref.w);
+    const float height = static_cast<float>(ref.h);
+    const float l = cropLeft > left ? cropLeft : left;
+    const float t = cropTop > top ? cropTop : top;
+    const float r = cropRight < left + width ? cropRight : left + width;
+    const float b = cropBottom < top + height ? cropBottom : top + height;
+    if (l >= r || t >= b) return;
+    const float across0 = (l - left) / width;
+    const float across1 = (r - left) / width;
+    const float u0 = (static_cast<float>(ref.x) + width * (mirror ? 1.0f - across0 : across0)) * kAtlasTexel;
+    const float u1 = (static_cast<float>(ref.x) + width * (mirror ? 1.0f - across1 : across1)) * kAtlasTexel;
+    const float v0 = (static_cast<float>(ref.y) + (t - top)) * kAtlasTexel;
+    const float v1 = (static_cast<float>(ref.y) + (b - top)) * kAtlasTexel;
+    rlColor4ub(row, grade, flash, alpha);
+    rlTexCoord2f(u0, v0);
+    rlVertex3f(l, t, g_spriteZ);
+    rlTexCoord2f(u0, v1);
+    rlVertex3f(l, b, g_spriteZ);
+    rlTexCoord2f(u1, v1);
+    rlVertex3f(r, b, g_spriteZ);
+    rlTexCoord2f(u1, v0);
+    rlVertex3f(r, t, g_spriteZ);
 }
 
 // A light pool: centered on its point, scaled with depth, with strength in its color.
@@ -129,13 +173,13 @@ inline void shadowQuad(const SpriteRef& ref, int x, int y, bool mirror, float of
     const float texRight = mirror ? u0 : u1;
     rlColor4ub(kRowShadow, 0, 0, 255);
     rlTexCoord2f(texLeft, v0);
-    rlVertex2f(l + offsetX, base + offsetY);
+    rlVertex3f(l + offsetX, base + offsetY, g_spriteZ);
     rlTexCoord2f(texLeft, v1);
-    rlVertex2f(l, base);
+    rlVertex3f(l, base, g_spriteZ);
     rlTexCoord2f(texRight, v1);
-    rlVertex2f(r, base);
+    rlVertex3f(r, base, g_spriteZ);
     rlTexCoord2f(texRight, v0);
-    rlVertex2f(r + offsetX, base + offsetY);
+    rlVertex3f(r + offsetX, base + offsetY, g_spriteZ);
 }
 
 inline int roundToInt(float value) { return static_cast<int>(value + 100000.5f) - 100000; }

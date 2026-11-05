@@ -17,7 +17,10 @@ struct InputFrame {
 
 namespace sim {
 
-void newRun(GameState& state, uint64_t seed, Difficulty difficulty = Difficulty::Normal);
+void newRun(GameState& state, uint64_t seed, Difficulty difficulty = Difficulty::Normal, maps::MapId map = maps::kDefaultMap);
+
+// Changes the map under a run in progress, as the title screen's picker does behind its demo.
+void setMap(GameState& state, maps::MapId map);
 
 // Advances the run by one fixed step. Same state and input give the same result.
 void step(GameState& state, const InputFrame& input);

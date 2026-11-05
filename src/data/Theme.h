@@ -391,6 +391,7 @@ inline constexpr Color kHealthFill{255, 96, 72, 255};
 inline constexpr Color kBarBack{22, 30, 56, 255};
 inline constexpr Color kXpFill{90, 255, 190, 255};
 inline constexpr Color kDebugText{255, 240, 120, 255};
+inline constexpr Color kDebugCarBox{120, 255, 120, 255};
 
 // --- Screens ---
 // Menus, HUD and overlays: a muted dusk palette of dark slate, sand and rust, with

@@ -285,7 +285,7 @@ void paintRuin(Paint& p, TileRandom& random, const LotArea& lot, bool plaster, L
     if (random.chance(25)) burningBarrel(p, random.range(b.x0 + 12, b.x1 - 12), random.range(b.y0 + 14, b.y1 - 6), random, lights);
 }
 
-void paintParkingLot(Paint& p, TileRandom& random, const LotArea& a, LightList& lights) {
+void paintParkingLot(Paint& p, TileRandom& random, const LotArea& a, CarPlan* cars, int carCount, LightList& lights) {
     for (int y = a.y0; y < a.y1; ++y) {
         for (int x = a.x0; x < a.x1; ++x) {
             const uint32_t noise = texelNoise(x, y);
@@ -313,10 +313,10 @@ void paintParkingLot(Paint& p, TileRandom& random, const LotArea& a, LightList& 
     for (int i = 0; i < 8; ++i) {
         weedTuft(p, random.range(a.x0, a.x1), random.range(a.y0, a.y1), random);
     }
-    const int cars = random.range(1, 3);
-    for (int i = 0; i < cars; ++i) {
-        carSide(p, a.x0 + 40 + i * ((a.x1 - a.x0 - 80) / std::max(1, cars - 1 + 1)) + random.range(-6, 6),
-                i % 2 == 0 ? rowY - 8 : rowY + 26, random);
+    for (int i = 0; i < carCount; ++i) {
+        if (!cars[i].exists) continue;
+        CarMark mark(p);
+        carSide(p, cars[i].x, cars[i].y, cars[i].looks);
     }
     tires(p, a.x1 - 20, a.y1 - 10);
     rubblePile(p, a.x0 + 18, a.y1 - 12, 7, random);
@@ -421,14 +421,15 @@ void paintFoundation(Paint& p, TileRandom& random, const LotArea& a, LightList& 
 
 }  // namespace
 
-void paintLot(Paint& paint, TileRandom& random, const LotArea& lot, LightList& lights) {
-    const int roll = random.range(0, 99);
-    if (roll < 34) paintRuin(paint, random, lot, false, lights);
-    else if (roll < 54) paintRuin(paint, random, lot, true, lights);
-    else if (roll < 66) paintFoundation(paint, random, lot, lights);
-    else if (roll < 78) paintCamp(paint, random, lot, lights);
-    else if (roll < 90) paintParkingLot(paint, random, lot, lights);
-    else paintPark(paint, random, lot);
+void paintLot(Paint& paint, TileRandom& random, const LotArea& lot, CarPlan* cars, int carCount, LightList& lights) {
+    switch (lotKindFromRoll(lotRoll(random))) {
+        case LotKind::BrickRuin: paintRuin(paint, random, lot, false, lights); break;
+        case LotKind::PlasterRuin: paintRuin(paint, random, lot, true, lights); break;
+        case LotKind::Foundation: paintFoundation(paint, random, lot, lights); break;
+        case LotKind::Camp: paintCamp(paint, random, lot, lights); break;
+        case LotKind::ParkingLot: paintParkingLot(paint, random, lot, cars, carCount, lights); break;
+        case LotKind::Park: paintPark(paint, random, lot); break;
+    }
 }
 
 }  // namespace ls::maps::city

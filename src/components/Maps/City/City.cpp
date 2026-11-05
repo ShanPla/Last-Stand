@@ -1,6 +1,7 @@
 #include "components/Maps/City/City.h"
 
 #include "components/Maps/City/Lots/Lots.h"
+#include "components/Maps/Layout/CityLayout/CityLayout.h"
 #include "components/Maps/Paint/Paint.h"
 #include "components/Maps/City/Props/Props.h"
 #include "data/Theme.h"
@@ -14,61 +15,9 @@ using namespace theme;
 
 namespace {
 
-// Roads run along chunk edges, so a road's center line sits exactly on a seam, and
-// each chunk holds a whole block. All sizes are in chunk texels.
-constexpr int kRoadHalfX = 48;  // A road running up the screen: half its width.
-constexpr int kRoadHalfY = 28;  // A road running across the screen: half its height.
-constexpr int kWalkX = 20;      // Sidewalks beside those roads.
-constexpr int kWalkY = 13;
-
-// A lot with no road on one side still keeps this far from that chunk edge. Its walls,
-// fences and rubble stand a little past the lot, and the next chunk never paints them, so
-// without this room they would be cut flat along the seam. Tall things rise upward, so the
-// top edge needs the most.
-constexpr int kLotEdgeTop = 24;
-constexpr int kLotEdge = 20;
-
 // A crack is a random walk, so it needs a fence. A road only gets painted by the chunks it
 // can reach, and this much room keeps a crack, its lit edge and any weed on it inside them.
 constexpr int kCrackSeamRoom = 6;
-
-// Salts that keep each kind of random choice independent of the others.
-enum Salt : uint32_t { kSaltVertical = 11, kSaltHorizontal = 23, kSaltLot = 37, kSaltVerticalProps = 41, kSaltHorizontalProps = 53, kSaltCorner = 67 };
-
-constexpr int kMissingRoadPercent = 12;
-
-bool verticalRoadExists(uint64_t seed, int i, int j) {
-    TileRandom random(seed, i, j, kSaltVertical);
-    return !random.chance(kMissingRoadPercent);
-}
-
-bool horizontalRoadExists(uint64_t seed, int i, int j) {
-    TileRandom random(seed, i, j, kSaltHorizontal);
-    return !random.chance(kMissingRoadPercent);
-}
-
-// Which roads touch this chunk.
-struct Roads {
-    bool left, right, top, bottom;
-    bool corner[4];  // Top left, top right, bottom left, bottom right.
-};
-
-Roads roadsAround(uint64_t seed, int cx, int cy) {
-    Roads r{};
-    r.left = verticalRoadExists(seed, cx, cy);
-    r.right = verticalRoadExists(seed, cx + 1, cy);
-    r.top = horizontalRoadExists(seed, cx, cy);
-    r.bottom = horizontalRoadExists(seed, cx, cy + 1);
-    const auto meet = [&](int i, int j) {
-        return verticalRoadExists(seed, i, j) || verticalRoadExists(seed, i, j - 1) || horizontalRoadExists(seed, i, j) ||
-               horizontalRoadExists(seed, i - 1, j);
-    };
-    r.corner[0] = meet(cx, cy);
-    r.corner[1] = meet(cx + 1, cy);
-    r.corner[2] = meet(cx, cy + 1);
-    r.corner[3] = meet(cx + 1, cy + 1);
-    return r;
-}
 
 bool isRoad(const Roads& r, int x, int y) {
     const bool inLeft = x < kRoadHalfX;
@@ -275,9 +224,9 @@ void paintVerticalRoad(Paint& p, uint64_t seed, int i, int j, LightList& lights)
     if (random.chance(45)) barrel(p, walkLeft + random.range(-3, 3), random.range(y0 + 40, y1 - 10), random);
     if (random.chance(35)) brokenSign(p, walkRight + random.range(-3, 3), random.range(y0 + 40, y1 - 40), random);
     if (random.chance(30)) boards(p, walkRight, random.range(y0 + 10, y1 - 10), random);
-    if (random.chance(55)) {
-        const int lane = random.chance(50) ? -kRoadHalfX / 2 : kRoadHalfX / 2;
-        carEnd(p, centerX + lane + random.range(-4, 4), random.range(y0 + 52, y1 - 6), random);
+    if (CarPlan car = verticalRoadCar(seed, i, j); car.exists) {
+        CarMark mark(p);
+        carEnd(p, car.x, car.y, car.looks);
     }
     if (random.chance(35)) barrier(p, centerX + random.range(-kRoadHalfX / 2, kRoadHalfX / 2), random.range(y0 + 16, y1 - 10), random);
     if (random.chance(25)) burningBarrel(p, walkRight + random.range(-3, 3), random.range(y0 + 14, y1 - 14), random, lights);
@@ -348,9 +297,9 @@ void paintHorizontalRoad(Paint& p, uint64_t seed, int i, int j, LightList& light
     if (random.chance(45)) barrel(p, random.range(x0 + 20, x1 - 20), walkTop + random.range(-2, 2), random);
     if (random.chance(35)) brokenSign(p, random.range(x0 + 60, x1 - 60), walkBottom, random);
     if (random.chance(30)) boards(p, random.range(x0 + 20, x1 - 20), walkBottom, random);
-    if (random.chance(60)) {
-        const int lane = random.chance(50) ? -kRoadHalfY / 2 + 5 : kRoadHalfY / 2 + 5;
-        carSide(p, random.range(x0 + 40, x1 - 40), centerY + lane, random);
+    if (CarPlan car = horizontalRoadCar(seed, i, j); car.exists) {
+        CarMark mark(p);
+        carSide(p, car.x, car.y, car.looks);
     }
     if (random.chance(30)) barrier(p, random.range(x0 + 30, x1 - 30), centerY + random.range(-kRoadHalfY / 2, kRoadHalfY / 2), random);
     if (random.chance(20)) burningBarrel(p, random.range(x0 + 30, x1 - 30), walkTop, random, lights);
@@ -397,9 +346,10 @@ int renderChunk(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* out
     // Lots stay inside their own chunk, so each chunk paints only its own.
     {
         TileRandom random(seed, chunkX, chunkY, kSaltLot);
-        const LotArea lot{paint.left() + (roads.left ? kRoadHalfX + kWalkX : kLotEdge), paint.top() + (roads.top ? kRoadHalfY + kWalkY : kLotEdgeTop),
-                          paint.right() - (roads.right ? kRoadHalfX + kWalkX : kLotEdge), paint.bottom() - (roads.bottom ? kRoadHalfY + kWalkY : kLotEdge)};
-        paintLot(paint, random, lot, lights);
+        const LotArea lot = lotAreaOf(roads, chunkX, chunkY);
+        CarPlan cars[kMaxLotCars];
+        const int carCount = parkingLotCars(seed, chunkX, chunkY, lot, cars);
+        paintLot(paint, random, lot, cars, carCount, lights);
     }
 
     // Roads and their furniture can cross chunk edges, so each chunk also paints the

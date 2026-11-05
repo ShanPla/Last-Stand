@@ -1,5 +1,6 @@
 #pragma once
 
+#include "components/Maps/Layout/Layout.h"
 #include "core/Math.h"
 #include "core/Pool.h"
 #include "core/Rng.h"
@@ -57,6 +58,7 @@ struct Enemy {
     float bladeCooldown = 0.0f;  // Stops one Combat Blade hitting every step.
     uint32_t id = 0;     // Stays the same when the pool moves this item.
     EnemyType type = EnemyType::Walker;
+    uint16_t stuck = 0;  // Steps in a row spent working its way around cars.
     uint8_t state = 0;   // Meaning depends on the enemy type's behaviour.
     bool elite = false;
 };
@@ -179,6 +181,7 @@ enum class Difficulty : uint8_t { Easy, Normal, Hard, Count };
 struct RunState {
     RunPhase phase = RunPhase::Playing;
     Difficulty difficulty = Difficulty::Normal;
+    maps::MapId map = maps::kDefaultMap;  // Decides where the solid cars stand.
     uint64_t seed = 0;
     uint32_t tick = 0;       // Steps played. Does not advance during level-up.
     uint32_t nextId = 1;
@@ -206,6 +209,7 @@ enum class EventType : uint8_t {
     BombBlast, WeaponFired, ReloadStarted, WeaponDry, EvolutionGained, BossSpawned, BossPhaseChanged, BossKilled, PlayerDied,
     Explosion,  // detail is the weapon that made it. value is the blast radius.
     PlayerDashed,  // At the spot the dash started. The direction is in player.dashDir.
+    ZombieUnstuck,  // A zombie was stuck among cars and got moved. Only the balance tool counts these.
 };
 
 struct SimEvent {
@@ -214,6 +218,25 @@ struct SimEvent {
     bool flag = false;   // For EnemyHit: true when the hit was on an elite.
     Vec2 pos;
     float value = 0.0f;  // Damage amount, or XP amount.
+};
+
+// The solid cars around the player, so a zombie's collision check is one array lookup rather
+// than a walk through the map's layout. See components/Obstacles.
+inline constexpr int kObstacleWindow = 5;  // Tiles across. Reaches past where zombies spawn.
+
+struct ObstacleTile {
+    int tileX = 0;
+    int tileY = 0;
+    int count = 0;
+    bool valid = false;
+    maps::Obstacle items[maps::kMaxObstaclesPerTile];
+};
+
+struct ObstacleCache {
+    ObstacleTile tiles[kObstacleWindow * kObstacleWindow];
+    int centerX = 0;
+    int centerY = 0;
+    bool ready = false;
 };
 
 struct GameState {
@@ -228,6 +251,9 @@ struct GameState {
     Pool<Pickup, kMaxPickups> pickups;
     Pool<SimEvent, kMaxEvents> events;  // Cleared by whoever reads them.
     SpatialHash<kMaxEnemies> enemyGrid;
+    // Worked out only from the map, the seed and the player's tile, all of which are hashed.
+    // So it can't make two runs differ, and it stays out of the state hash.
+    ObstacleCache obstacleCache;
 
     float timeSeconds() const { return static_cast<float>(run.tick) * kDt; }
 };

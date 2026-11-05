@@ -110,6 +110,9 @@ void printOutcome(std::FILE* out, const std::vector<RunResult>& runs) {
     std::fprintf(out, "Damage taken per minute (mean): %.0f   rerolls used (mean): %.2f   dashes (mean): %.1f\n", mean(taken),
                  mean(collect(runs, [](const RunResult& r) { return static_cast<double>(r.rerollsUsed); })),
                  mean(collect(runs, [](const RunResult& r) { return static_cast<double>(r.dashes); })));
+    std::fprintf(out, "Near a car (within 60 units): %.0f%% of play time   zombies moved after getting stuck, per game (mean): %.2f\n",
+                 100.0 * mean(collect(runs, [](const RunResult& r) { return r.playedSeconds > 0.0f ? static_cast<double>(r.carHugSeconds / r.playedSeconds) : 0.0; })),
+                 mean(collect(runs, [](const RunResult& r) { return static_cast<double>(r.zombiesUnstuck); })));
 
     double bySource[kDamageSources] = {};
     double totalTaken = 0.0;

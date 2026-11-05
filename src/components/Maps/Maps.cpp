@@ -6,16 +6,6 @@
 
 namespace ls::maps {
 
-namespace {
-
-MapId g_current = kDefaultMap;
-
-}  // namespace
-
-void setCurrent(MapId map) { g_current = mapFromIndex(static_cast<int>(map)); }
-
-MapId current() { return g_current; }
-
 MapId mapFromIndex(int index) {
     if (index < 0 || index >= kMapCount) return kDefaultMap;
     return static_cast<MapId>(index);

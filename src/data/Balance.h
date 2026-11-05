@@ -32,6 +32,17 @@ inline constexpr float kDashSpeed = kDashDistance / kDashSeconds;
 inline constexpr float kDashInvulnerableSeconds = 0.15f;  // From the start of the dash only.
 inline constexpr float kDashCooldownSeconds = 4.0f;
 
+// --- Solid cars --------------------------------------------------------------
+// Their sizes come from their pictures, and live with the map's layout.
+inline constexpr float kCarClearOfStart = 240.0f;    // No car this close to the start, a full dash and more away.
+inline constexpr float kCarCornerRadius = 8.0f;      // Rounded corners, so nothing snags on one.
+inline constexpr float kCarSteerLookAhead = 24.0f;   // How far past its edge a zombie looks for a car.
+inline constexpr float kZombieCarRadiusShare = 0.8f; // Zombies squeeze in a little closer than their full width.
+inline constexpr int kZombieStuckSteps = 330;        // A slow Brute takes about this long to walk around a bus.
+inline constexpr float kChargerCrashKnock = 120.0f;  // It bounces back off the car this hard.
+inline constexpr float kChargerCrashSeconds = 1.5f;  // Stunned for this long, longer than a normal recovery.
+inline constexpr float kItemCarRadius = 10.0f;       // How far from a car a dropped gem, pickup or mine lands.
+
 // XP needed to go from this level to the next.
 inline constexpr int xpForLevel(int level) { return 5 + (level - 1) * 4 + (level - 1) * (level - 1) / 3; }
 

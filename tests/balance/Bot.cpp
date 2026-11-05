@@ -2,6 +2,7 @@
 
 #include "components/Enemies/Boss/Boss.h"
 #include "components/Enemies/Charger/Charger.h"
+#include "components/Obstacles/Obstacles.h"
 #include "components/Weapons/Weapons.h"
 
 #include <algorithm>
@@ -55,6 +56,7 @@ constexpr float kDashWarnSeconds = 0.45f;     // A warning this close to going o
 constexpr float kDashBulletSeconds = 0.2f;    // A shot this close to landing is worth leaving.
 constexpr float kDashPanicHp = 0.3f;          // Health share at which even a poor player reaches for the dash.
 constexpr float kDashMinGain = 1.5f;          // The dash must make things at least this much better.
+constexpr float kCarStallPenalty = 1.0f;      // Cost of a heading that a solid car would stop short.
 constexpr float kChargerLaneLength = balance::kChargerDashSpeed * balance::kChargerDashSeconds;
 constexpr float kBossDashLaneLength = balance::kBossDashSpeed * balance::kBossDashSeconds;
 
@@ -238,14 +240,18 @@ float Bot::headingCost(const GameState& state, Vec2 dir) const {
     const float playerR = balance::kPlayerRadius;
     float cost = 0.0f;
 
-    const Vec2 nearPos = pos + dir * (speed * near);
+    // A player sees the cars. Where a heading really ends is what counts, and walking
+    // into the side of a car is a waste of time, not a way to get anywhere.
+    const Vec2 wantedPos = pos + dir * (speed * near);
+    const Vec2 nearPos = obstacles::sweepCircle(state, pos, wantedPos, playerR);
+    cost += kCarStallPenalty * (1.0f - clampf(dot(nearPos - pos, dir) / std::max(speed * near, 1.0f), 0.0f, 1.0f));
     for (const Threat& threat : threats_) {
         const Vec2 q = threat.pos + threat.vel * near;
         const float gap = distance(nearPos, q) - threat.radius - playerR;
         cost += threat.weight * (gap < 0.0f ? kContactPenalty : std::exp(-gap / kThreatFalloff));
     }
     if (profile_.avoidsCrowds) {
-        const Vec2 farPos = pos + dir * (speed * far);
+        const Vec2 farPos = obstacles::sweepCircle(state, pos, pos + dir * (speed * far), playerR);
         for (const Threat& threat : threats_) {
             const Vec2 q = threat.pos + threat.vel * far;
             const float gap = distance(farPos, q) - threat.radius - playerR;
@@ -269,9 +275,16 @@ float Bot::headingCost(const GameState& state, Vec2 dir) const {
     }
 
     if (hasLoot_) {
-        const float before = distance(pos, lootTarget_);
-        const float after = distance(nearPos, lootTarget_);
-        cost -= profile_.lootWeight * clampf((before - after) / std::max(speed * near, 1.0f), -1.0f, 1.0f);
+        // With a car in the way, the good heading is the one that goes around it.
+        const Vec2 straight = normalizedOr(lootTarget_ - pos, dir) * speed;
+        const Vec2 around = obstacles::steerAround(state, pos, playerR, straight, lootTarget_, 1u);
+        if (around.x != straight.x || around.y != straight.y) {
+            cost -= profile_.lootWeight * dot(dir, normalizedOr(around, dir));
+        } else {
+            const float before = distance(pos, lootTarget_);
+            const float after = distance(nearPos, lootTarget_);
+            cost -= profile_.lootWeight * clampf((before - after) / std::max(speed * near, 1.0f), -1.0f, 1.0f);
+        }
     }
     cost += kMomentumWeight * (1.0f - dot(dir, heading_)) * 0.5f;
     return cost;
@@ -355,7 +368,7 @@ void Bot::considerDash(const GameState& state) {
     Vec2 bestDir = heading_;
     for (int k = 0; k < profile_.directions; ++k) {
         const Vec2 dir = fromAngle(kTau * static_cast<float>(k) / static_cast<float>(profile_.directions));
-        const float cost = dashCost(pos + dir * balance::kDashDistance, balance::kDashSeconds);
+        const float cost = dashCost(obstacles::sweepCircle(state, pos, pos + dir * balance::kDashDistance, playerR), balance::kDashSeconds);
         if (cost < bestCost) {
             bestCost = cost;
             bestDir = dir;

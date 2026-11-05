@@ -1,5 +1,7 @@
 #include "SoloTest.h"
 
+#include "GameRunner.h"
+
 #include "Names.h"
 #include "Parallel.h"
 #include "Stats.h"
@@ -52,7 +54,7 @@ const char* variantName(int variant) {
 // A standing, unkillable soldier with one weapon, in the middle of a crowd that is refilled every step.
 std::unique_ptr<GameState> makeArena(WeaponId weapon, int variant, int crowd, uint64_t seed, Difficulty difficulty) {
     auto state = std::make_unique<GameState>();
-    sim::newRun(*state, seed, difficulty);
+    sim::newRun(*state, seed, difficulty, gameMap());
     state->player.weaponCount = 0;
     state->player.xpToNext = 1 << 30;  // No level-up screens.
     weapons::grant(*state, weapon);

@@ -1,6 +1,7 @@
 #include "components/Weapons/Landmines/Landmines.h"
 
 #include "components/Enemies/Enemies.h"
+#include "components/Obstacles/Obstacles.h"
 #include "components/Weapons/Weapons.h"
 
 #include <cmath>
@@ -20,7 +21,8 @@ bool fireLandmines(GameState& state, const WeaponSlot& slot, const balance::Weap
         Projectile* shot = state.projectiles.add();
         if (!shot) break;
         const float angle = baseAngle + firstOffset + static_cast<float>(i) * balance::kMineSpreadRadians;
-        const Vec2 pos = origin + fromAngle(angle) * balance::kMineDropDistance;
+        Vec2 pos = origin + fromAngle(angle) * balance::kMineDropDistance;
+        obstacles::resolveCircle(state, pos, balance::kItemCarRadius);
         shot->pos = pos;
         shot->prevPos = pos;
         shot->vel = Vec2{};

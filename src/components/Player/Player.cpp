@@ -1,5 +1,6 @@
 #include "components/Player/Player.h"
 
+#include "components/Obstacles/Obstacles.h"
 #include "data/Balance.h"
 
 #include <algorithm>
@@ -15,10 +16,13 @@ void reset(GameState& state) {
 
 namespace {
 
-// The one place the player's new position is applied, for walking and dashing alike.
-// Solid obstacles will be handled here later: stop or slide the move, and a dash is
-// stopped or slid exactly the same way.
-void applyMovement(Player& player, Vec2 delta) { player.pos += delta; }
+// The one place the player's new position is applied, for walking and dashing alike. A car
+// takes away only the part of the move going into it, so the rest slides along its side,
+// and a dash is stopped or slid exactly the same way.
+void applyMovement(GameState& state, Vec2 delta) {
+    Player& player = state.player;
+    player.pos = obstacles::sweepCircle(state, player.pos, player.pos + delta, balance::kPlayerRadius);
+}
 
 // Starts a dash if one is allowed. The direction is the way he is moving, or the way
 // he faces when standing still.
@@ -49,11 +53,11 @@ void update(GameState& state, float moveX, float moveY, bool dashPressed) {
     if (player.dashLeft > 0.0f) {
         // The last step covers only the time that is left, so the distance is exact.
         const float time = std::min(kDt, player.dashLeft);
-        applyMovement(player, player.dashDir * (balance::kDashSpeed * time));
+        applyMovement(state, player.dashDir * (balance::kDashSpeed * time));
         player.dashLeft -= kDt;
         if (player.dashLeft < 1e-4f) player.dashLeft = 0.0f;
     } else {
-        applyMovement(player, move * (player.stats.moveSpeed * kDt));
+        applyMovement(state, move * (player.stats.moveSpeed * kDt));
     }
 
     player.invulnerable = std::max(0.0f, player.invulnerable - kDt);

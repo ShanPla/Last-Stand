@@ -12,56 +12,6 @@ using namespace theme;
 
 namespace {
 
-// Added to a family's salt, so its random choices stay independent of each other.
-enum Salt : uint32_t { kSaltBase = 0, kSaltBend = 1, kSaltBurial = 2, kSaltStyle = 3, kSaltDamage = 4, kSaltFurniture = 5, kSaltStretch = 6, kSaltLine = 7, kSaltCrossing = 8 };
-
-constexpr int kStepsPerRun = 3;
-
-// A value that holds steady for a run of steps, then eases to the next run's value over
-// one step. Roads stay dead straight for a long way, and bends have no sharp corner.
-template <typename ValueOfRun>
-int eased(int along, int step, ValueOfRun valueOfRun) {
-    const int k = floorDiv(along, step);
-    const int run = floorDiv(k, kStepsPerRun);
-    const int value = valueOfRun(run);
-    if (k - run * kStepsPerRun != 0) return value;
-    const int previous = valueOfRun(run - 1);
-    if (previous == value) return value;
-    const int t = (along - k * step) * 1024 / step;
-    const int smooth = ((t * t) >> 10) * (3072 - 2 * t) >> 10;
-    return previous + (value - previous) * smooth / 1024;
-}
-
-int bendOfRun(uint64_t seed, const RoadFamily& f, int index, int run) {
-    TileRandom random(seed, index, run, f.salt + kSaltBend);
-    return random.chance(50) ? 0 : random.range(-f.reach, f.reach);
-}
-
-int burialOfRun(uint64_t seed, const RoadFamily& f, int index, int run) {
-    TileRandom random(seed, index, run, f.salt + kSaltBurial);
-    const int roll = random.range(0, 99);
-    return roll < 50 ? 0 : (roll < 78 ? 70 : 255);
-}
-
-struct RoadStyle {
-    int half;
-    int centerLine;  // 0 dashes, 1 double line, 2 nearly gone.
-    bool divided;
-    bool poles;
-    bool polesOnLowSide;
-};
-
-RoadStyle styleOf(uint64_t seed, const RoadFamily& f, int index) {
-    TileRandom random(seed, index, 0, f.salt + kSaltStyle);
-    RoadStyle style{};
-    style.divided = random.chance(22);
-    style.half = style.divided ? f.dividedHalf : f.halfWidth;
-    style.centerLine = random.range(0, 2);
-    style.poles = random.chance(70);
-    style.polesOnLowSide = random.chance(50);
-    return style;
-}
-
 // One road near the chunk being painted, with its center worked out once per column or
 // row of the chunk, because the painting loops ask for it constantly.
 struct Span {
@@ -290,10 +240,6 @@ void asphaltPatch(const RoadPen& pen, int x, int y, int w, int h) {
     }
 }
 
-// Roads are cut into slots along their length. Each slot rolls its own wear and its own
-// roadside objects from a hash, so any chunk can repaint exactly what its neighbor did.
-int slotLength(const RoadFamily& f) { return f.across ? 64 : 36; }
-
 void paintDamage(Paint& p, const Desert& d, const Span& s) {
     const RoadFamily& f = *s.family;
     const int len = slotLength(f);
@@ -318,23 +264,6 @@ void paintDamage(Paint& p, const Desert& d, const Span& s) {
 }
 
 // --- Roadside furniture -------------------------------------------------------
-
-// A stretch of road can be littered with a pileup, or nearly empty.
-int wreckLevel(uint64_t seed, const RoadFamily& f, int index, int along) {
-    const int stretch = floorDiv(along, f.across ? 1344 : 784);
-    TileRandom random(seed, index, stretch, f.salt + kSaltStretch);
-    const int roll = random.range(0, 99);
-    return roll < 28 ? 3 : (roll < 62 ? 1 : 0);
-}
-
-struct RoadPoint {
-    int along, center, x, y;
-};
-
-RoadPoint roadPoint(uint64_t seed, const RoadFamily& f, int index, int along, int off) {
-    const int c = roadCenter(seed, f, index, along);
-    return {along, c, f.across ? along : c + off, f.across ? c + off : along};
-}
 
 struct Pole {
     bool exists, snapped;
@@ -376,43 +305,45 @@ void paintPoles(Paint& p, const Desert& d, const Span& s) {
 
 constexpr const char* kRoadSignWords[] = {"NO GAS", "EXIT", "FUEL 90", "TURN BACK", "NO FOOD", "DEAD END", "KEEP OUT", "EAT"};
 
+// On the road itself: the layout decides what stands here, and its stream paints the looks.
+void furnishRoad(Paint& p, const Desert& d, const Span& s, int slot, LightList& lights) {
+    const RoadFamily& f = *s.family;
+    TileRandom random = slotStream(d.seed, f, s.index, slot, 1);
+    const RoadSlot decided = decideRoadSlot(d.seed, f, s.index, s.style, slot, random);
+    if (decided.skidMarks) {
+        const RoadPen pen{p, d, s};
+        const int half = s.style.half;
+        const RoadPoint at = roadPoint(d.seed, f, s.index, decided.along, random.range(-half / 2, half / 2));
+        skidMarks(pen, random, at.x, at.y, random.range(24, 70), f.across);
+    }
+    if (!decided.wreck) return;
+    {
+        CarMark mark(p);
+        switch (decided.sprite) {
+            case CarSprite::BusSide: busSide(p, decided.x, decided.y, random); break;
+            case CarSprite::TankerSide: tankerSide(p, decided.x, decided.y, random); break;
+            case CarSprite::WreckOnRoof: carOnRoof(p, decided.x, decided.y, random); break;
+            case CarSprite::BusEnd: busEnd(p, decided.x, decided.y, random); break;
+            case CarSprite::WreckEnd: carEnd(p, decided.x, decided.y, random); break;
+            default: carSide(p, decided.x, decided.y, random); break;
+        }
+    }
+    // One wreck in a while is still burning, which gives the night its few fires.
+    if (random.chance(9)) wreckFire(p, decided.x, decided.y, lights);
+}
+
 void furnishSlot(Paint& p, const Desert& d, const Span& s, int slot, int layer, LightList& lights) {
+    if (layer == 1) {
+        furnishRoad(p, d, s, slot, lights);
+        return;
+    }
     const RoadFamily& f = *s.family;
     const int len = slotLength(f);
-    TileRandom random(d.seed, s.index, slot, f.salt + kSaltFurniture + static_cast<uint32_t>(layer) * 16u);
+    TileRandom random = slotStream(d.seed, f, s.index, slot, layer);
     const int along = slot * len + random.range(0, len - 1);
     const int burial = roadBurial(d.seed, f, s.index, along);
     const int half = s.style.half;
     const int roll = random.range(0, 99);
-    if (layer == 1) {
-        // On the road itself: wrecks, more of them in a bad stretch.
-        const int level = wreckLevel(d.seed, f, s.index, along);
-        if (burial > 120) return;
-        const int chance = level == 3 ? 42 : (level == 1 ? 7 : 2);
-        if (roll >= chance) {
-            if (roll < chance + 6) {
-                const RoadPen pen{p, d, s};
-                const RoadPoint at = roadPoint(d.seed, f, s.index, along, random.range(-half / 2, half / 2));
-                skidMarks(pen, random, at.x, at.y, random.range(24, 70), f.across);
-            }
-            return;
-        }
-        const int lane = (random.chance(50) ? -1 : 1) * (s.style.divided ? (half + f.median) / 2 : half / 2);
-        const RoadPoint at = roadPoint(d.seed, f, s.index, along, lane + random.range(-3, 3) + (f.across ? 7 : 0));
-        const int pick = random.range(0, 99);
-        if (f.across) {
-            if (pick < 10) busSide(p, at.x, at.y, random);
-            else if (pick < 18) tankerSide(p, at.x, at.y, random);
-            else if (pick < 34) carOnRoof(p, at.x, at.y, random);
-            else carSide(p, at.x, at.y, random);
-        } else {
-            if (pick < 10) busEnd(p, at.x, at.y, random);
-            else carEnd(p, at.x, at.y, random);
-        }
-        // One wreck in a while is still burning, which gives the night its few fires.
-        if (random.chance(9)) wreckFire(p, at.x, at.y, lights);
-        return;
-    }
     // Beside the road, above it for layer 0 and below it for layer 2.
     const int side = layer == 0 ? -1 : 1;
     const int off = side * (half + f.shoulder + random.range(1, f.across ? 8 : 14));
@@ -457,9 +388,8 @@ void furnishSlot(Paint& p, const Desert& d, const Span& s, int slot, int layer, 
 void paintFurniture(Paint& p, const Desert& d, const Span& s, LightList& lights) {
     const RoadFamily& f = *s.family;
     const int len = slotLength(f);
-    constexpr int kReachAlong = 130;  // A bus or a tanker can stick out this far.
-    const int low = (f.across ? p.left() : p.top()) - kReachAlong;
-    const int high = (f.across ? p.right() : p.bottom()) + kReachAlong;
+        const int low = (f.across ? p.left() : p.top()) - kWreckReachAlong;
+    const int high = (f.across ? p.right() : p.bottom()) + kWreckReachAlong;
     const int slot0 = floorDiv(low, len);
     const int slot1 = floorDiv(high, len);
     if (f.across) {
@@ -501,31 +431,6 @@ void paintCrossing(Paint& p, const Desert& d, const Span& across, const Span& up
 }
 
 }  // namespace
-
-int roadBase(uint64_t seed, const RoadFamily& f, int index) {
-    TileRandom random(seed, index, 0, f.salt + kSaltBase);
-    return index * f.spacing + random.range(-f.jitter, f.jitter);
-}
-
-int roadCenter(uint64_t seed, const RoadFamily& f, int index, int along) {
-    return roadBase(seed, f, index) + eased(along, f.step, [&](int run) { return bendOfRun(seed, f, index, run); });
-}
-
-int roadBurial(uint64_t seed, const RoadFamily& f, int index, int along) {
-    return eased(along, f.step, [&](int run) { return burialOfRun(seed, f, index, run); });
-}
-
-int roadHalfWidth(uint64_t seed, const RoadFamily& f, int index) { return styleOf(seed, f, index).half; }
-
-bool nearAnyRoad(uint64_t seed, int x, int y, int marginX, int marginY) {
-    for (int index = firstRoadNear(kAcrossRoads, y - marginY); index <= lastRoadNear(kAcrossRoads, y + marginY); ++index) {
-        if (std::abs(roadCenter(seed, kAcrossRoads, index, x) - y) <= roadHalfWidth(seed, kAcrossRoads, index) + marginY) return true;
-    }
-    for (int index = firstRoadNear(kUpRoads, x - marginX); index <= lastRoadNear(kUpRoads, x + marginX); ++index) {
-        if (std::abs(roadCenter(seed, kUpRoads, index, y) - x) <= roadHalfWidth(seed, kUpRoads, index) + marginX) return true;
-    }
-    return false;
-}
 
 void paintRoads(Paint& p, const Desert& d, LightList& lights) {
     // Furniture stands up to this far from the road's edge, so a road just outside the
