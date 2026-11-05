@@ -2,9 +2,16 @@
 
 A pixel-art zombie survivors game in C++20, compiled to WebAssembly so it runs in a browser with no install or account. All art, music and sound are generated in code, so the project has no image or audio assets.
 
-**Play:** the live link is coming soon. The game is still in development.
+**Play in your browser: [shanpla.github.io/Last-Stand](https://shanpla.github.io/Last-Stand/)**
 
-![A soldier fights zombies in a ruined city at dusk](docs/prototypes/prototype-3-pixel-city-play.png)
+![A soldier fights zombies in a ruined city, with explosions and gems flying](docs/screenshots/gameplay.gif)
+
+| | |
+|---|---|
+| ![The title screen with its live background, map and difficulty selectors](docs/screenshots/title.png) | ![Three level-up cards showing what each choice changes in numbers](docs/screenshots/level-up.png) |
+| ![The ruined city at dusk](docs/screenshots/city.png) | ![The desert highway wasteland](docs/screenshots/desert.png) |
+
+<img src="docs/screenshots/phone.png" alt="The game on a phone-sized screen, with a dash button in the corner" width="260">
 
 ## The game
 
@@ -14,13 +21,15 @@ Survive 10 minutes against a growing horde, then fight the final boss. You only 
 - **6 passives** and **5 evolutions.** A maxed weapon plus the right passive evolves into a stronger form.
 - **Limited ammo.** Guns use magazines and reloads, and crates keep you supplied. An empty Rifle still fires weak free shots, so you can always fight back.
 - **8 zombie types and elites,** plus a 3-phase boss with telegraphed attacks. Its health scales with your build.
-- **An endless ruined city,** generated from the run's seed, with a day cycle that moves from dusk into night.
+- **Two endless maps,** a ruined city and a desert highway wasteland, generated from the run's seed, with a day cycle that moves from dusk into night.
+- **Solid wrecked cars.** You and the zombies slide around them, Chargers crash into them, and the boss walks straight through.
+- **A dash with a cooldown,** and **Easy, Normal and Hard** on the title screen. Play stays one press away.
 
 ### Controls
 
 | Device | Move | Dash | Menus |
 |---|---|---|---|
-| Keyboard | WASD or arrow keys | Shift or Space | Arrow keys, Enter, Esc |
+| Keyboard | WASD or arrow keys | Space or Shift | Arrow keys, Enter, Esc |
 | Touch | Drag anywhere for a floating joystick | The DASH button in the lower right corner | Tap |
 | Gamepad | Left stick | Right shoulder button | D-pad or stick, A, B, Start |
 | Mouse | Not used for moving | Click the dash icon under the weapons | Click |
@@ -33,27 +42,38 @@ Survive 10 minutes against a growing horde, then fight the final boss. You only 
 | Simulation | Fixed 60 Hz step, separate from rendering, with interpolation. Plain C++ with no graphics dependency |
 | Repeatable runs | Seeded random numbers, so the same seed and inputs give the same run. Checked by a test |
 | Large crowds | Object pools and a spatial hash, with no heap allocation per frame in gameplay |
-| Art | Sprites and city chunks painted in code at runtime, using a palette-indexed texture atlas |
+| Art | Sprites and map chunks painted in code at runtime, using a palette-indexed texture atlas |
 | Audio | Sound effects and layered music synthesized in code at startup |
-| Saves | Local browser storage only, versioned and safe if data is missing or corrupt. No accounts, backend or analytics |
+| Solid cars | Car positions come from the seed in code with no graphics, so the simulation and the painted map always agree. No pathfinding: zombies steer to corners |
+| Saves | Local storage only, versioned and safe if data is missing or corrupt. No accounts, backend or analytics |
+| Offline | An installable web app that keeps working with no connection. Each cached file is checked against the build's own hash |
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains the whole system in plain language, including what was chosen, what was rejected and why.
 
-## Measured so far
+## Measured
+
+Measured on a laptop with an Intel UHD integrated GPU, in headless Chrome. Real phones have not been measured yet.
 
 | Measure | Result |
 |---|---|
-| Stress test: about 2,000 zombies and 2,900 shots at 1920x1080 | About 434 fps on an Intel UHD integrated GPU, in headless Chrome, before particles and glow |
-| Compressed download | About 277 KB |
-| Tests | 116 unit test cases and 67 browser tests |
+| Stress test: 2,000 zombies and 3,000 shots at 1920x1080 | Locked at the 144 Hz display, with a 99th percentile frame gap of 7.3 ms |
+| 2,000 zombies at phone size, with the processor slowed 6 times as a stand-in for a weak phone | Average above 30 fps, though single frames drop below it. This does not slow the graphics chip |
+| Compressed download | About 384 KB on a first visit |
+| Tests | 230 unit test cases and 220 browser tests, all passing |
 
-These numbers will change as work continues. Performance on real phones has not been measured yet.
+Balance is checked by bots that play 100 games per setting on seeds not used for tuning:
+
+| Difficulty | Novice bot | Average bot | Skilled bot |
+|---|---|---|---|
+| Easy | Reaches the boss in 52 to 56% of games | Wins 95 to 100% | Wins 100% |
+| Normal | Survives a median of about 3:55 | Wins 30 to 32% | Wins 59 to 62% |
+| Hard | Survives a median of about 3:40 | Wins 3 to 5% | Wins 29 to 30% |
+
+Bots can measure balance, but not whether the game is fun. That needs people playing it.
 
 ## Status
 
-Done: simulation, weapons, zombies, boss, screens, all input methods, saves, audio, pixel-art world and a first balance pass.
-
-In progress: particles, damage numbers, screen shake and glow, then an installable web app, a PC download, a final balance pass from playtesting, and the public release.
+The whole game is playable from title to victory or death. This is a first public version, and balance may change after playtesting. There is no packaged release yet.
 
 [docs/prototypes](docs/prototypes) shows how the look developed.
 
@@ -73,7 +93,7 @@ cmake --preset native
 cmake --build --preset native
 ```
 
-Add `?debug` to the page URL to show the performance overlay.
+Add `?debug` to the page URL to show the performance overlay. On the PC build, developer builds show it, and a Release build shows it when started with `--debug`.
 
 ## Tests
 
