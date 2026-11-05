@@ -92,3 +92,27 @@ TEST_CASE("a player who survives the boss's last step wins") {
     CHECK(countEvents(*state, EventType::PlayerDied) == 0);
 }
 
+// --- Reroll and card in one step -------------------------------------------------
+
+TEST_CASE("a card and a reroll in one step take the card on screen and keep the reroll") {
+    // Two runs that differ only in the reroll flag must end exactly alike.
+    auto cardOnly = makeRun();
+    auto both = makeRun();
+    upgrades::addXp(*cardOnly, balance::xpForLevel(1));
+    upgrades::addXp(*both, balance::xpForLevel(1));
+    sim::step(*cardOnly, InputFrame{});
+    sim::step(*both, InputFrame{});
+    REQUIRE(both->run.phase == RunPhase::LevelUp);
+
+    InputFrame pick;
+    pick.chooseCard = 1;
+    InputFrame pickAndReroll = pick;
+    pickAndReroll.reroll = true;
+    sim::step(*cardOnly, pick);
+    sim::step(*both, pickAndReroll);
+
+    CHECK(both->run.phase == RunPhase::Playing);
+    CHECK(both->run.rerollsLeft == balance::kStartingRerolls);
+    CHECK(sim::stateHash(*both) == sim::stateHash(*cardOnly));
+}
+

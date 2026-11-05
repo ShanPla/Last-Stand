@@ -69,8 +69,13 @@ void step(GameState& state, const InputFrame& input) {
     if (run.phase == RunPhase::Won || run.phase == RunPhase::Dead) return;
 
     if (run.phase == RunPhase::LevelUp) {
-        if (input.reroll) upgrades::reroll(state);
-        if (input.chooseCard >= 0) upgrades::choose(state, input.chooseCard);
+        // If both arrive in one step, the card wins and the reroll is not spent. The card
+        // index means a card on screen now, and a reroll would swap it for an unseen one.
+        if (input.chooseCard >= 0) {
+            upgrades::choose(state, input.chooseCard);
+        } else if (input.reroll) {
+            upgrades::reroll(state);
+        }
         return;
     }
 
