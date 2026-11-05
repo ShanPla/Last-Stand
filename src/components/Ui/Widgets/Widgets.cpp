@@ -75,6 +75,8 @@ Rectangle inset(Rectangle r, float amount) {
 
 void beginFrame(const input::Snapshot& input, float dtReal) {
     g_input = input;
+    // A drag ends when the pointer is released, even on a frame when no slider is drawn.
+    if (!input.pointerDown && !input.pointerPressed) g_dragging = nullptr;
     g_seconds += dtReal;
     g_registeredCount = 0;
     g_selectedName[0] = '\0';
@@ -118,6 +120,9 @@ Color withAlpha(Color color, float alpha) {
 }
 
 void consumePresses() {
+    // A screen change also ends any slider drag. The slider code only runs while Settings
+    // is on screen, so a drag left open here would still be there when Settings opens again.
+    g_dragging = nullptr;
     g_input.pointerPressed = false;
     g_input.confirm = false;
     g_input.reroll = false;
