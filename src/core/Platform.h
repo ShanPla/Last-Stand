@@ -48,7 +48,8 @@ bool prefersReducedMotion();
 // A laptop with a touch screen still has a mouse, so it stays false there.
 bool touchIsOnlyPointer();
 
-// Save storage: browser localStorage, or a file next to the program on native.
+// Save storage: browser localStorage, or a file on native (%APPDATA%\LastStand on Windows,
+// with the current folder as the fallback).
 // Both fail quietly (for example when storage is blocked), and return false.
 bool readSave(std::string* text);
 bool writeSave(const std::string& text);

@@ -49,7 +49,7 @@ file(GLOB_RECURSE LS_SIM_SOURCES CONFIGURE_DEPENDS
   src/components/Pickups/*.cpp
   src/components/Upgrades/*.cpp
 )
-list(FILTER LS_SIM_SOURCES EXCLUDE REGEX "/core/(App|Platform)\\.cpp$")
+list(FILTER LS_SIM_SOURCES EXCLUDE REGEX "/core/(App|Platform|NativePaths)\\.cpp$")
 
 add_library(ls_sim STATIC ${LS_SIM_SOURCES})
 target_include_directories(ls_sim PUBLIC src)
@@ -108,6 +108,10 @@ endif()
 
 add_executable(laststand src/main.cpp src/core/Platform.cpp ${LS_APP_SOURCE} ${LS_GAME_SOURCES} "${LS_FONT_CPP}")
 target_link_libraries(laststand PRIVATE ls_sim ls_audio raylib)
+# The native save folder code needs windows.h, so it is a file of its own, apart from raylib.
+if(NOT EMSCRIPTEN)
+  target_sources(laststand PRIVATE src/core/NativePaths.cpp)
+endif()
 
 if(MSVC)
   target_compile_options(laststand PRIVATE /W4 /utf-8)

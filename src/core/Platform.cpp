@@ -5,6 +5,8 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
 #include <emscripten/html5.h>
+#else
+#include "core/NativePaths.h"
 #endif
 
 #include <algorithm>
@@ -302,14 +304,32 @@ bool touchIsOnlyPointer() {
 #ifndef __EMSCRIPTEN__
 namespace {
 
-// The native save is a small file next to the program.
-std::FILE* openSaveFile(const char* mode) {
+// A file in the current folder. This is where saves lived before the Windows location
+// changed, and it is the fallback when the proper folder can't be used.
+std::FILE* openInCurrentFolder(const char* mode) {
 #ifdef _MSC_VER
     std::FILE* file = nullptr;
     return fopen_s(&file, "laststand.save", mode) == 0 ? file : nullptr;
 #else
     return std::fopen("laststand.save", mode);
 #endif
+}
+
+// The native save is a small file. On Windows it lives in %APPDATA%\LastStand, because the
+// folder the game starts in may be read-only or different each time. If that folder can't
+// be used, or has no save yet, the current folder is tried, so an older save still loads
+// and a save is never lost for want of a place to put it.
+std::FILE* openSaveFile(const char* mode) {
+#ifdef _WIN32
+    const std::wstring& path = nativeSavePath();
+    if (!path.empty()) {
+        wchar_t wideMode[8] = {};
+        for (size_t i = 0; i < 7 && mode[i] != '\0'; ++i) wideMode[i] = static_cast<wchar_t>(mode[i]);
+        std::FILE* file = nullptr;
+        if (_wfopen_s(&file, path.c_str(), wideMode) == 0 && file) return file;
+    }
+#endif
+    return openInCurrentFolder(mode);
 }
 
 }  // namespace

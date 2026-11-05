@@ -13,8 +13,13 @@ The program is not code signed, so Windows SmartScreen may say it
 "protected your PC". Click "More info", then "Run anyway".
 
 SAVES
-Your best run is saved in a small file called laststand.save in the folder you
-start the game from, which is normally the folder you unzipped it to.
+Your settings, difficulty and best runs are saved in a small file called
+laststand.save in this folder:
+  %APPDATA%\LastStand\
+which is normally C:\Users\<your name>\AppData\Roaming\LastStand\. The game
+creates it, so it works even when the game's own folder is read-only. If that
+folder cannot be used, the game falls back to the folder it was started from.
+Delete the file to reset your progress.
 
 PLAY IN A BROWSER INSTEAD
 No download needed: https://shanpla.github.io/Last-Stand/
