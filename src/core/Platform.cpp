@@ -9,12 +9,16 @@
 #include <emscripten/html5.h>
 #else
 #include "core/NativePaths.h"
+#include "core/SaveFile.h"
 #endif
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#ifndef __EMSCRIPTEN__
+#include <filesystem>
+#endif
 
 #ifdef __EMSCRIPTEN__
 
@@ -359,59 +363,48 @@ bool touchIsOnlyPointer() {
 #endif
 }
 
+
 #ifndef __EMSCRIPTEN__
 namespace {
 
-// A file in the current folder. This is where saves lived before the Windows location
-// changed, and it is the fallback when the proper folder can't be used.
-std::FILE* openInCurrentFolder(const char* mode) {
-#ifdef _MSC_VER
-    std::FILE* file = nullptr;
-    return fopen_s(&file, "laststand.save", mode) == 0 ? file : nullptr;
-#else
-    return std::fopen("laststand.save", mode);
-#endif
-}
-
 // The native save is a small file. On Windows it lives in %APPDATA%\LastStand, because the
-// folder the game starts in may be read-only or different each time. If that folder can't
-// be used, or has no save yet, the current folder is tried, so an older save still loads
-// and a save is never lost for want of a place to put it.
-std::FILE* openSaveFile(const char* mode) {
+// folder the game starts in may be read-only or different each time. The current folder
+// comes second, so an older save still loads and a save is never lost for want of a place
+// to put it.
+int saveCandidates(std::filesystem::path* out) {
+    int count = 0;
 #ifdef _WIN32
     const std::wstring& path = nativeSavePath();
-    if (!path.empty()) {
-        wchar_t wideMode[8] = {};
-        for (size_t i = 0; i < 7 && mode[i] != '\0'; ++i) wideMode[i] = static_cast<wchar_t>(mode[i]);
-        std::FILE* file = nullptr;
-        if (_wfopen_s(&file, path.c_str(), wideMode) == 0 && file) return file;
-    }
+    if (!path.empty()) out[count++] = std::filesystem::path(path);
 #endif
-    return openInCurrentFolder(mode);
+    out[count++] = std::filesystem::path("laststand.save");
+    return count;
 }
 
 }  // namespace
 #endif
 
-bool readSave(std::string* text) {
+SaveRead readSave(std::string* text) {
 #ifdef __EMSCRIPTEN__
     static char buffer[8192];
     const int length = ls_js_storage_read(buffer, static_cast<int>(sizeof(buffer)));
-    if (length < 0) {
-        // A value too big for the buffer is not ours. Hand over a marker that parses to defaults.
-        text->clear();
-        return false;
-    }
+    text->clear();
+    if (length == -3) return SaveRead::Unreadable;  // Storage is blocked or failed. It may hold a good save.
+    if (length < 0) return SaveRead::Missing;       // Nothing stored, or a value too big to be ours.
     text->assign(buffer, static_cast<size_t>(length));
-    return true;
+    return SaveRead::Found;
 #else
-    std::FILE* file = openSaveFile("rb");
-    if (!file) return false;
-    char buffer[8192];
-    const size_t length = std::fread(buffer, 1, sizeof(buffer), file);
-    std::fclose(file);
-    text->assign(buffer, length);
-    return true;
+    std::filesystem::path candidates[2];
+    const int count = saveCandidates(candidates);
+    bool unreadable = false;
+    for (int i = 0; i < count; ++i) {
+        switch (savefile::readFile(candidates[i], text)) {
+            case savefile::ReadResult::Found: return SaveRead::Found;
+            case savefile::ReadResult::Unreadable: unreadable = true; break;
+            case savefile::ReadResult::Missing: break;
+        }
+    }
+    return unreadable ? SaveRead::Unreadable : SaveRead::Missing;
 #endif
 }
 
@@ -419,11 +412,12 @@ bool writeSave(const std::string& text) {
 #ifdef __EMSCRIPTEN__
     return ls_js_storage_write(text.c_str()) != 0;
 #else
-    std::FILE* file = openSaveFile("wb");
-    if (!file) return false;
-    const size_t written = std::fwrite(text.data(), 1, text.size(), file);
-    std::fclose(file);
-    return written == text.size();
+    std::filesystem::path candidates[2];
+    const int count = saveCandidates(candidates);
+    for (int i = 0; i < count; ++i) {
+        if (savefile::writeFileSafely(candidates[i], text)) return true;
+    }
+    return false;
 #endif
 }
 

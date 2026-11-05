@@ -55,6 +55,12 @@ std::string serialize(const SaveData& data);
 // the matching value from fallback, or is clamped into its valid range.
 SaveData parse(std::string_view text, const SaveData& fallback = SaveData{});
 
+// Raises each best run in mine to the stored value when the stored one is higher. Another
+// tab or the installed app may have saved a better run since this copy was loaded, and
+// saving without this would take that record back. Settings are not touched: the
+// settings in mine are the player's latest choice.
+void mergeBestRuns(SaveData& mine, const SaveData& stored);
+
 // The data the running game uses. Set once at startup, changed by the menus.
 SaveData& current();
 

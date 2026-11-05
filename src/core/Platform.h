@@ -58,9 +58,13 @@ bool prefersReducedMotion();
 bool touchIsOnlyPointer();
 
 // Save storage: browser localStorage, or a file on native (%APPDATA%\LastStand on Windows,
-// with the current folder as the fallback).
-// Both fail quietly (for example when storage is blocked), and return false.
-bool readSave(std::string* text);
+// with the current folder as the fallback). Nothing here throws.
+// Missing and Unreadable are kept apart: a save that could not be read (storage blocked,
+// file locked) may still hold good data, so the caller must not write defaults over it.
+enum class SaveRead { Found, Missing, Unreadable };
+SaveRead readSave(std::string* text);
+// Native writes to a temporary file and then replaces the save, so a failure never
+// leaves a half-written save. Returns false when nothing could be written.
 bool writeSave(const std::string& text);
 
 }  // namespace ls::platform

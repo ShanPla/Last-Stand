@@ -1,5 +1,6 @@
 #include "core/Save.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -139,6 +140,18 @@ SaveData parse(std::string_view text, const SaveData& fallback) {
         applyKey(data, key, value);
     }
     return data;
+}
+
+void mergeBestRuns(SaveData& mine, const SaveData& stored) {
+    for (int level = 0; level < kDifficultyCount; ++level) {
+        BestRun& best = mine.best[level];
+        const BestRun& other = stored.best[level];
+        best.bestTimeSeconds = std::max(best.bestTimeSeconds, other.bestTimeSeconds);
+        best.mostKills = std::max(best.mostKills, other.mostKills);
+        best.highestLevel = std::max(best.highestLevel, other.highestLevel);
+        best.wins = std::max(best.wins, other.wins);
+        best.runs = std::max(best.runs, other.runs);
+    }
 }
 
 SaveData& current() {

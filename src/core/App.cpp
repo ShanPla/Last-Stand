@@ -133,9 +133,18 @@ uint64_t pickSeed() {
 
 // ---- Saving ---------------------------------------------------------------------
 
+// Reads the stored save again just before writing. Another tab or the installed app may
+// have saved a better run since this copy loaded, so those records are merged in and
+// never go backward. If the stored save can't be read (storage blocked, file locked) it
+// may still be good, so nothing is written over it: this change is kept in memory and
+// goes out with the next save.
 void persist() {
-    platform::writeSave(save::serialize(save::current()));
     g_settingsDirty = false;
+    std::string stored;
+    const platform::SaveRead read = platform::readSave(&stored);
+    if (read == platform::SaveRead::Unreadable) return;
+    if (read == platform::SaveRead::Found) save::mergeBestRuns(save::current(), save::parse(stored));
+    platform::writeSave(save::serialize(save::current()));
 }
 
 // Called whenever a setting changes, so every change applies at once, even mid-fight.
@@ -152,7 +161,7 @@ void loadSave() {
     SaveData defaults;
     defaults.settings.reducedMotion = platform::prefersReducedMotion();
     std::string text;
-    if (platform::readSave(&text)) save::current() = save::parse(text, defaults);
+    if (platform::readSave(&text) == platform::SaveRead::Found) save::current() = save::parse(text, defaults);
     else save::current() = defaults;
     applySettings();
 }
