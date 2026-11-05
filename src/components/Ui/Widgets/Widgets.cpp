@@ -359,12 +359,28 @@ bool button(Nav& nav, int index, Rectangle rect, const char* label, ButtonLook l
     const float sizeShare = look == ButtonLook::Primary ? 0.46f : (look == ButtonLook::Small ? 0.40f : 0.44f);
     const float size = std::min(rect.height * sizeShare, 34.0f * u);
     const float maxText = rect.width - rect.height * 1.4f;
-    const float fitted = font::fitSize(label, size, maxText);
-    textMiddle(label, rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f, fitted, textColor, font::Align::Center);
+    float fitted = font::fitSize(label, size, maxText);
+    float labelCenter = rect.x + rect.width * 0.5f;
 
-    if (keyHint && keyHint[0] && showPrompts() && enabled && rect.width > 150.0f * u) {
-        keyChip(keyHint, rect.x + rect.width - rect.height * 0.3f, rect.y + rect.height * 0.5f, rect.height * 0.5f, font::Align::Right);
+    const bool chipShown = keyHint && keyHint[0] && showPrompts() && enabled && rect.width > 150.0f * u;
+    const float chipHeight = rect.height * 0.5f;
+    const float chipRight = rect.x + rect.width - rect.height * 0.3f;
+    if (chipShown) {
+        // On a narrow button a centered label would run under the key prompt. So the label
+        // then centers in the room left of the prompt, and shrinks if it still doesn't fit.
+        const float chipWidth = std::max(chipHeight, font::measure(keyHint, chipHeight * 0.62f) + chipHeight * 0.7f);
+        const float roomLeft = rect.x + rect.height * 0.35f;
+        const float roomRight = chipRight - chipWidth - 6.0f * u;
+        if (labelCenter + font::measure(label, fitted) * 0.5f > roomRight) {
+            fitted = font::fitSize(label, fitted, roomRight - roomLeft);
+            labelCenter = (roomLeft + roomRight) * 0.5f;
+        }
+        registerExtent("button chip", Rectangle{chipRight - chipWidth, rect.y, chipWidth, rect.height});
+        const float labelWidth = font::measure(label, fitted);
+        registerExtent("button text", Rectangle{labelCenter - labelWidth * 0.5f, rect.y, labelWidth, rect.height});
     }
+    textMiddle(label, labelCenter, rect.y + rect.height * 0.5f, fitted, textColor, font::Align::Center);
+    if (chipShown) keyChip(keyHint, chipRight, rect.y + rect.height * 0.5f, chipHeight, font::Align::Right);
     const bool pressed = enabled && activated(nav, index, rect);
     if (pressed) audio::playUi(audio::UiSound::Confirm);
     return pressed;

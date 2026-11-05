@@ -144,3 +144,30 @@ test('big font sizes are only baked when a window needs them', async () => {
   for (const [name, bytes] of Object.entries(sizes)) assert.ok(bytes > 0 && bytes < 8 * 1024 * 1024, `${name}: ${bytes}`);
   assert.ok(sizes['small-window'] < sizes['full-hd'], 'a small window should hold less than a big one');
 });
+
+// ---- Key prompts on buttons -----------------------------------------------------------------
+
+for (const shape of [phone, { viewport: { width: 320, height: 568 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true }, desktop]) {
+  test(`a key prompt never covers the button label on the game over screen at ${label(shape)}`, async () => {
+    const { context, page, problems } = await open(shape);
+    await waitScreen(page, 'title');
+    await debug(page, CMD.startRun);
+    await waitScreen(page, 'playing');
+    await debug(page, CMD.forceDeath);
+    await waitScreen(page, 'over');
+    // The prompts only show for a keyboard, and only once the buttons accept input.
+    await page.keyboard.press('ArrowDown');
+    await page.waitForFunction(() => JSON.parse(Module.ccall('ls_query_ui', 'string', [], [])).extents.some((e) => e.n === 'button chip'),
+      null, { timeout: 8000 });
+    const ui = await readUi(page);
+    const text = extentOf(ui, 'button text');
+    const chip = extentOf(ui, 'button chip');
+    assert.ok(text.w > 0, 'the label must still have a width');
+    assert.ok(!overlaps(text, chip), `label ${JSON.stringify(text)} runs under prompt ${JSON.stringify(chip)}`);
+    assert.ok(insideBox(chip, rectOf(ui, 'RESTART')), 'the prompt must stay on its button');
+    assert.ok(insideBox(text, rectOf(ui, 'RESTART')), 'the label must stay on its button');
+    await page.screenshot({ path: `tests/e2e/screenshots/uifix-${label(shape)}-gameover-prompt.png` });
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+}
