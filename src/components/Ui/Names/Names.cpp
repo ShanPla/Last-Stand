@@ -21,7 +21,7 @@ const char* passiveName(PassiveId id) {
 }
 
 namespace {
-const char* const kDifficultyNames[static_cast<int>(Difficulty::Count)] = {"Easy", "Normal", "Hard"};
+const char* const kDifficultyNames[static_cast<int>(Difficulty::Count)] = {"Easy", "Normal", "Hard", "Hell"};
 }  // namespace
 
 const char* difficultyName(Difficulty level) {

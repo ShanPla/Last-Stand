@@ -219,6 +219,7 @@ inline constexpr DifficultyTuning kDifficulties[static_cast<int>(Difficulty::Cou
     /* Easy   */ {0.4f, 0.25f, 0.5f},
     /* Normal */ {1.0f, 1.0f, 1.0f},
     /* Hard   */ {1.3f, 1.25f, 1.2f},
+    /* Hell   */ {1.6f, 1.5f, 2.1f},  // Far more zombies. Tuned so the Skilled bot wins about 10 percent.
 };
 
 inline constexpr const DifficultyTuning& difficultyTuning(Difficulty difficulty) {

@@ -27,6 +27,7 @@ const phoneLandscape = { viewport: { width: 844, height: 390 }, deviceScaleFacto
 const EASY = 0;
 const NORMAL = 1;
 const HARD = 2;
+const HELL = 3;
 
 const open = (options = desktop, query = '?debug') => openGame(browser, web.url + query, options);
 
@@ -82,7 +83,11 @@ test('keyboard: left and right change the level while the selector has focus, an
   await page.keyboard.press('ArrowRight');
   await waitDifficulty(page, HARD);
   await page.keyboard.press('ArrowRight');
+  await waitDifficulty(page, HELL);
+  await page.keyboard.press('ArrowRight');
   await waitDifficulty(page, EASY);
+  await page.keyboard.press('ArrowLeft');
+  await waitDifficulty(page, HELL);
   await page.keyboard.press('ArrowLeft');
   await waitDifficulty(page, HARD);
   await page.keyboard.press('ArrowLeft');
@@ -117,7 +122,11 @@ test('mouse: a click on an arrow steps that way, and on the middle steps forward
   await clickButton(page, 'Difficulty <');
   await waitDifficulty(page, EASY);
   await clickButton(page, 'Difficulty <');
+  await waitDifficulty(page, HELL);
+  await clickButton(page, 'Difficulty <');
   await waitDifficulty(page, HARD);
+  await clickButton(page, 'Difficulty >');
+  await waitDifficulty(page, HELL);
   await clickButton(page, 'Difficulty');
   await waitDifficulty(page, EASY);
   assert.equal((await readUi(page)).screen, 'title', 'none of this starts a run');
@@ -294,11 +303,12 @@ test('a corrupt or out of range difficulty is safe', async () => {
     ['difficulty=banana\n', NORMAL],
     ['difficulty=\n', NORMAL],
     ['difficulty=NaN\n', NORMAL],
-    ['difficulty=99\n', HARD],
+    ['difficulty=99\n', HELL],
     ['difficulty=-5\n', EASY],
-    ['difficulty=1e99\n', HARD],
+    ['difficulty=1e99\n', HELL],
     ['\u0000\u0001garbage{{{ difficulty=2', NORMAL],
     ['difficulty=0\n', EASY],
+    ['difficulty=3\n', HELL],
   ];
   for (const [text, expected] of cases) {
     const { context, page, problems } = await openWithSave(text);
@@ -322,6 +332,7 @@ test('an old save with one best run counts as Normal', async () => {
   assert.deepEqual(ui.bests[NORMAL], [300, 250, 9, 1, 6]);
   assert.equal(ui.bests[EASY][4], 0);
   assert.equal(ui.bests[HARD][4], 0);
+  assert.equal(ui.bests[HELL][4], 0);
   // The title shows the best of the level that is selected.
   await clickButton(page, 'Difficulty >');
   await waitDifficulty(page, HARD);
@@ -359,9 +370,7 @@ test('best runs are kept per level, and a new best only compares within the leve
   await debug(page, CMD.showScreen, 0);
   await waitScreen(page, 'title');
   await page.waitForTimeout(300);
-  await clickButton(page, 'Difficulty <');
-  await waitDifficulty(page, EASY);
-  await clickButton(page, 'Difficulty <');
+  await clickButton(page, 'Difficulty >');
   await waitDifficulty(page, HARD);
   await clickButton(page, 'PLAY');
   await waitScreen(page, 'playing');
@@ -378,6 +387,7 @@ test('best runs are kept per level, and a new best only compares within the leve
   assert.ok(ui.bests[HARD][1] >= 20 && ui.bests[HARD][1] < 300);
   assert.ok(ui.bests[NORMAL][1] >= 300, 'the Normal best was not touched');
   assert.equal(ui.bests[NORMAL][4], 1);
+  assert.equal(ui.bests[HELL][4], 0, 'Hell has no runs yet');
   const hardKills = ui.bests[HARD][1];
 
   // A weaker second Hard run is not a best, even though it beats nothing on Easy.

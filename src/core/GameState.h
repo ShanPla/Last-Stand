@@ -181,7 +181,7 @@ struct Card {
 };
 
 enum class RunPhase : uint8_t { Playing, LevelUp, Won, Dead };
-enum class Difficulty : uint8_t { Easy, Normal, Hard, Count };
+enum class Difficulty : uint8_t { Easy, Normal, Hard, Hell, Count };
 
 struct RunState {
     RunPhase phase = RunPhase::Playing;

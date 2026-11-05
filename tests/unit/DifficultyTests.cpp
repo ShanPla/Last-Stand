@@ -108,3 +108,35 @@ TEST_CASE("the same seed on different levels gives different runs") {
     playSeconds(*twin, 40);
     CHECK(sim::stateHash(*again) == sim::stateHash(*twin));
 }
+
+TEST_CASE("Hell is harder than Hard in every number") {
+    const balance::DifficultyTuning& hard = balance::difficultyTuning(Difficulty::Hard);
+    const balance::DifficultyTuning& hell = balance::difficultyTuning(Difficulty::Hell);
+    CHECK(hell.enemyHp > hard.enemyHp);
+    CHECK(hell.enemyDamage > hard.enemyDamage);
+    // Far more zombies, not a little more: at least half as many again as Hard.
+    CHECK(hell.spawnRate > hard.spawnRate * 1.5f);
+}
+
+TEST_CASE("Hell spawns more, tougher zombies than Hard, and hits harder") {
+    CHECK(enemiesAfter(Difficulty::Hard, 60 * 40) < enemiesAfter(Difficulty::Hell, 60 * 40));
+    auto hard = newRun(Difficulty::Hard);
+    auto hell = newRun(Difficulty::Hell);
+    CHECK(enemies::spawn(*hard, EnemyType::Brute, Vec2{500.0f, 0.0f}, false)->maxHp < enemies::spawn(*hell, EnemyType::Brute, Vec2{500.0f, 0.0f}, false)->maxHp);
+    player::damage(*hard, 40.0f);
+    player::damage(*hell, 40.0f);
+    CHECK(hard->player.hp > hell->player.hp);
+}
+
+TEST_CASE("a full pool simply stops spawning, and the run keeps going") {
+    auto hell = newRun(Difficulty::Hell);
+    for (int i = 0; i < kMaxEnemies; ++i) CHECK(enemies::spawn(*hell, EnemyType::Walker, Vec2{2000.0f, 0.0f}, false) != nullptr);
+    CHECK(enemies::spawn(*hell, EnemyType::Walker, Vec2{2000.0f, 0.0f}, false) == nullptr);
+    hell->run.nextEliteEvent = 1000;
+    for (int i = 0; i < 60 * 5; ++i) {
+        hell->player.hp = hell->player.maxHp;
+        sim::step(*hell, InputFrame{});
+        hell->events.clear();
+    }
+    CHECK(hell->enemies.count <= kMaxEnemies);
+}

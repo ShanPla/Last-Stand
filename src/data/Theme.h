@@ -513,7 +513,8 @@ inline constexpr Color kDashButtonFill{40, 34, 30, 255};
 inline constexpr Color kDifficultyEasy{112, 208, 170, 255};
 inline constexpr Color kDifficultyNormal{240, 226, 196, 255};
 inline constexpr Color kDifficultyHard{222, 92, 60, 255};
-inline constexpr Color kDifficultyColors[3] = {kDifficultyEasy, kDifficultyNormal, kDifficultyHard};  // Indexed by Difficulty.
+inline constexpr Color kDifficultyHell{244, 58, 104, 255};
+inline constexpr Color kDifficultyColors[4] = {kDifficultyEasy, kDifficultyNormal, kDifficultyHard, kDifficultyHell};  // Indexed by Difficulty.
 
 // --- Map selector ---
 inline constexpr Color kMapColors[2] = {Color{176, 170, 190, 255}, Color{226, 178, 104, 255}};

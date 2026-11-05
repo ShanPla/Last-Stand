@@ -18,11 +18,13 @@ constexpr int kMaxCount = 100000000;
 constexpr int kMaxLevel = 100000;
 
 // serialize() lists the levels in this order, and Normal is the one with no prefix.
-static_assert(static_cast<int>(Difficulty::Easy) == 0 && static_cast<int>(Difficulty::Normal) == 1 && static_cast<int>(Difficulty::Hard) == 2,
+static_assert(static_cast<int>(Difficulty::Easy) == 0 && static_cast<int>(Difficulty::Normal) == 1 && static_cast<int>(Difficulty::Hard) == 2 &&
+                  static_cast<int>(Difficulty::Hell) == 3,
               "the save writes one best run per level in enum order");
 
 constexpr std::string_view kEasyPrefix = "easy.";
 constexpr std::string_view kHardPrefix = "hard.";
+constexpr std::string_view kHellPrefix = "hell.";
 
 // Parses a whole token as a finite number. Rejects NaN, infinity, and trailing junk.
 bool parseNumber(std::string_view token, double* out) {
@@ -95,6 +97,7 @@ void applyKey(SaveData& data, std::string_view key, std::string_view value) {
     else if (key == "map") readInt(value, 0, 255, &data.map);
     // Normal keeps the plain names an older save already uses. The other levels add a prefix.
     else if (startsWith(key, kEasyPrefix)) applyBestKey(data.bestFor(Difficulty::Easy), key.substr(kEasyPrefix.size()), value);
+    else if (startsWith(key, kHellPrefix)) applyBestKey(data.bestFor(Difficulty::Hell), key.substr(kHellPrefix.size()), value);
     else if (startsWith(key, kHardPrefix)) applyBestKey(data.bestFor(Difficulty::Hard), key.substr(kHardPrefix.size()), value);
     else applyBestKey(data.bestFor(Difficulty::Normal), key, value);
     // Unknown keys are ignored, so a save from a newer version still loads.
@@ -109,7 +112,7 @@ std::string serialize(const SaveData& data) {
                           kSaveVersion, static_cast<double>(data.settings.musicVolume), static_cast<double>(data.settings.effectsVolume),
                           static_cast<double>(data.settings.screenShake), static_cast<double>(data.settings.flashIntensity),
                           data.settings.damageNumbers ? 1 : 0, data.settings.reducedMotion ? 1 : 0, static_cast<int>(data.difficulty), data.map);
-    const char* const prefixes[kDifficultyCount] = {"easy.", "", "hard."};
+    const char* const prefixes[kDifficultyCount] = {"easy.", "", "hard.", "hell."};
     for (int level = 0; level < kDifficultyCount && n > 0 && n < static_cast<int>(sizeof(buffer)); ++level) {
         const BestRun& best = data.best[level];
         const char* p = prefixes[level];

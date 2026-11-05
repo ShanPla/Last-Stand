@@ -21,7 +21,7 @@ inline const char* passiveName(PassiveId id) {
 }
 
 inline const char* difficultyName(Difficulty difficulty) {
-    static const char* const names[static_cast<int>(Difficulty::Count)] = {"easy", "normal", "hard"};
+    static const char* const names[static_cast<int>(Difficulty::Count)] = {"easy", "normal", "hard", "hell"};
     return names[static_cast<int>(difficulty)];
 }
 

@@ -205,9 +205,9 @@ TEST_CASE("an old save with no difficulty is Normal, and its best run counts as 
 TEST_CASE("a difficulty value out of range is clamped, and junk keeps the fallback") {
     CHECK(save::parse("difficulty=0\n").difficulty == Difficulty::Easy);
     CHECK(save::parse("difficulty=2\n").difficulty == Difficulty::Hard);
-    CHECK(save::parse("difficulty=9\n").difficulty == Difficulty::Hard);
+    CHECK(save::parse("difficulty=9\n").difficulty == Difficulty::Hell);
     CHECK(save::parse("difficulty=-4\n").difficulty == Difficulty::Easy);
-    CHECK(save::parse("difficulty=1e99\n").difficulty == Difficulty::Hard);
+    CHECK(save::parse("difficulty=1e99\n").difficulty == Difficulty::Hell);
     SaveData fallback;
     fallback.difficulty = Difficulty::Easy;
     for (const char* text : {"difficulty=\n", "difficulty=hard\n", "difficulty=nan\n", "difficulty=1.x\n", "difficulty==\n"}) {
@@ -238,7 +238,10 @@ TEST_CASE("the largest possible save still fits in the size limit") {
     const SaveData loaded = save::parse(save::serialize(data));
     CHECK(loaded.bestFor(Difficulty::Hard).runs == 100000000);
     CHECK(loaded.bestFor(Difficulty::Easy).mostKills == 100000000);
-    CHECK(save::serialize(data).size() < 2048);
+    CHECK(loaded.bestFor(Difficulty::Hell).runs == 100000000);
+    CHECK(loaded.bestFor(Difficulty::Hell).bestTimeSeconds == doctest::Approx(86400.0f));
+    // serialize() writes into a 1024 byte buffer, so a bigger save would be cut short.
+    CHECK(save::serialize(data).size() < 1024);
 }
 
 TEST_CASE("the chosen map survives a save, and a bad or missing value is safe") {
@@ -249,4 +252,42 @@ TEST_CASE("the chosen map survives a save, and a bad or missing value is safe") 
     CHECK(ls::save::parse("version=1\nmap=9000\n").map <= 255);
     CHECK(ls::save::parse("version=1\nmap=-3\n").map >= 0);
     CHECK(ls::save::parse("version=1\nmap=abc\n").map == 0);
+}
+
+TEST_CASE("a Hell best run is saved and read back under its own name") {
+    SaveData original;
+    original.bestFor(Difficulty::Hell).mostKills = 777;
+    original.bestFor(Difficulty::Hell).runs = 2;
+    const SaveData loaded = save::parse(save::serialize(original));
+    CHECK(loaded.bestFor(Difficulty::Hell).mostKills == 777);
+    CHECK(loaded.bestFor(Difficulty::Hell).runs == 2);
+    // It must not leak into Normal, which keeps the plain names.
+    CHECK(loaded.bestFor(Difficulty::Normal).mostKills == 0);
+}
+
+TEST_CASE("a save from before Hell existed keeps every best run, and Hell starts empty") {
+    const char* old =
+        "version=1\nmusic=0.500\ndifficulty=2\nmap=1\n"
+        "bestTime=300.00\nmostKills=400\nhighestLevel=9\nwins=1\nruns=5\n"
+        "easy.bestTime=600.00\neasy.mostKills=900\neasy.runs=3\n"
+        "hard.bestTime=120.00\nhard.mostKills=77\nhard.runs=2\n";
+    const SaveData loaded = save::parse(old);
+    CHECK(loaded.difficulty == Difficulty::Hard);
+    CHECK(loaded.map == 1);
+    CHECK(loaded.bestFor(Difficulty::Normal).mostKills == 400);
+    CHECK(loaded.bestFor(Difficulty::Easy).mostKills == 900);
+    CHECK(loaded.bestFor(Difficulty::Hard).mostKills == 77);
+    CHECK(loaded.bestFor(Difficulty::Hell).runs == 0);
+    CHECK(loaded.bestFor(Difficulty::Hell).mostKills == 0);
+}
+
+TEST_CASE("Hell can be the chosen level, and a damaged Hell line is ignored safely") {
+    SaveData chosen;
+    chosen.difficulty = Difficulty::Hell;
+    CHECK(save::parse(save::serialize(chosen)).difficulty == Difficulty::Hell);
+    const SaveData loaded = save::parse("hell.bestTime=nan\nhell.mostKills=-9\nhell.runs=x\nhell.wins=4\n");
+    CHECK(loaded.bestFor(Difficulty::Hell).mostKills == 0);
+    CHECK(loaded.bestFor(Difficulty::Hell).runs == 0);
+    CHECK(loaded.bestFor(Difficulty::Hell).wins == 4);
+    CHECK(loaded.bestFor(Difficulty::Hard).wins == 0);
 }

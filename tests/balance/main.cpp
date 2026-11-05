@@ -42,7 +42,7 @@ void printHelp() {
         "ls_balance: bot games and a solo weapon test for tuning Last Stand.\n\n"
         "  --seeds N            games per profile (default 30)\n"
         "  --first-seed S       first seed; seeds run S, S+1, ... (default 1000)\n"
-        "  --difficulty D       easy, normal or hard (default normal), for games, wave tables and solo test\n"
+        "  --difficulty D       easy, normal, hard or hell (default normal), for games, wave tables and solo test\n"
         "  --map M              city or wasteland (default city), where the solid cars stand\n"
         "  --profile NAME       novice, average, skilled or all (default all)\n"
         "  --threads N          worker threads (default: all cores)\n"
@@ -71,8 +71,9 @@ bool parseArgs(int argc, char** argv, Options& options) {
             if (name == "easy") options.difficulty = Difficulty::Easy;
             else if (name == "normal") options.difficulty = Difficulty::Normal;
             else if (name == "hard") options.difficulty = Difficulty::Hard;
+            else if (name == "hell") options.difficulty = Difficulty::Hell;
             else {
-                std::fprintf(stderr, "Unknown difficulty: %s (use easy, normal or hard)\n", name.c_str());
+                std::fprintf(stderr, "Unknown difficulty: %s (use easy, normal, hard or hell)\n", name.c_str());
                 return false;
             }
         } else if (arg == "--map" && hasValue) {

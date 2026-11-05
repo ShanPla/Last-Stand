@@ -8,7 +8,7 @@ namespace ls::ui {
 
 const char* weaponName(WeaponId id);
 const char* passiveName(PassiveId id);
-// "Easy", "Normal" or "Hard". The same list feeds the title selector.
+// "Easy", "Normal", "Hard" or "Hell". The same list feeds the title selector.
 const char* difficultyName(Difficulty level);
 const char* const* difficultyNames();
 
