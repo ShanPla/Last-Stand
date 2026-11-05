@@ -121,23 +121,33 @@ void wallFace(Paint& p, TileRandom& random, const WallLook& look, int x0, int x1
         }
     }
 
+    // The whole face stands on one row, so it is one cover.
+    CoverMark cover(p, (x0 + x1) / 2, footY, CoverKind::Wall);
     for (int i = 0; i < columns; ++i) {
         const int x = x0 + i;
         const int height = heights[i];
         if (height == 0) continue;
+        // Where the next run is lower, this column is the broken end of the wall, turned
+        // away from the light. Where it is higher, the step's face catches the light.
+        const int next = i + 1 < columns ? heights[i + 1] : 0;
+        const int before = i > 0 ? heights[i - 1] : 0;
         for (int row = 0; row < height; ++row) {
             const int y = footY - row;
             // Plaster has fallen off in big patches, showing the bricks behind.
             const bool brickShows = (texelNoise(x >> 3, y >> 2) & 3u) == 0u;
             Color color = wallTexel(look, x, y, brickShows);
-            // Soft shading: darker near the ground, and just under the ragged top.
-            if (row < 2) color = Color{static_cast<unsigned char>(color.r * 3 / 4), static_cast<unsigned char>(color.g * 3 / 4), static_cast<unsigned char>(color.b * 3 / 4), 255};
+            // Soft shading: darker near the ground, where less light reaches.
+            if (row < 2) color = shade(color, 75);
+            else if (row < 4) color = shade(color, 88);
+            if (row >= next) color = shade(color, kShadeSidePercent);
+            else if (row >= before) color = shade(color, 110);
             p.put(x, y, color);
         }
-        // The top of the wall is lit and has thickness.
-        p.put(x, footY - height, look.top);
+        // The top of the wall faces the sky and has thickness, running back up the screen.
+        p.put(x, footY - height, shade(look.top, 110));
         p.put(x, footY - height - 1, look.top);
-        p.put(x, footY - height - 2, kBrickTop);
+        p.put(x, footY - height - 2, look.top);
+        p.put(x, footY - height - 3, kBrickTop);
     }
 
     if (withWindows && columns > 40) {
@@ -157,8 +167,10 @@ void wallFace(Paint& p, TileRandom& random, const WallLook& look, int x0, int x1
 // A wall running up the screen. We mostly see its top, lifted by its height.
 void wallAlong(Paint& p, TileRandom& random, const WallLook& look, int x, int y0, int y1, int maxHeight) {
     constexpr int kThick = 5;
+    // One cover for the whole wall, but each row of its top stands on its own row of ground,
+    // so the foot moves as it is painted and every pixel keeps its own depth.
+    CoverMark cover(p, x + kThick / 2, y0, CoverKind::WallAlong);
     int y = y0;
-    int previous = 0;
     while (y < y1) {
         const int run = random.range(6, 22);
         const int roll = random.range(0, 9);
@@ -166,21 +178,30 @@ void wallAlong(Paint& p, TileRandom& random, const WallLook& look, int x, int y0
         const int end = std::min(y1, y + run);
         for (int row = y; row < end; ++row) {
             if (height == 0) continue;
+            p.setCoverFoot(row);
+            // Its top, lit on the sunny edge and shaded on the far one, so it reads as a ridge.
             for (int col = 0; col < kThick; ++col) {
                 const uint32_t noise = texelNoise(x + col, row);
-                p.put(x + col, row - height, (noise & 7u) == 0u ? kBrickTop : look.top);
+                Color color = (noise & 7u) == 0u ? kBrickTop : look.top;
+                if (col == 0) color = shade(color, 112);
+                if (col == kThick - 1) color = shade(color, kShadeSidePercent);
+                p.put(x + col, row - height, color);
             }
-            // Shadow on the floor to the right.
-            for (int col = 0; col < std::min(4, height / 2); ++col) p.blend(x + kThick + col, row, kWallShade);
+            // Its right side shows a little, as the view leans: a dark line under the top.
+            p.put(x + kThick, row - height + 1, shade(wallTexel(look, x + kThick, row, true), kShadeSidePercent));
+        }
+        for (int row = y; row < end; ++row) {
+            // Shadow on the floor to the right. It lies on the ground, so it covers nothing.
+            if (height == 0) continue;
+            for (int col = 1; col < std::min(5, height / 2 + 1); ++col) p.blend(x + kThick + col, row, kWallShade);
         }
         // Where the wall steps down toward us, its broken end shows bricks.
         if (height > 0) {
+            p.setCoverFoot(end - 1);
             for (int row = 0; row < height; ++row) {
-                for (int col = 0; col < kThick; ++col) p.put(x + col, end - 1 - row + 0, wallTexel(look, x + col, end - row, true));
+                for (int col = 0; col < kThick; ++col) p.put(x + col, end - 1 - row, shade(wallTexel(look, x + col, end - row, true), row < 2 ? 75 : 100));
             }
         }
-        (void)previous;
-        previous = height;
         y = end;
     }
 }

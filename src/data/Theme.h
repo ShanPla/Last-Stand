@@ -347,6 +347,16 @@ inline constexpr Color kFireLight{240, 130, 60, 255};
 inline constexpr Color kPlayerLight{120, 130, 150, 255};  // His own small pool of light at night.
 inline constexpr Color kFireFlame[3] = {{226, 90, 30, 255}, {250, 160, 50, 255}, {255, 232, 150, 255}};
 
+// --- Standing map objects: lamps, trees, walls, signs, cars and the rest -------
+// They are painted into the ground, so they share its strong day grade. This much of the
+// characters' gentler grade is mixed in, so they still stand out from the ground at night.
+inline constexpr float kStandingGrade = 0.45f;
+// A grounded shadow: a soft outer ring and a darker core where the object meets the ground.
+inline constexpr Color kGroundShadowCore{12, 10, 16, 150};
+// Faces turned from the light are painted this many percent as bright, and tops this much.
+inline constexpr int kShadeSidePercent = 68;
+inline constexpr int kShadeTopPercent = 124;
+
 // --- Wasteland map -------------------------------------------------------------
 // Sand is kept mid-dark, and every ground tone sits close to its neighbors, so that the
 // characters, gems, bullets and telegraphs always read first. Only thin lines such as

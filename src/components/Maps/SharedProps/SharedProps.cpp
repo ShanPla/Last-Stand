@@ -20,22 +20,67 @@ void LightList::add(int x, int y, float height, LightKind kind) {
     light.kind = kind;
 }
 
-void contactShadow(Paint& p, int x, int y, int rx, int ry) { p.blendOval(x, y, rx, ry, kPropShadow); }
+void contactShadow(Paint& p, int x, int y, int rx, int ry) {
+    // Leans a little right, the way the sun's shadows fall, and is darkest right under the foot.
+    p.blendOval(x + 1, y, rx + 1, ry + 1, kPropShadow);
+    p.blendOval(x, y, std::max(1, rx * 2 / 3), std::max(1, ry - 1), kGroundShadowCore);
+}
+
+void post(Paint& p, int x, int y, int height, int width, int lean, const Color tones[3]) {
+    for (int row = 0; row < height; ++row) {
+        const int left = x + lean * row / std::max(1, height);
+        for (int col = 0; col < width; ++col) {
+            // Lit edge, body, then the side in shade.
+            const Color color = col == 0 ? tones[2] : (col == width - 1 ? tones[0] : tones[1]);
+            p.put(left + col, y - row, color);
+        }
+    }
+    // A cap catches the light from above.
+    p.put(x + lean, y - height, tones[2]);
+    if (width > 2) p.put(x + lean + 1, y - height, tones[2]);
+}
+
+void standingBox(Paint& p, int x0, int x1, int footY, int height, int depth, Color front) {
+    const int bottom = footY + 1;  // Rows run up to here, not including it.
+    const Color top = shade(front, kShadeTopPercent);
+    const Color side = shade(front, kShadeSidePercent);
+    // Going one row back up the screen moves half a column right: that slant is what shows the
+    // right side and the top together, as the tents and walls do.
+    for (int t = 1; t <= depth; ++t) {
+        const int column = x1 - 1 + (t + 1) / 2;
+        for (int row = bottom - height - t; row < bottom - t; ++row) p.put(column, row, side);
+    }
+    for (int t = 1; t <= depth; ++t) {
+        for (int x = x0 + t / 2; x < x1 + t / 2; ++x) p.put(x, bottom - height - t, top);
+    }
+    for (int row = bottom - height; row < bottom; ++row) {
+        // Darker near the ground, where less light reaches.
+        const Color color = row >= bottom - 2 ? shade(front, 84) : front;
+        for (int x = x0; x < x1; ++x) p.put(x, row, color);
+    }
+    // The near edge of the top is the brightest line, which is what makes it read as a top.
+    for (int x = x0; x < x1; ++x) p.put(x, bottom - height - 1, shade(top, 112));
+}
 
 void barrel(Paint& p, int x, int y, TileRandom& random) {
     contactShadow(p, x, y, 6, 2);
-    const int height = 11;
+    CoverMark cover(p, x, y, CoverKind::Box);
+    const int height = 12;
     for (int row = 0; row < height; ++row) {
         for (int col = -4; col <= 4; ++col) {
+            // A drum is round, so its light falls off across it: bright left, dark right edge.
             const int shade = col < -2 ? 2 : (col > 2 ? 0 : 1);
             Color color = kRust[shade];
-            if (row == 2 || row == 7) color = kBarrelBand;
+            if (col == 4) color = kCoal;
+            if (row == 2 || row == 8) color = col > 2 ? kCoal : kBarrelBand;
             if ((texelNoise(x + col, y - row) & 15u) == 0u) color = kRust[0];
             p.put(x + col, y - row, color);
         }
     }
-    p.oval(x, y - height, 4, 2, kRust[2]);
+    // The lid, seen from above: a lit rim around the dark inside.
+    p.oval(x, y - height, 4, 2, shade(kRust[2], kShadeTopPercent));
     p.oval(x, y - height, 3, 1, kCoal);
+    p.put(x - 3, y - height - 1, shade(kRust[2], kShadeTopPercent + 12));
     if (random.chance(30)) p.put(x + 1, y - 4, kCoal);
 }
 
@@ -50,6 +95,8 @@ void tent(Paint& p, int x, int y, TileRandom& random) {
     const int height = random.range(13, 17);
     const int depth = 7;
     p.blendOval(x, y, half + 4, 3, kPropShadow);
+    p.blendOval(x + depth, y - 1, half, 2, kGroundShadowCore);
+    CoverMark cover(p, x, y, CoverKind::Tent);
     // The long roof slope, running back from the front gable.
     for (int row = 0; row <= height; ++row) {
         const int width = half * (height - row) / height;
@@ -94,14 +141,14 @@ void crate(Paint& p, int x, int y, TileRandom& random) {
     const int tall = half + 2;
     const int top = 4;
     contactShadow(p, x, y, half + 2, 2);
-    p.rect(x - half, y - tall, x + half + 1, y + 1, kPlank[1]);
-    p.rect(x - half, y - tall - top, x + half + 1, y - tall, kPlank[2]);
+    CoverMark cover(p, x, y, CoverKind::Box);
+    standingBox(p, x - half, x + half + 1, y, tall + 1, top, kPlank[1]);
     for (int col = -half; col <= half; col += 3) {
         p.rect(x + col, y - tall, x + col + 1, y + 1, kPlankGap);
     }
     p.rect(x - half, y - tall, x + half + 1, y - tall + 1, kPlankGap);
     p.rect(x - half, y, x + half + 1, y + 1, kPlank[0]);
-    if (random.chance(40)) p.rect(x - 2, y - tall - top + 1, x + 3, y - tall, kPlankGap);
+    if (random.chance(40)) p.rect(x - 2 + top / 2, y - tall - top + 1, x + 3 + top / 2, y - tall, kPlankGap);
 }
 
 void boards(Paint& p, int x, int y, TileRandom& random) {
@@ -120,12 +167,13 @@ void boards(Paint& p, int x, int y, TileRandom& random) {
 
 void sandbags(Paint& p, int x, int y, int count, TileRandom& random) {
     contactShadow(p, x + count * 4, y + 1, count * 5, 2);
+    CoverMark cover(p, x + count * 4, y, CoverKind::Box);
     for (int layer = 0; layer < 2; ++layer) {
         for (int i = 0; i < count - layer; ++i) {
             const int bx = x + i * 8 + layer * 4 + random.range(-1, 1);
             const int by = y - layer * 4;
             p.oval(bx + 4, by - 2, 4, 2, kSandbag[1]);
-            p.rect(bx + 2, by - 4, bx + 6, by - 3, kSandbag[2]);
+            p.rect(bx + 2, by - 4, bx + 6, by - 3, shade(kSandbag[2], 112));
             p.rect(bx + 2, by - 1, bx + 7, by, kSandbag[0]);
         }
     }

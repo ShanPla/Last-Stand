@@ -341,9 +341,10 @@ void paintGroundRows(uint64_t seed, int chunkX, int chunkY, Color* pixels, int r
     paintBase(paint, roadsAround(seed, chunkX, chunkY), rowFrom, rowTo);
 }
 
-int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* outLights, CrushedCars crushed) {
+int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* outLights, CrushedCars crushed, CoverList* covers) {
     Paint paint(pixels, chunkX * kChunkWidth, chunkY * kChunkHeight, kChunkWidth, kChunkHeight);
     paint.setCrushed(crushed);
+    paint.setCovers(covers);
     LightList lights{outLights, 0, &paint};
     const Roads roads = roadsAround(seed, chunkX, chunkY);
 

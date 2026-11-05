@@ -8,6 +8,6 @@
 namespace ls::maps::wasteland {
 
 void paintGroundRows(uint64_t seed, int chunkX, int chunkY, Color* pixels, int rowFrom, int rowTo);
-int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed);
+int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed, CoverList* covers);
 
 }  // namespace ls::maps::wasteland

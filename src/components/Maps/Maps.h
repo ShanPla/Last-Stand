@@ -31,16 +31,41 @@ struct Light {
 
 inline constexpr int kMaxLightsPerChunk = 12;
 
+// A standing object, such as a lamp, a tree or a wall. These are decoration, not solid, but
+// they are tall, so the renderer lets one cover a figure standing behind it, the way a car
+// does. Only the tests and the debug scenes look at the kind.
+enum class CoverKind : uint8_t { Wall, WallAlong, Tree, Lamp, Pole, Sign, Fence, Box, Rock, Wreck, Tent, Furniture };
+
+// Where one standing object was painted into a chunk. Coordinates are texels of that chunk,
+// end exclusive. A pixel's own depth is in its alpha (see CoverMark in Paint.h), so this is
+// only what the renderer needs to find the figures that should show through it.
+struct Cover {
+    int16_t x0, y0, x1, y1;  // Its pixels in this chunk.
+    int16_t footX;           // Where it meets the ground, in the middle.
+    int16_t nearRow;         // The nearest ground row it stands on. A figure further up is behind it.
+    CoverKind kind;
+};
+
+// Room for every standing object a chunk paints. When it is full, the last entry grows to hold
+// the rest, so no object is ever left out of the list. A browser test checks the busiest chunks.
+inline constexpr int kMaxCoversPerChunk = 96;
+
+struct CoverList {
+    Cover* items = nullptr;
+    int count = 0;
+};
+
 // Paints one chunk into pixels, which holds kChunkWidth by kChunkHeight colors. Writes
 // its lights into lights, and returns how many. It uses no global state, so the same seed
-// and the same crushed cars always give the same picture.
-int renderChunk(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed = {});
+// and the same crushed cars always give the same picture. With covers given, it also lists
+// the standing objects it painted there.
+int renderChunk(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed = {}, CoverList* covers = nullptr);
 
 // The same painting in two stages, so it can be spread over several frames on a slow device.
 // First the bare ground, in any bands of rows, which must cover the chunk from top to bottom.
 // Then the details over it. The result is exactly what renderChunk paints in one go.
 void paintGroundRows(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, int rowFrom, int rowTo);
-int paintDetails(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed = {});
+int paintDetails(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed = {}, CoverList* covers = nullptr);
 
 // What to show if a chunk is somehow not ready yet.
 Color fallbackGround(MapId map);

@@ -133,6 +133,7 @@ void tirePile(Paint& p, int x, int y, TileRandom& random) {
     // A low stack, or a few lying flat: the holes and the lit tops are what say "tire".
     const int stack = random.range(1, 3);
     contactShadow(p, x + 1, y + 1, 8, 2);
+    CoverMark cover(p, x, y + 2, CoverKind::Box);
     for (int i = 0; i < stack; ++i) {
         const int ty = y - i * 3;
         const int tx = x + random.range(-1, 1);
@@ -210,7 +211,11 @@ void rockShelf(Paint& p, int x, int y, int halfWidth, int height, bool red, Tile
         if (edge * 2 < tops[col]) tops[col] = edge * 2 + static_cast<int>(texelNoise(x + col, y) & 1u);
     }
     p.blendOval(x + halfWidth / 4, y + 1, halfWidth + 6, std::max(2, height / 4), kPropShadow);
+    p.blendOval(x + halfWidth / 6, y + 1, halfWidth * 3 / 4 + 2, std::max(1, height / 6), kGroundShadowCore);
     const int capRows = std::max(2, height / 4);
+    // Its face stands on the shelf's foot row, so the whole rock is one cover. The skirt of
+    // stones after it lies flat on the ground and covers nothing.
+    CoverMark cover(p, x, y, CoverKind::Rock);
     for (int col = 0; col < columns; ++col) {
         const int px = x - halfWidth + col;
         const int top = tops[col];
@@ -240,6 +245,7 @@ void rockShelf(Paint& p, int x, int y, int halfWidth, int height, bool red, Tile
         }
         p.put(px, y - top, tones[2]);
     }
+    p.endCover();
     // A skirt of fallen stones along the foot.
     const int skirt = halfWidth / 2 + 4;
     for (int i = 0; i < skirt; ++i) {
@@ -262,16 +268,24 @@ void carSide(Paint& p, int x, int y, TileRandom& random) {
     for (int col = -half - 1; col <= half + 1; ++col) {
         for (int row = -2; row < 2; ++row) s.blend(col, row, kPropShadow);
     }
-    // Lower body, with rust eating the panels.
+    for (int col = -half + 3; col <= half - 3; ++col) {
+        for (int row = -1; row < 1; ++row) s.blend(col, row, kGroundShadowCore);
+    }
+    const Color top = shade(paint[2], kShadeTopPercent);
+    // Lower body, with rust eating the panels. Its far end turns away from the light.
     for (int row = 0; row < 9; ++row) {
         const int inset = row < 2 ? 1 : 0;
         for (int col = -half + inset; col <= half - inset; ++col) {
             Color color = row < 3 ? paint[0] : (row < 6 ? paint[1] : paint[2]);
             if (rustHere(x + col, row, y)) color = kRust[burnt ? 0 : (row < 4 ? 0 : 1)];
+            if (col >= half - inset - 1) color = shade(color, kShadeSidePercent);
             s.put(col, row + 3, color);
         }
     }
-    s.rect(-half + 1, 12, half, 14, paint[2]);
+    s.rect(-half + 1, 3, half, 4, shade(paint[0], 70));
+    // Hood and trunk face the sky.
+    s.rect(-half + 1, 12, half, 14, top);
+    s.rect(-half + 2, 13, half - 1, 14, shade(top, 110));
     // The cabin sits back from the hood. A pickup has an open bed behind a short cab.
     const int cabCenter = pickup ? facing * 8 : -facing * 3;
     const int cabHalf = pickup ? 10 : 14;
@@ -280,7 +294,7 @@ void carSide(Paint& p, int x, int y, TileRandom& random) {
         for (int col = cabCenter - cabHalf + inset; col <= cabCenter + cabHalf - inset; ++col) {
             const bool roof = row >= 7;
             const bool pillar = col == cabCenter || col <= cabCenter - cabHalf + inset + 1 || col >= cabCenter + cabHalf - inset - 1;
-            Color color = roof ? paint[2] : (pillar ? paint[1] : (burnt ? kCoal : kDustyGlass));
+            Color color = roof ? top : (pillar ? paint[1] : (burnt ? kCoal : kDustyGlass));
             if (!roof && !pillar && !burnt && (texelNoise((x + col) >> 1, row >> 1) & 7u) == 0u) color = kDustyGlassShine;
             s.put(col, row + 14, color);
         }
@@ -307,6 +321,7 @@ void carOnRoof(Paint& p, int x, int y, TileRandom& random) {
     for (int col = -half - 1; col <= half + 1; ++col) {
         for (int row = -2; row < 2; ++row) s.blend(col, row, kPropShadow);
     }
+    for (int col = -half + 3; col <= half - 3; ++col) s.blend(col, 0, kGroundShadowCore);
     // A crushed roof on the ground, and the rusty underside above it.
     for (int col = -14; col <= 14; ++col) {
         for (int row = 0; row < 5; ++row) s.put(col, row, row < 2 ? paint[0] : ((col + 40) % 9 < 2 ? paint[1] : kCoal));
@@ -314,10 +329,12 @@ void carOnRoof(Paint& p, int x, int y, TileRandom& random) {
     for (int row = 5; row < 12; ++row) {
         for (int col = -half; col <= half; ++col) {
             Color color = row < 8 ? paint[1] : kRust[(texelNoise((x + col) >> 1, row) & 3u) == 0u ? 0 : 1];
+            if (col >= half - 1) color = shade(color, kShadeSidePercent);
             s.put(col, row, color);
         }
     }
     s.rect(-half + 2, 12, half - 1, 14, kRust[0]);
+    s.rect(-half + 2, 13, half - 1, 14, shade(kRust[1], kShadeTopPercent));
     s.rect(-14, 11, 15, 13, kCoal);  // The axle tunnel.
     for (int col : {-18, 18}) {
         const int cy = s.rowAt(col, 14);
@@ -335,6 +352,8 @@ void carEnd(Paint& p, int x, int y, TileRandom& random) {
     const int skew = random.range(-3, 3);
     const auto rowX = [&](int row) { return x + skew * row / 16; };
     p.blendRect(x - half - 1, y - 2, x + half + 2, y + 3, kPropShadow);
+    p.blendRect(x - half + 2, y - 1, x + half - 1, y + 2, kGroundShadowCore);
+    const Color top = shade(paint[2], kShadeTopPercent);
     const auto band = [&](int fromRow, int toRow, int inset, Color color) {
         for (int row = fromRow; row < toRow; ++row) {
             p.rect(rowX(row) - half + inset, y - row, rowX(row) + half + 1 - inset, y - row + 1, color);
@@ -346,17 +365,19 @@ void carEnd(Paint& p, int x, int y, TileRandom& random) {
     p.rect(rowX(36) - half - 1, y - 40, rowX(36) - half + 2, y - 33, kTire);
     p.rect(rowX(36) + half - 1, y - 40, rowX(36) + half + 2, y - 33, kTire);
     band(37, 46, 2, paint[1]);
-    band(44, 46, 4, paint[2]);
+    band(44, 46, 4, top);
     band(31, 37, 3, burnt ? kCoal : kDustyGlass);
-    band(20, 31, 3, paint[2]);
+    band(20, 31, 3, top);  // The roof faces the sky.
     band(16, 20, 2, burnt ? kCoal : kDustyGlass);
     band(9, 16, 1, paint[2]);
     band(2, 9, 0, paint[0]);
+    band(2, 3, 0, shade(paint[0], 70));
     for (int row = 9; row < 38; ++row) {
-        const Color side = (texelNoise(x, y - row) & 3u) == 0u ? kRust[1] : paint[0];
+        const bool rusty = (texelNoise(x, y - row) & 3u) == 0u;
         const int inset = row > 31 ? 1 : 0;
-        p.put(rowX(row) - half + inset, y - row, side);
-        p.put(rowX(row) + half - inset, y - row, side);
+        // Lit on the left, in shade on the right, so the body reads as a box.
+        p.put(rowX(row) - half + inset, y - row, rusty ? kRust[1] : paint[1]);
+        p.put(rowX(row) + half - inset, y - row, rusty ? kRust[1] : shade(paint[0], kShadeSidePercent));
     }
     p.rect(rowX(5) - half + 1, y - 8, rowX(5) - half + 6, y - 5, kCoal);
     p.rect(rowX(5) + half - 5, y - 8, rowX(5) + half, y - 5, kSignRedDark);
@@ -376,15 +397,22 @@ void busSide(Paint& p, int x, int y, TileRandom& random) {
     for (int col = -half - 1; col <= half + 1; ++col) {
         for (int row = -2; row < 2; ++row) s.blend(col, row, kPropShadow);
     }
+    for (int col = -half + 4; col <= half - 4; ++col) {
+        for (int row = -1; row < 1; ++row) s.blend(col, row, kGroundShadowCore);
+    }
     for (int col = -half; col <= half; ++col) {
+        const bool farEnd = col >= half - 1;
         for (int row = 3; row < 25; ++row) {
             Color color = row < 9 ? paint[0] : (row < 15 ? paint[1] : paint[2]);
             if (row == 13) color = kSignInk;  // The rub rail along the side.
             if (rustHere(x + col, row, y)) color = kRust[row < 8 ? 0 : 1];
+            if (farEnd) color = shade(color, kShadeSidePercent);
             s.put(col, row, color);
         }
-        s.put(col, 25, paint[2]);
+        // The roof edge faces the sky, the brightest line of the bus.
+        s.put(col, 25, shade(paint[2], kShadeTopPercent));
         s.put(col, 26, kRust[(texelNoise((x + col) >> 3, 7) & 3u) == 0u ? 1 : 2]);
+        s.put(col, 27, shade(paint[2], kShadeTopPercent));
     }
     // A row of windows, most of them smashed through.
     for (int col = -half + 6; col < half - 8; col += 11) {
@@ -404,16 +432,18 @@ void busEnd(Paint& p, int x, int y, TileRandom& random) {
     const Color* paint = random.chance(70) ? kBusPaint : kWreckPaints[random.range(0, 4)];
     const int half = 19;
     p.blendRect(x - half - 1, y - 2, x + half + 2, y + 3, kPropShadow);
+    p.blendRect(x - half + 2, y - 1, x + half - 1, y + 2, kGroundShadowCore);
     p.rect(x - half - 1, y - 8, x - half + 3, y, kTire);
     p.rect(x + half - 2, y - 8, x + half + 2, y, kTire);
-    // Back panel, then the long roof running away from us.
+    // Back panel, facing us, then the long roof running away from us and facing the sky.
     p.rect(x - half, y - 18, x + half + 1, y - 2, paint[0]);
     p.rect(x - half + 2, y - 16, x + half - 1, y - 9, kCoal);
     p.rect(x - 2, y - 16, x + 2, y - 3, paint[1]);
-    p.rect(x - half + 1, y - 66, x + half, y - 18, paint[2]);
+    p.rect(x - half + 1, y - 66, x + half, y - 18, shade(paint[2], kShadeTopPercent));
+    p.rect(x - half + 1, y - 19, x + half, y - 18, shade(paint[2], kShadeTopPercent + 14));
     for (int row = 22; row < 66; row += 9) p.rect(x - half + 2, y - row, x + half - 1, y - row + 1, paint[1]);
-    p.rect(x - half, y - 66, x - half + 2, y - 18, paint[0]);
-    p.rect(x + half - 1, y - 66, x + half + 1, y - 18, paint[0]);
+    p.rect(x - half, y - 66, x - half + 2, y - 18, paint[1]);
+    p.rect(x + half - 1, y - 66, x + half + 1, y - 18, shade(paint[0], kShadeSidePercent));
     for (int i = 0; i < 18; ++i) {
         const int rx = x + random.range(-half + 2, half - 3);
         const int ry = y - random.range(19, 65);
@@ -432,6 +462,9 @@ void tankerSide(Paint& p, int x, int y, TileRandom& random) {
     for (int col = -half - 1; col <= half + 1; ++col) {
         for (int row = -2; row < 2; ++row) s.blend(col, row, kPropShadow);
     }
+    for (int col = -half + 4; col <= half - 4; ++col) {
+        for (int row = -1; row < 1; ++row) s.blend(col, row, kGroundShadowCore);
+    }
     // The tank is a long lying cylinder: hard bands of tone sell the curve.
     const int tankLeft = facing > 0 ? -half : -half + 26;
     const int tankRight = tankLeft + 90;
@@ -444,7 +477,11 @@ void tankerSide(Paint& p, int x, int y, TileRandom& random) {
                 s.put(col, row, kRust[row < 12 ? 0 : 1]);
                 continue;
             }
-            s.put(col, row, kTankerPaint[tone]);
+            // The top of the curve faces the sky, and the far end of the tank is in shade.
+            Color color = kTankerPaint[tone];
+            if (row >= 20) color = shade(color, kShadeTopPercent);
+            if (end < 3 && col > (tankLeft + tankRight) / 2) color = shade(color, kShadeSidePercent);
+            s.put(col, row, color);
         }
     }
     for (int col = tankLeft + 18; col < tankRight - 8; col += 22) s.rect(col, 5, col + 1, 23, kTankerPaint[0]);
@@ -474,23 +511,34 @@ void wreckFire(Paint& p, int x, int y, LightList& lights) {
 
 void telephonePole(Paint& p, int x, int y, int lean, bool snapped) {
     contactShadow(p, x, y, 3, 1);
-    const int tall = snapped ? 12 : 34;
-    for (int row = 0; row < tall; ++row) {
-        const int ox = lean * row / 34;
-        p.put(x + ox, y - row, kPoleWood[1]);
-        p.put(x + ox + 1, y - row, kPoleWood[0]);
+    const int tall = snapped ? 12 : 38;
+    {
+        CoverMark cover(p, x, y, CoverKind::Pole);
+        // A round wooden pole: a lit edge, its body, and the side in shade.
+        for (int row = 0; row < tall; ++row) {
+            const int ox = lean * row / 34;
+            p.put(x + ox - 1, y - row, shade(kPoleWood[1], 120));
+            p.put(x + ox, y - row, kPoleWood[1]);
+            p.put(x + ox + 1, y - row, kPoleWood[0]);
+        }
+        if (snapped) {
+            p.put(x, y - tall, kPoleWood[1]);
+        } else {
+            // The cross arm, lit on top, with its insulators.
+            const int topX = x + lean * tall / 34;
+            p.rect(topX - 6, y - tall + 3, topX + 8, y - tall + 4, kPoleWood[0]);
+            p.rect(topX - 6, y - tall + 2, topX + 8, y - tall + 3, shade(kPoleWood[1], 120));
+            p.put(topX - 6, y - tall + 1, kSignPale);
+            p.put(topX + 7, y - tall + 1, kSignPale);
+            p.put(topX - 6, y - tall, shade(kSignPale, 112));
+            p.put(topX + 7, y - tall, shade(kSignPale, 112));
+        }
     }
     if (snapped) {
-        p.put(x, y - tall, kPoleWood[1]);
+        p.line(x + 4, y + 2, x + 22, y - 1, kPropShadow);
         p.line(x + 4, y + 1, x + 22, y - 2, kPoleWood[0]);
         p.line(x + 4, y, x + 22, y - 3, kPoleWood[1]);
-        return;
     }
-    const int topX = x + lean;
-    p.rect(topX - 6, y - tall + 3, topX + 8, y - tall + 4, kPoleWood[0]);
-    p.rect(topX - 6, y - tall + 2, topX + 8, y - tall + 3, kPoleWood[1]);
-    p.put(topX - 6, y - tall + 1, kSignPale);
-    p.put(topX + 7, y - tall + 1, kSignPale);
 }
 
 void powerWire(Paint& p, int x0, int y0, int x1, int y1) {
@@ -511,16 +559,20 @@ void powerWire(Paint& p, int x0, int y0, int x1, int y1) {
 
 void roadPost(Paint& p, int x, int y) {
     p.blend(x + 1, y + 1, kPropShadow);
-    p.rect(x, y - 6, x + 1, y + 1, kSignPale);
-    p.rect(x, y - 3, x + 1, y, kRailMetal[0]);
-    p.put(x, y - 5, kMarkerAmber);
+    p.blend(x, y + 1, kGroundShadowCore);
+    CoverMark cover(p, x, y, CoverKind::Pole);
+    p.rect(x, y - 7, x + 1, y + 1, kSignPale);
+    p.rect(x + 1, y - 7, x + 2, y + 1, shade(kSignPale, kShadeSidePercent));
+    p.rect(x, y - 3, x + 2, y, kRailMetal[0]);
+    p.put(x, y - 6, kMarkerAmber);
 }
 
 void guardRailAcross(Paint& p, int x0, int x1, int y, TileRandom& random) {
     int gapStart = random.chance(50) ? random.range(x0, x1) : x1;
     const int gapEnd = gapStart + random.range(8, 26);
+    for (int x = x0; x < x1; ++x) p.blend(x, y + 1, kPropShadow);
+    CoverMark cover(p, (x0 + x1) / 2, y, CoverKind::Fence);
     for (int x = x0; x < x1; ++x) {
-        p.blend(x, y + 1, kPropShadow);
         if (x >= gapStart && x < gapEnd) continue;
         const int sag = (x - x0) * (x1 - x) * 3 / std::max(1, (x1 - x0) * (x1 - x0) / 4);
         const int top = y - 6 + (sag < 2 ? 0 : 1);
@@ -534,8 +586,11 @@ void guardRailAcross(Paint& p, int x0, int x1, int y, TileRandom& random) {
 void guardRailAlong(Paint& p, int x, int y0, int y1, TileRandom& random) {
     int gapStart = random.chance(50) ? random.range(y0, y1) : y1;
     const int gapEnd = gapStart + random.range(6, 18);
+    // Each row of the rail stands on its own row of ground.
+    CoverMark cover(p, x, y0, CoverKind::Fence);
     for (int y = y0; y < y1; ++y) {
         if (y >= gapStart && y < gapEnd) continue;
+        p.setCoverFoot(y);
         p.put(x, y - 6, kRailMetal[2]);
         p.put(x + 1, y - 6, kRailMetal[0]);
         p.blend(x + 2, y, kPropShadow);
@@ -594,13 +649,15 @@ int textWidth(const char* words) {
 
 void guideSign(Paint& p, int x, int y, const char* words, TileRandom& random) {
     contactShadow(p, x, y, 14, 2);
+    CoverMark cover(p, x, y, CoverKind::Sign);
     const int lean = random.range(-2, 2);
     const int half = std::max(12, textWidth(words) / 2 + 3);
-    for (int row = 0; row < 15; ++row) {
-        p.put(x - half + 3 + lean * row / 15, y - row, kMetalProp[0]);
-        p.put(x + half - 3 + lean * row / 15, y - row, kMetalProp[0]);
-    }
+    post(p, x - half + 3, y, 15, 2, lean, kMetalProp);
+    post(p, x + half - 4, y, 15, 2, lean, kMetalProp);
     const int top = y - 26;
+    // The board's thickness shows along its top and its shaded right edge.
+    p.rect(x - half + lean + 1, top - 1, x + half + 2 + lean, top, kMetalProp[1]);
+    p.rect(x + half + 1 + lean, top, x + half + 2 + lean, top + 11, kMetalProp[0]);
     p.rect(x - half + lean, top, x + half + 1 + lean, top + 12, kSignGreen);
     p.rect(x - half + lean, top, x + half + 1 + lean, top + 1, kSignPale);
     p.rect(x - half + lean, top + 11, x + half + 1 + lean, top + 12, kSignPale);
@@ -613,16 +670,15 @@ void guideSign(Paint& p, int x, int y, const char* words, TileRandom& random) {
 
 void warningSign(Paint& p, int x, int y, TileRandom& random) {
     contactShadow(p, x, y, 3, 1);
+    CoverMark cover(p, x, y, CoverKind::Sign);
     const int lean = random.range(-4, 4);
-    for (int row = 0; row < 14; ++row) {
-        p.put(x + lean * row / 14, y - row, kMetalProp[1]);
-        p.put(x + 1 + lean * row / 14, y - row, kMetalProp[0]);
-    }
+    post(p, x, y, 14, 2, lean, kMetalProp);
     const int cx = x + lean;
     const int cy = y - 21;
     for (int oy = -7; oy <= 7; ++oy) {
         const int half = 7 - std::abs(oy);
-        for (int ox = -half; ox <= half; ++ox) p.put(cx + ox, cy + oy, std::abs(ox) == half ? kSignInk : kSignYellow);
+        p.put(cx + half + 1, cy + oy - 1, kMetalProp[0]);
+        for (int ox = -half; ox <= half; ++ox) p.put(cx + ox, cy + oy, std::abs(ox) == half ? kSignInk : (ox > half - 3 ? shade(kSignYellow, 86) : kSignYellow));
     }
     // An exclamation mark, or a bend ahead.
     if (random.chance(50)) {
@@ -637,12 +693,11 @@ void warningSign(Paint& p, int x, int y, TileRandom& random) {
 
 void plateSign(Paint& p, int x, int y, TileRandom& random) {
     contactShadow(p, x, y, 3, 1);
+    CoverMark cover(p, x, y, CoverKind::Sign);
     const int lean = random.range(-3, 3);
-    for (int row = 0; row < 14; ++row) {
-        p.put(x + lean * row / 14, y - row, kMetalProp[1]);
-        p.put(x + 1 + lean * row / 14, y - row, kMetalProp[0]);
-    }
+    post(p, x, y, 14, 2, lean, kMetalProp);
     const int cx = x + lean;
+    p.rect(cx + 6, y - 28, cx + 7, y - 14, kMetalProp[0]);
     p.rect(cx - 5, y - 28, cx + 6, y - 13, kSignPale);
     p.rect(cx - 5, y - 28, cx + 6, y - 27, kSignInk);
     p.rect(cx - 5, y - 14, cx + 6, y - 13, kSignInk);
@@ -654,13 +709,18 @@ void plateSign(Paint& p, int x, int y, TileRandom& random) {
 
 void billboard(Paint& p, int x, int y, const char* words, TileRandom& random) {
     contactShadow(p, x, y + 1, 30, 2);
+    CoverMark cover(p, x, y, CoverKind::Sign);
     const int half = 30;
     const int legs = 7;
     for (int lx : {-20, 20}) {
-        p.rect(x + lx, y - legs - 2, x + lx + 2, y + 1, kPoleWood[0]);
+        p.rect(x + lx, y - legs - 2, x + lx + 1, y + 1, kPoleWood[1]);
+        p.rect(x + lx + 1, y - legs - 2, x + lx + 2, y + 1, kPoleWood[0]);
         p.line(x + lx - 5, y, x + lx, y - legs, kPoleWood[1]);
     }
     const int top = y - legs - 26;
+    // The frame's top edge faces the sky, and its right end is in shade.
+    p.rect(x - half + 1, top - 2, x + half + 2, top - 1, shade(kPoleWood[1], 130));
+    p.rect(x + half + 1, top - 1, x + half + 2, top + 24, kPoleWood[0]);
     const Color face = kBillboard[random.range(0, 2)];
     p.rect(x - half, top, x + half + 1, top + 24, face);
     p.rect(x - half, top + 16, x + half + 1, top + 24, kBillboard[1]);
@@ -683,7 +743,9 @@ void billboard(Paint& p, int x, int y, const char* words, TileRandom& random) {
 void pumpIsland(Paint& p, int x, int y, TileRandom& random) {
     // A low kerb with two old pumps on it.
     p.blendRect(x - 28, y + 1, x + 29, y + 4, kPropShadow);
-    p.rect(x - 28, y - 7, x + 29, y - 2, kCinder[2]);
+    p.blendRect(x - 25, y + 1, x + 26, y + 3, kGroundShadowCore);
+    CoverMark cover(p, x, y, CoverKind::Box);
+    p.rect(x - 28, y - 7, x + 29, y - 2, shade(kCinder[2], 112));
     p.rect(x - 28, y - 2, x + 29, y + 1, kCinder[0]);
     for (int px : {-14, 14}) {
         if (random.chance(25)) {
@@ -697,36 +759,38 @@ void pumpIsland(Paint& p, int x, int y, TileRandom& random) {
         p.rect(x + px + 3, y - 18, x + px + 5, y - 3, kPumpBody[0]);
         p.rect(x + px - 2, y - 16, x + px + 3, y - 11, kPumpFace);
         p.put(x + px, y - 14, kMarkerAmber);
-        p.rect(x + px - 4, y - 20, x + px + 5, y - 18, kPumpBody[2]);
+        p.rect(x + px - 4, y - 20, x + px + 5, y - 18, shade(kPumpBody[2], kShadeTopPercent));
         p.line(x + px + 5, y - 10, x + px + 8, y - 4, kCoal);
     }
 }
 
 void lampPost(Paint& p, int x, int y, LightList& lights) {
     contactShadow(p, x, y, 4, 2);
-    for (int row = 0; row < 34; ++row) {
-        p.put(x, y - row, kMetalProp[1]);
-        p.put(x + 1, y - row, kMetalProp[0]);
+    {
+        CoverMark cover(p, x, y, CoverKind::Lamp);
+        post(p, x - 1, y, 36, 3, 0, kMetalProp);
+        standingBox(p, x - 2, x + 3, y, 3, 2, kMetalProp[1]);
+        p.line(x, y - 36, x + 7, y - 38, kMetalProp[2]);
+        p.line(x, y - 35, x + 7, y - 37, kMetalProp[0]);
+        p.rect(x + 6, y - 41, x + 11, y - 40, shade(kLampHead, kShadeTopPercent));
+        p.rect(x + 6, y - 40, x + 11, y - 38, kLampHead);
+        p.put(x + 10, y - 39, shade(kLampHead, kShadeSidePercent));
     }
-    p.rect(x - 1, y - 3, x + 3, y, kMetalProp[0]);
-    p.line(x, y - 34, x + 7, y - 36, kMetalProp[1]);
-    p.rect(x + 6, y - 38, x + 11, y - 36, kLampHead);
-    lights.add(x + 8, y, 36.0f, LightKind::StreetLamp);
+    lights.add(x + 8, y, 38.0f, LightKind::StreetLamp);
 }
 
 void poleSign(Paint& p, int x, int y, const char* words, TileRandom& random) {
     // The tallest thing on the map, and still thin: you spot the stop from far off.
     contactShadow(p, x, y, 6, 2);
+    CoverMark cover(p, x, y, CoverKind::Sign);
     const int lean = random.range(-2, 2);
     const int half = textWidth(words) + 5;
-    for (int post : {-half + 4, half - 4}) {
-        for (int row = 0; row < 26; ++row) {
-            p.put(x + post + lean * row / 26, y - row, kMetalProp[1]);
-            p.put(x + post + 1 + lean * row / 26, y - row, kMetalProp[0]);
-        }
-    }
+    for (int offset : {-half + 4, half - 4}) post(p, x + offset, y, 26, 2, lean, kMetalProp);
     const int top = y - 44;
     const int cx = x + lean;
+    // The box's lit top and shaded right side.
+    p.rect(cx - half + 1, top - 1, cx + half + 2, top, shade(kCanopyStripe[1], 112));
+    p.rect(cx + half + 1, top, cx + half + 2, top + 19, shade(kCanopyStripe[0], kShadeSidePercent));
     p.rect(cx - half, top, cx + half + 1, top + 19, kCanopyStripe[0]);
     p.rect(cx - half, top, cx + half + 1, top + 2, kCanopyStripe[1]);
     p.rect(cx - half, top + 17, cx + half + 1, top + 19, kCanopyStripe[1]);
@@ -748,8 +812,12 @@ void wireFenceAcross(Paint& p, int x0, int x1, int y) {
         const bool down = (h & 28u) == 0u;
         const int next = px + kPostGap;
         if (!down) {
-            for (int row = 0; row < 11; ++row) p.put(px + lean * row / 11, y - row, kWirePost);
             p.put(px, y + 1, kPropShadow);
+            CoverMark cover(p, px, y, CoverKind::Fence);
+            for (int row = 0; row < 12; ++row) {
+                p.put(px + lean * row / 11, y - row, shade(kWirePost, 118));
+                p.put(px + 1 + lean * row / 11, y - row, shade(kWirePost, kShadeSidePercent));
+            }
         } else {
             p.line(px, y, px + 9, y + 2, kWirePost);
         }
@@ -774,7 +842,11 @@ void wireFenceAlong(Paint& p, int x, int y0, int y1) {
     for (int py = firstPost; py < y1; py += kPostGap) {
         const uint32_t h = texelNoise(x, py);
         if ((h & 28u) != 0u) {
-            for (int row = 0; row < 11; ++row) p.put(x, py - row, kWirePost);
+            CoverMark cover(p, x, py, CoverKind::Fence);
+            for (int row = 0; row < 12; ++row) {
+                p.put(x, py - row, shade(kWirePost, 118));
+                p.put(x + 1, py - row, shade(kWirePost, kShadeSidePercent));
+            }
         } else {
             p.line(x, py, x + 6, py + 2, kWirePost);
         }
@@ -795,9 +867,14 @@ namespace {
 void limb(Paint& p, int x, int y, int dx, int dy, int depth, TileRandom& random) {
     const int endX = x + dx;
     const int endY = y + dy;
-    p.line(x, y, endX, endY, depth >= 2 ? kDeadWood[1] : kDeadWood[0]);
+    // Thick limbs are round: lit on the left, dark on the right.
+    p.line(x, y, endX, endY, depth >= 2 ? kDeadWood[1] : kDeadWood[2]);
+    if (depth >= 1) p.line(x, y + 1, endX, endY + 1, kDeadWood[0]);
     if (depth >= 2) p.line(x + 1, y, endX + 1, endY, kDeadWood[0]);
-    if (depth >= 3) p.line(x - 1, y, endX - 1, endY, kDeadWood[2]);
+    if (depth >= 3) {
+        p.line(x - 1, y, endX - 1, endY, kDeadWood[2]);
+        p.line(x - 2, y, endX - 2, endY, shade(kDeadWood[2], 112));
+    }
     if (depth == 0) return;
     const int forks = depth >= 2 ? 2 : random.range(1, 2);
     for (int i = 0; i < forks; ++i) {
@@ -811,10 +888,11 @@ void limb(Paint& p, int x, int y, int dx, int dy, int depth, TileRandom& random)
 void deadTree(Paint& p, int x, int y, TileRandom& random) {
     contactShadow(p, x + 2, y, 7, 2);
     p.blendRect(x + 4, y, x + random.range(12, 22), y + 1, kPropShadow);
-    // Short thick trunk, with roots showing where the sand blew away.
+    // Roots showing where the sand blew away lie flat, so they cover nothing.
     p.line(x - 5, y + 1, x, y - 1, kDeadWood[0]);
     p.line(x + 5, y + 1, x + 1, y - 1, kDeadWood[0]);
-    limb(p, x, y, random.range(-2, 2), -random.range(7, 10), 3, random);
+    CoverMark cover(p, x, y, CoverKind::Tree);
+    limb(p, x, y, random.range(-2, 2), -random.range(11, 14), 3, random);
 }
 
 void fallenLog(Paint& p, int x, int y, TileRandom& random) {
@@ -830,6 +908,7 @@ void fallenLog(Paint& p, int x, int y, TileRandom& random) {
 
 void stump(Paint& p, int x, int y) {
     contactShadow(p, x + 1, y, 5, 1);
+    CoverMark cover(p, x, y, CoverKind::Box);
     p.rect(x - 3, y - 5, x + 4, y + 1, kDeadWood[1]);
     p.rect(x - 3, y - 5, x - 1, y + 1, kDeadWood[2]);
     p.rect(x + 2, y - 5, x + 4, y + 1, kDeadWood[0]);
@@ -942,6 +1021,9 @@ Color wallTexel(const WallLook& look, int x, int row, int y) {
 }  // namespace
 
 void faceWall(Paint& p, TileRandom& random, const WallLook& look, int x0, int x1, int footY, int maxHeight) {
+    // The whole face stands on one row, so it is one cover. Its shadow is only mixed in, and
+    // mixing never marks a pixel, so the shadow on the ground covers nothing.
+    CoverMark cover(p, (x0 + x1) / 2, footY, CoverKind::Wall);
     int x = x0;
     while (x < x1) {
         const int run = random.range(3, 14);
@@ -951,19 +1033,26 @@ void faceWall(Paint& p, TileRandom& random, const WallLook& look, int x0, int x1
             const int depth = std::min(3, height / 3);
             for (int row = 1; row <= depth; ++row) p.blend(x, footY + row, kWallShade);
             if (height == 0) continue;
+            // The end of a run turns away from the light where the next run is lower.
+            const bool end = i == run - 1 || x == x1 - 1;
             for (int row = 0; row < height; ++row) {
                 Color color = wallTexel(look, x, row, footY);
-                if (row < 2) color = Color{static_cast<unsigned char>(color.r * 3 / 4), static_cast<unsigned char>(color.g * 3 / 4), static_cast<unsigned char>(color.b * 3 / 4), 255};
+                if (row < 2) color = shade(color, 75);
+                if (end && row > 1) color = shade(color, kShadeSidePercent + 10);
                 p.put(x, footY - row, color);
             }
-            p.put(x, footY - height, look.top);
+            // The top faces the sky and has thickness.
+            p.put(x, footY - height, shade(look.top, 110));
             p.put(x, footY - height - 1, look.top);
+            p.put(x, footY - height - 2, shade(look.top, 92));
         }
     }
 }
 
 void sideWall(Paint& p, TileRandom& random, const WallLook& look, int x, int y0, int y1, int maxHeight) {
     constexpr int kThick = 4;
+    // Each row of its top stands on its own row of ground, so its foot moves along with it.
+    CoverMark cover(p, x + kThick / 2, y0, CoverKind::WallAlong);
     int y = y0;
     while (y < y1) {
         const int run = random.range(6, 18);
@@ -971,13 +1060,23 @@ void sideWall(Paint& p, TileRandom& random, const WallLook& look, int x, int y0,
         const int height = roll < 2 ? 0 : (roll < 6 ? random.range(2, std::max(2, maxHeight / 2)) : random.range(std::max(1, maxHeight / 2), maxHeight));
         const int end = std::min(y1, y + run);
         for (int row = y; row < end && height > 0; ++row) {
-            for (int col = 0; col < kThick; ++col) p.put(x + col, row - height, (texelNoise(x + col, row) & 7u) == 0u ? look.tones[2] : look.top);
-            for (int col = 0; col < std::min(3, height / 2); ++col) p.blend(x + kThick + col, row, kWallShade);
+            for (int col = 0; col < std::min(3, height / 2); ++col) p.blend(x + kThick + col + 1, row, kWallShade);
+        }
+        for (int row = y; row < end && height > 0; ++row) {
+            p.setCoverFoot(row);
+            for (int col = 0; col < kThick; ++col) {
+                Color color = (texelNoise(x + col, row) & 7u) == 0u ? look.tones[2] : look.top;
+                if (col == 0) color = shade(color, 112);
+                if (col == kThick - 1) color = shade(color, kShadeSidePercent + 12);
+                p.put(x + col, row - height, color);
+            }
+            p.put(x + kThick, row - height + 1, shade(look.tones[0], kShadeSidePercent));
         }
         // Where the wall steps down toward us, its broken end shows its face.
         if (height > 0) {
+            p.setCoverFoot(end - 1);
             for (int row = 0; row < height; ++row) {
-                for (int col = 0; col < kThick; ++col) p.put(x + col, end - 1 - row, wallTexel(look, x + col, row, end));
+                for (int col = 0; col < kThick; ++col) p.put(x + col, end - 1 - row, shade(wallTexel(look, x + col, row, end), row < 2 ? 75 : 100));
             }
         }
         y = end;

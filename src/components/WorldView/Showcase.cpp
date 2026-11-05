@@ -8,6 +8,7 @@
 #include "components/WorldView/Showcase.h"
 #include "components/WorldView/WorldView.h"
 #include "components/WorldView/Draw.h"
+#include "components/WorldView/Ground.h"
 #include "data/Balance.h"
 
 #include "raylib.h"
@@ -305,9 +306,35 @@ void placeCarScene(GameState& state, int scene) {
     if (scene == kSceneCarFront || scene == kSceneCarBoth) place(car.center + Vec2{car.half.x * 0.5f, car.half.y + radius}, 2u);
 }
 
+// A wall, a tree or a lamp, with the soldier to its left and maybe a zombie behind or in front.
+void placePropScene(GameState& state, int scene) {
+    static constexpr maps::CoverKind kKinds[4] = {maps::CoverKind::Wall, maps::CoverKind::Tree, maps::CoverKind::Lamp, maps::CoverKind::Pole};
+    const int index = kScenePropFirst - scene;
+    const maps::CoverKind kind = kKinds[index / 3];
+    const bool wall = kind == maps::CoverKind::Wall;
+    const FoundCover cover = findCover(state.run.map, state.run.seed, kind, wall ? 40 : 1, wall ? 16 : 20);
+    setSceneCover(cover);
+    if (!cover.found) return;
+    const Vec2 foot{static_cast<float>(cover.spotX) / maps::kTexelsPerWorldX, (static_cast<float>(cover.nearRow) + 0.5f) / maps::kTexelsPerWorldY};
+    const float radius = balance::kEnemyStats[static_cast<int>(EnemyType::Walker)].radius;
+    // Well to the left, clear of a wide wall, so he stays out of the pictures the tests take.
+    const float left = wall ? static_cast<float>(cover.x0) / maps::kTexelsPerWorldX - 40.0f : foot.x - 80.0f;
+    state.player.pos = Vec2{std::min(left, foot.x - 80.0f), foot.y};
+    state.player.prevPos = state.player.pos;
+    const auto place = [&](Vec2 pos, uint32_t id) {
+        if (Enemy* enemy = placeEnemy(state, EnemyType::Walker, pos, false)) enemy->id = id;
+    };
+    if (index % 3 == 1) place(foot + Vec2{0.0f, -radius - 6.0f}, 1u);
+    if (index % 3 == 2) place(foot + Vec2{0.0f, radius + 4.0f}, 2u);
+}
+
 void placeTestScene(GameState& state, int scene) {
     const Vec2 right{1.0f, 0.0f};
     maps::Obstacle chosen;
+    if (scene <= kScenePropFirst && scene > kScenePropFirst - kScenePropCount) {
+        placePropScene(state, scene);
+        return;
+    }
     if (scene <= kSceneCarOfSprite && scene > kSceneCarOfSprite - 8) {
         const auto sprite = static_cast<maps::CarSprite>(kSceneCarOfSprite - scene);
         if (findCar(state, &chosen, [&](const maps::Obstacle& car) { return car.sprite == sprite; })) standBesideCar(state, chosen);

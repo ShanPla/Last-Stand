@@ -56,8 +56,15 @@ constexpr float kSortMargin = 260.0f;
 constexpr uint8_t kSoldierSeeThrough = 130;
 // A zombie behind a car still shows at this strength, so a car never hides a threat.
 constexpr uint8_t kCarSilhouette = 130;
-// Just nearer than the car, so the silhouette passes the depth test on the car's pixels.
+// Behind anything else it shows more faintly. Those are thinner than a car, so the figure
+// still shows around them, and a strong silhouette would make a pole look like it stands behind.
+constexpr uint8_t kPropSilhouette = 96;
+// Just nearer than the cover, so the silhouette passes the depth test on its pixels.
 constexpr float kSilhouetteDepthGap = 0.0005f;
+// Covers on screen are sorted into columns this many art pixels wide, so each figure only
+// checks the few that share its columns, even with 2,000 zombies and hundreds of objects.
+constexpr int kCoverColumnWidth = 32;
+constexpr int kCoverColumns = 48;
 
 constexpr int kPlayerSlot = kMaxEnemies;  // The player takes one extra slot in the sort.
 
@@ -79,6 +86,11 @@ uint16_t g_telegraphs[kMaxEnemies];
 int g_telegraphCount = 0;
 CarOnScreen g_cars[kMaxCarsOnScreen];
 int g_carCount = 0;
+// Every car and standing object on screen, and which of them reach each column.
+CoverOnScreen g_covers[kMaxCoversOnScreen];
+int g_coverCount = 0;
+uint16_t g_columnCovers[kCoverColumns][kMaxCoversOnScreen];
+int g_columnCount[kCoverColumns];
 bool g_showCarBoxes = false;  // Debug only: outlines each car's solid box.
 bool g_carCover = true;       // Debug only: off, cars hide nothing, for comparing pictures.
 
@@ -230,17 +242,58 @@ void sortByDepth(int count) {
     for (int i = 0; i < count; ++i) g_drawOrder[g_bucketStarts[bucketOf(g_visible[i])]++] = static_cast<uint16_t>(i);
 }
 
-// The car this figure stands behind, if it overlaps one in the picture.
-const CarOnScreen* carCovering(const Enemy& enemy, const ScreenPoint& feet) {
+int columnOf(float x) { return std::clamp(static_cast<int>(std::floor(x / static_cast<float>(kCoverColumnWidth))), 0, kCoverColumns - 1); }
+
+// Gathers the cars and standing objects on screen into one list, sorted into columns.
+void collectCovers() {
+    g_coverCount = 0;
+    for (int i = 0; i < g_carCount && g_coverCount < kMaxCoversOnScreen; ++i) {
+        const CarOnScreen& car = g_cars[i];
+        g_covers[g_coverCount++] = CoverOnScreen{car.left, car.top, car.right, car.bottom, car.feetRow, car.depth, true};
+    }
+    g_coverCount += coversOnScreen(g_view, g_covers + g_coverCount, kMaxCoversOnScreen - g_coverCount);
+    std::fill(g_columnCount, g_columnCount + kCoverColumns, 0);
+    for (int i = 0; i < g_coverCount; ++i) {
+        const int last = columnOf(g_covers[i].right);
+        for (int column = columnOf(g_covers[i].left); column <= last; ++column) g_columnCovers[column][g_columnCount[column]++] = static_cast<uint16_t>(i);
+    }
+}
+
+// What a figure needs to show through the things in front of it.
+struct Covering {
+    bool found = false;
+    float left, top, right, bottom;  // Around every cover it stands behind.
+    float depth;                     // Just nearer than the nearest of those.
+    bool car;                        // One of them is a car.
+};
+
+// Everything this figure stands behind and overlaps in the picture. A silhouette at the
+// nearest one's depth passes the depth test on all of them. Where the figure isn't covered,
+// the silhouette is the same picture drawn over itself, so it changes nothing there.
+Covering coveringOf(const Enemy& enemy, const ScreenPoint& feet) {
+    Covering covering;
     const float side = figureHalfWidth(enemy) * feet.scale;
     const float top = feet.y - figureHeight(enemy) * feet.scale;
-    for (int i = 0; i < g_carCount; ++i) {
-        const CarOnScreen& car = g_cars[i];
-        if (feet.y >= car.feetRow || feet.y < car.top) continue;
-        if (feet.x + side <= car.left || feet.x - side >= car.right || top >= car.bottom) continue;
-        return &car;
+    const int first = columnOf(feet.x - side);
+    const int last = columnOf(feet.x + side);
+    for (int column = first; column <= last; ++column) {
+        for (int n = 0; n < g_columnCount[column]; ++n) {
+            const CoverOnScreen& cover = g_covers[g_columnCovers[column][n]];
+            if (feet.y >= cover.feetRow || feet.y <= cover.top) continue;
+            if (feet.x + side <= cover.left || feet.x - side >= cover.right || top >= cover.bottom) continue;
+            if (!covering.found) {
+                covering = Covering{true, cover.left, cover.top, cover.right, cover.bottom, cover.depth, cover.car};
+                continue;
+            }
+            covering.left = std::min(covering.left, cover.left);
+            covering.top = std::min(covering.top, cover.top);
+            covering.right = std::max(covering.right, cover.right);
+            covering.bottom = std::max(covering.bottom, cover.bottom);
+            covering.depth = std::max(covering.depth, cover.depth);
+            covering.car = covering.car || cover.car;
+        }
     }
-    return nullptr;
+    return covering;
 }
 
 void drawFigure(const GameState& state, const VisibleFigure& figure) {
@@ -258,10 +311,11 @@ void drawFigure(const GameState& state, const VisibleFigure& figure) {
     }
     setSpriteDepth(depthOfRow(g_view, figure.feet.y));
     drawZombie(state, enemy, figure.feet);
-    if (const CarOnScreen* car = carCovering(enemy, figure.feet)) {
+    if (!g_carCover) return;
+    if (const Covering covering = coveringOf(enemy, figure.feet); covering.found) {
         // Right after its own figure, so zombies nearer the camera still draw over it.
-        setSpriteDepth(car->depth + kSilhouetteDepthGap);
-        drawZombieSilhouette(state, enemy, figure.feet, kCarSilhouette, car->left, car->top, car->right, car->bottom);
+        setSpriteDepth(covering.depth + kSilhouetteDepthGap);
+        drawZombieSilhouette(state, enemy, figure.feet, covering.car ? kCarSilhouette : kPropSilhouette, covering.left, covering.top, covering.right, covering.bottom);
         g_silhouettesShown++;
     }
 }
@@ -427,8 +481,9 @@ void draw(const GameState& state, float alpha) {
     ClearBackground(maps::fallbackGround(state.run.map));
 
     drawGround(g_view, look);
-    if (g_carCover) drawCarDepth(g_view);
+    if (g_carCover) drawCoverDepth(g_view);
     g_carCount = carsOnScreen(g_view, g_cars);
+    collectCovers();
 
     bindPalette(look);
     if (g_quality > 0 && look.lampLevel > 0.01f) {
@@ -554,7 +609,7 @@ extern "C" {
 // Test hook: what the renderer drew on its last frame, which the simulation can't report.
 EMSCRIPTEN_KEEPALIVE const char* ls_query_world() {
     using namespace ls::worldview;
-    static char json[512];
+    static char json[768];
     const SoldierDebug soldier = g_lastDrawnState ? soldierDebug(*g_lastDrawnState) : SoldierDebug{};
     // The car nearest the soldier, whose feet are at the anchor.
     CarOnScreen car{};
@@ -567,14 +622,18 @@ EMSCRIPTEN_KEEPALIVE const char* ls_query_world() {
             car = g_cars[i];
         }
     }
+    float prop[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    sceneCoverOnScreen(g_view, prop);
     const ScreenPoint boxTopLeft = project(g_view, car.boxMin);
     const ScreenPoint boxBottomRight = project(g_view, car.boxMax);
     std::snprintf(json, sizeof(json),
-                  "{\"telegraphing\":%d,\"telegraphsShown\":%d,\"heldGun\":%d,\"muzzleFrames\":%d,\"chunkPaints\":%d,\"cars\":%d,\"crushed\":%d,\"flatSwap\":%d,\"silhouettes\":%d,\"pixelScale\":%.3f,\"car\":[%.1f,%.1f,%.1f,%.1f],\"carBox\":[%.1f,%.1f,%.1f,%.1f],\"worldBox\":[%.1f,%.1f,%.1f,%.1f]}",
-                  g_telegraphCount, g_telegraphsShown, soldier.heldGun, soldier.muzzleFrames, groundPaintCount(), g_carCount, g_lastDrawnState ? g_lastDrawnState->run.crushedCount : 0, groundLastSwapSize(), g_silhouettesShown,
+                  "{\"telegraphing\":%d,\"telegraphsShown\":%d,\"heldGun\":%d,\"muzzleFrames\":%d,\"chunkPaints\":%d,\"cars\":%d,\"crushed\":%d,\"flatSwap\":%d,\"silhouettes\":%d,\"covers\":%d,\"coversDropped\":%d,\"pixelScale\":%.3f,\"car\":[%.1f,%.1f,%.1f,%.1f],\"carBox\":[%.1f,%.1f,%.1f,%.1f],\"worldBox\":[%.1f,%.1f,%.1f,%.1f],\"prop\":[%.1f,%.1f,%.1f,%.1f],\"spot\":[%.1f,%.1f]}",
+                  g_telegraphCount, g_telegraphsShown, soldier.heldGun, soldier.muzzleFrames, groundPaintCount(), g_carCount, g_lastDrawnState ? g_lastDrawnState->run.crushedCount : 0, groundLastSwapSize(), g_silhouettesShown, g_coverCount, coversDropped(),
                   static_cast<double>(g_view.pixelScale), static_cast<double>(car.left), static_cast<double>(car.top), static_cast<double>(car.right), static_cast<double>(car.bottom),
                   static_cast<double>(boxTopLeft.x), static_cast<double>(boxTopLeft.y), static_cast<double>(boxBottomRight.x), static_cast<double>(boxBottomRight.y),
-                  static_cast<double>(car.boxMin.x), static_cast<double>(car.boxMin.y), static_cast<double>(car.boxMax.x), static_cast<double>(car.boxMax.y));
+                  static_cast<double>(car.boxMin.x), static_cast<double>(car.boxMin.y), static_cast<double>(car.boxMax.x), static_cast<double>(car.boxMax.y),
+                  static_cast<double>(prop[0]), static_cast<double>(prop[1]), static_cast<double>(prop[2]), static_cast<double>(prop[3]),
+                  static_cast<double>(prop[4]), static_cast<double>(prop[5]));
     return json;
 }
 }

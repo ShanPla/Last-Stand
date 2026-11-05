@@ -51,6 +51,8 @@ struct Chunk {
     int lightCount = 0;
     maps::Obstacle cars[maps::kMaxObstaclesPerTile];
     int carCount = 0;
+    maps::Cover covers[maps::kMaxCoversPerChunk];  // Its standing objects, listed while painting.
+    int coverCount = 0;
     int flatCars = 0;    // How many cars of its tile were painted flat.
     bool stale = false;  // On screen, and its picture still shows a car that has gone flat.
 };
@@ -95,12 +97,15 @@ struct SparePicture {
     int y = 0;
     maps::Light lights[maps::kMaxLightsPerChunk];
     int lightCount = 0;
+    maps::Cover covers[maps::kMaxCoversPerChunk];
+    int coverCount = 0;
 };
 
 SparePicture g_spares[kSpareCount];
 maps::CrushedCars g_crushed;  // What the simulation said this frame.
 int g_crushedSeen = 0;        // How many of those the chunks already know about.
 int g_lastSwapSize = 0;       // For the tests: how many chunks changed picture in one go, last time.
+int g_coversDropped = 0;      // For the tests: standing objects left off a full list on screen. Must stay 0.
 double g_slowestUpdate = 0.0;  // For the timing test: the longest updateGround, in seconds.
 
 // Times updateGround, however it returns.
@@ -204,7 +209,9 @@ void paintWhole(Chunk& chunk, int x, int y, uint64_t seed) {
     g_job.active = false;
     g_paintStages++;
     g_paintsInOneGo++;
-    chunk.lightCount = maps::renderChunk(g_map, seed, x, y, g_pixels, chunk.lights, g_crushed);
+    maps::CoverList covers{chunk.covers, 0};
+    chunk.lightCount = maps::renderChunk(g_map, seed, x, y, g_pixels, chunk.lights, g_crushed, &covers);
+    chunk.coverCount = covers.count;
     storeChunk(chunk, x, y, seed);
 }
 
@@ -256,6 +263,8 @@ void swapInSpares(uint64_t seed) {
         std::swap(chunk->texture, spare.texture);
         chunk->lightCount = spare.lightCount;
         std::copy(spare.lights, spare.lights + spare.lightCount, chunk->lights);
+        chunk->coverCount = spare.coverCount;
+        std::copy(spare.covers, spare.covers + spare.coverCount, chunk->covers);
         swapped++;
     }
     if (swapped > 0) g_lastSwapSize = swapped;
@@ -299,7 +308,9 @@ bool stepRepaint(uint64_t seed) {
         return true;
     }
     SparePicture& spare = spareFor(g_job.x, g_job.y, seed);
-    spare.lightCount = maps::paintDetails(g_map, seed, g_job.x, g_job.y, g_pixels, spare.lights, g_crushed);
+    maps::CoverList covers{spare.covers, 0};
+    spare.lightCount = maps::paintDetails(g_map, seed, g_job.x, g_job.y, g_pixels, spare.lights, g_crushed, &covers);
+    spare.coverCount = covers.count;
     uploadPixels(spare.texture);
     spare.x = g_job.x;
     spare.y = g_job.y;
@@ -344,7 +355,9 @@ void stepPaintJob(const ChunkRange& visible, uint64_t seed) {
         return;
     }
     Chunk& chunk = evictionTarget(visible, seed);
-    chunk.lightCount = maps::paintDetails(g_map, seed, g_job.x, g_job.y, g_pixels, chunk.lights, g_crushed);
+    maps::CoverList covers{chunk.covers, 0};
+    chunk.lightCount = maps::paintDetails(g_map, seed, g_job.x, g_job.y, g_pixels, chunk.lights, g_crushed, &covers);
+    chunk.coverCount = covers.count;
     storeChunk(chunk, g_job.x, g_job.y, seed);
     g_job.active = false;
 }
@@ -362,6 +375,7 @@ void uploadSpareForTiming() {
     Chunk& spare = g_pool[kPoolSize - 1];
     spare.ready = false;
     spare.lightCount = 0;
+    spare.coverCount = 0;
     UpdateTexture(spare.texture, g_pixels);
 }
 
@@ -390,6 +404,7 @@ void updateGround(const View& view, uint64_t seed, maps::MapId map, maps::Crushe
         for (Chunk& chunk : g_pool) {
             chunk.ready = false;
             chunk.lightCount = 0;
+            chunk.coverCount = 0;
         }
         for (SparePicture& spare : g_spares) spare.ready = false;
         g_crushedSeen = 0;
@@ -476,6 +491,12 @@ void drawGround(const View& view, const DayLook& look) {
     SetShaderValue(ground.shader, ground.tint, look.groundTint, SHADER_UNIFORM_VEC3);
     SetShaderValue(ground.shader, ground.saturation, &saturation, SHADER_UNIFORM_FLOAT);
     SetShaderValue(ground.shader, ground.lift, look.groundLift, SHADER_UNIFORM_VEC3);
+    // Standing objects take part of the gentler grade the characters get.
+    float standTint[3];
+    for (int i = 0; i < 3; ++i) standTint[i] = lerpf(look.groundTint[i], look.spriteTint[i], theme::kStandingGrade);
+    const float standSaturation = lerpf(saturation, 1.0f, theme::kStandingGrade);
+    SetShaderValue(ground.shader, ground.standTint, standTint, SHADER_UNIFORM_VEC3);
+    SetShaderValue(ground.shader, ground.standSaturation, &standSaturation, SHADER_UNIFORM_FLOAT);
 
     BeginShaderMode(ground.shader);
     const ChunkRange visible = visibleChunks(view, 0.0f);
@@ -512,14 +533,67 @@ float carFeetRow(const View& view, const maps::Obstacle& car) {
     return project(view, Vec2{car.center.x, car.center.y + car.half.y}).y;
 }
 
+// The part of a chunk's texture holding a rectangle of map texels, as a quad at depth z. The
+// prop shader ignores z and works out each pixel's own depth instead.
+void depthQuad(const View& view, int chunkLeft, int chunkTop, int x0, int y0, int x1, int y1, float z) {
+    const float left = static_cast<float>(x0) / maps::kTexelsPerWorldX - view.focusX;
+    const float right = static_cast<float>(x1) / maps::kTexelsPerWorldX - view.focusX;
+    const float top = static_cast<float>(y0) / maps::kTexelsPerWorldY - view.focusY;
+    const float bottom = static_cast<float>(y1) / maps::kTexelsPerWorldY - view.focusY;
+    const float u0 = static_cast<float>(x0 - chunkLeft) / static_cast<float>(maps::kChunkWidth);
+    const float u1 = static_cast<float>(x1 - chunkLeft) / static_cast<float>(maps::kChunkWidth);
+    const float v0 = static_cast<float>(y0 - chunkTop) / static_cast<float>(maps::kChunkHeight);
+    const float v1 = static_cast<float>(y1 - chunkTop) / static_cast<float>(maps::kChunkHeight);
+    rlColor4ub(255, 255, 255, 255);
+    rlTexCoord2f(u0, v0);
+    rlVertex3f(left, top, z);
+    rlTexCoord2f(u0, v1);
+    rlVertex3f(left, bottom, z);
+    rlTexCoord2f(u1, v1);
+    rlVertex3f(right, bottom, z);
+    rlTexCoord2f(u1, v0);
+    rlVertex3f(right, top, z);
+}
+
+// Only the rectangles the painters listed are drawn, so the GPU looks at the few pixels that
+// can be props and not the whole screen.
+void drawPropDepth(const View& view) {
+    const PropDepthShader& depth = propDepthShader();
+    const float camera[4] = {kArtPerWorld * kTiltSquash, kPerspective, kMinDepth, kDepthMargin};
+    const float shape[4] = {view.anchorY, static_cast<float>(view.height), 1.0f / maps::kTexelsPerWorldY, static_cast<float>(maps::kChunkHeight)};
+    SetShaderValueMatrix(depth.shader, depth.projection, groundMatrix(view));
+    SetShaderValue(depth.shader, depth.camera, camera, SHADER_UNIFORM_VEC4);
+    SetShaderValue(depth.shader, depth.view, shape, SHADER_UNIFORM_VEC4);
+    BeginShaderMode(depth.shader);
+    const ChunkRange visible = visibleChunks(view, 0.0f);
+    for (int y = visible.y0; y <= visible.y1; ++y) {
+        for (int x = visible.x0; x <= visible.x1; ++x) {
+            const Chunk* chunk = findChunk(x, y, g_seed);
+            if (!chunk || chunk->coverCount == 0) continue;
+            const int chunkLeft = x * maps::kChunkWidth;
+            const int chunkTop = y * maps::kChunkHeight;
+            rlSetTexture(chunk->texture.id);
+            rlBegin(RL_QUADS);
+            for (int i = 0; i < chunk->coverCount; ++i) {
+                const maps::Cover& cover = chunk->covers[i];
+                depthQuad(view, chunkLeft, chunkTop, chunkLeft + cover.x0, chunkTop + cover.y0, chunkLeft + cover.x1, chunkTop + cover.y1, 0.0f);
+            }
+            rlEnd();
+        }
+    }
+    rlSetTexture(0);
+    EndShaderMode();
+}
+
 }  // namespace
 
-void drawCarDepth(const View& view) {
+void drawCoverDepth(const View& view) {
+    rlEnableDepthTest();
+    rlColorMask(false, false, false, false);
+    drawPropDepth(view);
     const CarDepthShader& depth = carDepthShader();
     SetShaderValueMatrix(depth.shader, depth.projection, groundMatrix(view));
     BeginShaderMode(depth.shader);
-    rlEnableDepthTest();
-    rlColorMask(false, false, false, false);
     const ChunkRange visible = visibleChunks(view, 0.0f);
     for (int y = visible.y0; y <= visible.y1; ++y) {
         for (int x = visible.x0; x <= visible.x1; ++x) {
@@ -538,24 +612,7 @@ void drawCarDepth(const View& view) {
                 const int x1 = std::min(rect.x1, chunkLeft + maps::kChunkWidth);
                 const int y1 = std::min(rect.y1, chunkTop + maps::kChunkHeight);
                 if (x0 >= x1 || y0 >= y1) continue;
-                const float left = static_cast<float>(x0) / maps::kTexelsPerWorldX - view.focusX;
-                const float right = static_cast<float>(x1) / maps::kTexelsPerWorldX - view.focusX;
-                const float top = static_cast<float>(y0) / maps::kTexelsPerWorldY - view.focusY;
-                const float bottom = static_cast<float>(y1) / maps::kTexelsPerWorldY - view.focusY;
-                const float u0 = static_cast<float>(x0 - chunkLeft) / static_cast<float>(maps::kChunkWidth);
-                const float u1 = static_cast<float>(x1 - chunkLeft) / static_cast<float>(maps::kChunkWidth);
-                const float v0 = static_cast<float>(y0 - chunkTop) / static_cast<float>(maps::kChunkHeight);
-                const float v1 = static_cast<float>(y1 - chunkTop) / static_cast<float>(maps::kChunkHeight);
-                const float z = depthOfRow(view, carFeetRow(view, car));
-                rlColor4ub(255, 255, 255, 255);
-                rlTexCoord2f(u0, v0);
-                rlVertex3f(left, top, z);
-                rlTexCoord2f(u0, v1);
-                rlVertex3f(left, bottom, z);
-                rlTexCoord2f(u1, v1);
-                rlVertex3f(right, bottom, z);
-                rlTexCoord2f(u1, v0);
-                rlVertex3f(right, top, z);
+                depthQuad(view, chunkLeft, chunkTop, x0, y0, x1, y1, depthOfRow(view, carFeetRow(view, car)));
             }
             rlEnd();
         }
@@ -565,6 +622,117 @@ void drawCarDepth(const View& view) {
     EndShaderMode();
     rlColorMask(true, true, true, true);
     rlDisableDepthTest();
+}
+
+int coversOnScreen(const View& view, CoverOnScreen* covers, int capacity) {
+    int count = 0;
+    const ChunkRange visible = visibleChunks(view, 0.0f);
+    for (int y = visible.y0; y <= visible.y1; ++y) {
+        for (int x = visible.x0; x <= visible.x1; ++x) {
+            const Chunk* chunk = findChunk(x, y, g_seed);
+            if (!chunk) continue;
+            const float chunkLeft = static_cast<float>(x * maps::kChunkWidth);
+            const float chunkTop = static_cast<float>(y * maps::kChunkHeight);
+            for (int i = 0; i < chunk->coverCount; ++i) {
+                const maps::Cover& cover = chunk->covers[i];
+                const float x0 = (chunkLeft + static_cast<float>(cover.x0)) / maps::kTexelsPerWorldX;
+                const float x1 = (chunkLeft + static_cast<float>(cover.x1)) / maps::kTexelsPerWorldX;
+                const float y0 = (chunkTop + static_cast<float>(cover.y0)) / maps::kTexelsPerWorldY;
+                const float y1 = (chunkTop + static_cast<float>(cover.y1)) / maps::kTexelsPerWorldY;
+                const ScreenPoint a = project(view, Vec2{x0, y0});
+                const ScreenPoint b = project(view, Vec2{x1, y0});
+                const ScreenPoint c = project(view, Vec2{x0, y1});
+                const ScreenPoint d = project(view, Vec2{x1, y1});
+                CoverOnScreen shown;
+                shown.left = std::min(a.x, c.x);
+                shown.right = std::max(b.x, d.x);
+                shown.top = a.y;
+                shown.bottom = c.y;
+                if (shown.right < 0.0f || shown.left > static_cast<float>(view.width) || shown.bottom < 0.0f || shown.top > static_cast<float>(view.height)) continue;
+                // The same point the depth shader uses: the middle of the foot row.
+                const float footY = (chunkTop + static_cast<float>(cover.nearRow) + 0.5f) / maps::kTexelsPerWorldY;
+                shown.feetRow = project(view, Vec2{x0, footY}).y;
+                shown.depth = depthOfRow(view, shown.feetRow);
+                shown.car = false;
+                if (count >= capacity) {
+                    g_coversDropped++;
+                    continue;
+                }
+                covers[count++] = shown;
+            }
+        }
+    }
+    return count;
+}
+
+int coversDropped() { return g_coversDropped; }
+
+namespace {
+
+FoundCover g_sceneCover;
+
+bool clearOfCars(maps::MapId map, uint64_t seed, int chunkX, int chunkY, const FoundCover& cover) {
+    maps::Obstacle cars[maps::kMaxObstaclesPerTile];
+    const int count = maps::obstaclesInTile(map, seed, chunkX, chunkY, cars, maps::kMaxObstaclesPerTile);
+    constexpr int kRoom = 24;
+    for (int i = 0; i < count; ++i) {
+        const maps::TexelRect rect = maps::spriteRect(cars[i]);
+        if (rect.x1 + kRoom > cover.x0 && rect.x0 - kRoom < cover.x1 && rect.y1 + kRoom > cover.y0 && rect.y0 - kRoom < cover.y1) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+FoundCover findCover(maps::MapId map, uint64_t seed, maps::CoverKind kind, int minWide, int minTall) {
+    g_job.active = false;  // This paints over the job's picture.
+    maps::Light lights[maps::kMaxLightsPerChunk];
+    maps::Cover found[maps::kMaxCoversPerChunk];
+    constexpr int kEdge = 2;
+    for (int ring = 0; ring < 14; ++ring) {
+        for (int y = -ring; y <= ring; ++y) {
+            for (int x = -ring; x <= ring; ++x) {
+                if (std::max(std::abs(x), std::abs(y)) != ring) continue;
+                maps::CoverList list{found, 0};
+                maps::renderChunk(map, seed, x, y, g_pixels, lights, {}, &list);
+                for (int i = 0; i < list.count; ++i) {
+                    const maps::Cover& c = found[i];
+                    if (c.kind != kind || c.x1 - c.x0 < minWide || c.y1 - c.y0 < minTall) continue;
+                    if (c.x0 < kEdge || c.y0 < kEdge || c.x1 > maps::kChunkWidth - kEdge || c.nearRow >= maps::kChunkHeight - kEdge) continue;
+                    // Nothing else stands where the scene's zombie will, so a test sees only this
+                    // object at work. The zombie is in the middle of a wall, or at a pole's foot.
+                    const int middle = kind == maps::CoverKind::Wall ? (c.x0 + c.x1) / 2 : c.footX;
+                    bool alone = true;
+                    for (int n = 0; n < list.count && alone; ++n) {
+                        const maps::Cover& o = found[n];
+                        alone = n == i || o.x1 <= middle - 16 || o.x0 >= middle + 16 || o.y1 <= c.nearRow - 50 || o.y0 >= c.nearRow + 16;
+                    }
+                    if (!alone) continue;
+                    const int left = x * maps::kChunkWidth;
+                    const int top = y * maps::kChunkHeight;
+                    const FoundCover cover{true, left + c.x0, top + c.y0, left + c.x1, top + c.y1, left + c.footX, top + c.nearRow, left + middle};
+                    if (clearOfCars(map, seed, x, y, cover)) return cover;
+                }
+            }
+        }
+    }
+    return {};
+}
+
+void setSceneCover(const FoundCover& cover) { g_sceneCover = cover; }
+
+bool sceneCoverOnScreen(const View& view, float out[6]) {
+    if (!g_sceneCover.found) return false;
+    const ScreenPoint a = project(view, Vec2{static_cast<float>(g_sceneCover.x0) / maps::kTexelsPerWorldX, static_cast<float>(g_sceneCover.y0) / maps::kTexelsPerWorldY});
+    const ScreenPoint b = project(view, Vec2{static_cast<float>(g_sceneCover.x1) / maps::kTexelsPerWorldX, static_cast<float>(g_sceneCover.y1) / maps::kTexelsPerWorldY});
+    const ScreenPoint spot = project(view, Vec2{static_cast<float>(g_sceneCover.spotX) / maps::kTexelsPerWorldX, (static_cast<float>(g_sceneCover.nearRow) + 0.5f) / maps::kTexelsPerWorldY});
+    out[0] = a.x;
+    out[1] = a.y;
+    out[2] = b.x;
+    out[3] = b.y;
+    out[4] = spot.x;
+    out[5] = spot.y;
+    return true;
 }
 
 int carsOnScreen(const View& view, CarOnScreen* cars) {
@@ -719,6 +887,46 @@ EMSCRIPTEN_KEEPALIVE int ls_ground_paints() { return ls::worldview::g_paintStage
 
 // Test hook: chunks that couldn't wait, and were painted whole in one frame.
 EMSCRIPTEN_KEEPALIVE int ls_ground_whole_paints() { return ls::worldview::g_paintsInOneGo; }
+
+// Test hook: paints the chunks around the start and checks their lists of standing objects.
+// Every pixel marked as standing must sit inside some listed rectangle, or a figure behind it
+// would be hidden with no silhouette. It also reports the busiest chunk, which must stay under
+// the list's size, and how many objects of each kind it saw, so a test knows both maps have them.
+EMSCRIPTEN_KEEPALIVE const char* ls_check_cover_marks(int map, int seed, int reach) {
+    using namespace ls;
+    static char json[256];
+    const maps::MapId id = maps::mapFromIndex(map);
+    worldview::g_job.active = false;  // This paints over the job's picture.
+    maps::Light lights[maps::kMaxLightsPerChunk];
+    maps::Cover covers[maps::kMaxCoversPerChunk];
+    int strayPixels = 0, markedPixels = 0, busiest = 0, total = 0, walls = 0, trees = 0, lamps = 0;
+    for (int y = -reach; y <= reach; ++y) {
+        for (int x = -reach; x <= reach; ++x) {
+            maps::CoverList list{covers, 0};
+            maps::renderChunk(id, static_cast<uint64_t>(seed), x, y, worldview::g_pixels, lights, {}, &list);
+            busiest = std::max(busiest, list.count);
+            total += list.count;
+            for (int i = 0; i < list.count; ++i) {
+                walls += covers[i].kind == maps::CoverKind::Wall ? 1 : 0;
+                trees += covers[i].kind == maps::CoverKind::Tree ? 1 : 0;
+                lamps += covers[i].kind == maps::CoverKind::Lamp ? 1 : 0;
+            }
+            for (int py = 0; py < maps::kChunkHeight; ++py) {
+                for (int px = 0; px < maps::kChunkWidth; ++px) {
+                    const unsigned char a = worldview::g_pixels[py * maps::kChunkWidth + px].a;
+                    if (a == maps::kPlainGround || a == maps::kCarBody) continue;
+                    markedPixels++;
+                    bool listed = false;
+                    for (int i = 0; i < list.count && !listed; ++i) listed = px >= covers[i].x0 && px < covers[i].x1 && py >= covers[i].y0 && py < covers[i].y1;
+                    if (!listed) strayPixels++;
+                }
+            }
+        }
+    }
+    std::snprintf(json, sizeof(json), "{\"covers\":%d,\"busiest\":%d,\"capacity\":%d,\"marked\":%d,\"strayPixels\":%d,\"walls\":%d,\"trees\":%d,\"lamps\":%d}", total, busiest,
+                  maps::kMaxCoversPerChunk, markedPixels, strayPixels, walls, trees, lamps);
+    return json;
+}
 
 // Test hook: paints chunks both ways, whole and in the job's pieces, and counts the pixels
 // that differ. It must be zero, or walking would show a different map than jumping does.

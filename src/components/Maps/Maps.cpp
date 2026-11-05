@@ -29,18 +29,18 @@ void paintGroundRows(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pi
     city::paintGroundRows(seed, chunkX, chunkY, pixels, rowFrom, rowTo);
 }
 
-int paintDetails(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed) {
+int paintDetails(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed, CoverList* covers) {
     switch (map) {
-        case MapId::City: return city::paintDetails(seed, chunkX, chunkY, pixels, lights, crushed);
-        case MapId::Wasteland: return wasteland::paintDetails(seed, chunkX, chunkY, pixels, lights, crushed);
+        case MapId::City: return city::paintDetails(seed, chunkX, chunkY, pixels, lights, crushed, covers);
+        case MapId::Wasteland: return wasteland::paintDetails(seed, chunkX, chunkY, pixels, lights, crushed, covers);
         case MapId::Count: break;
     }
-    return city::paintDetails(seed, chunkX, chunkY, pixels, lights, crushed);
+    return city::paintDetails(seed, chunkX, chunkY, pixels, lights, crushed, covers);
 }
 
-int renderChunk(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed) {
+int renderChunk(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed, CoverList* covers) {
     paintGroundRows(map, seed, chunkX, chunkY, pixels, 0, kChunkHeight);
-    return paintDetails(map, seed, chunkX, chunkY, pixels, lights, crushed);
+    return paintDetails(map, seed, chunkX, chunkY, pixels, lights, crushed, covers);
 }
 
 Color fallbackGround(MapId map) {

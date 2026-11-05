@@ -5,8 +5,8 @@
 #include "components/Maps/SharedProps/SharedProps.h"
 
 // Things lying around the desert, seen from the same 3/4 angle as the characters. x and
-// y are where the object meets the ground. Nothing here is taller than a zombie's chest,
-// apart from thin poles and signs, because the whole map draws under the characters.
+// y are where the object meets the ground. Standing ones are marked with a CoverMark, so a
+// figure behind them is covered and one in front draws over them.
 namespace ls::maps::wasteland {
 
 // Small ground texture.
