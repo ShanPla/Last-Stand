@@ -84,8 +84,7 @@ void spawnPickup(GameState& state, Vec2 pos, PickupType type) {
     if (state.pickups.count >= state.pickups.capacity()) removeKeepingOrder(state, 0);
     Pickup* pickup = state.pickups.add();
     // Nothing lands inside a car, where it could never be reached.
-    pickup->pos = pos;
-    obstacles::resolveCircle(state, pickup->pos, balance::kItemCarRadius);
+    pickup->pos = obstacles::placeItem(state, pos);
     pickup->type = type;
 }
 
@@ -96,8 +95,7 @@ void dropGem(GameState& state, Vec2 pos, int xp) {
         upgrades::addXp(state, xp);
         return;
     }
-    gem->pos = pos;
-    obstacles::resolveCircle(state, gem->pos, balance::kItemCarRadius);
+    gem->pos = obstacles::placeItem(state, pos);
     gem->prevPos = gem->pos;
     gem->xp = xp;
 }

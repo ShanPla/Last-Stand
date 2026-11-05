@@ -154,7 +154,6 @@ bool wreckYardSprite(int kind, CarSprite* sprite);
 // Highway stops: gas stations mostly, a few shack clusters. Only on straight, clear road.
 inline constexpr int kStopWidth = 280;
 inline constexpr int kStopHeight = 150;
-inline constexpr int kGasCarPercent = 70;
 
 inline int stopStretchLength(const RoadFamily& family) { return family.across ? kChunkWidth * 6 : kChunkHeight * 6; }
 

@@ -63,11 +63,6 @@ bool pushOutOf(const Obstacle& box, Vec2& pos, float radius, Vec2* normal) {
     return true;
 }
 
-constexpr float kStuckSearch = 200.0f;     // A stuck walker looks this far for the car holding it.
-constexpr float kCornerClearance = 3.0f;  // Heads a little wide of a corner, so it doesn't clip it.
-constexpr float kFitSlack = 0.25f;        // How much overlap still counts as having fit.
-constexpr float kLineSlack = 1.0f;        // A line running along a car's side counts as clear of it.
-
 // True when a straight line between two points doesn't enter a box centered on (0, 0). It trims
 // the line to the slab between the box's left and right, then to the slab between its top
 // and bottom. If anything of the line is left, it passes through the box.
@@ -99,10 +94,10 @@ const Obstacle* carAhead(const ObstacleTile& tile, Vec2 probe, float radius) {
 // coordinates, with the box grown by the walker's radius so that the walker is just a point.
 // Returns false when the straight line to the target is clear after all.
 bool wayAround(const Obstacle& box, Vec2 pos, float radius, Vec2 targetPos, uint32_t side, Vec2* corner) {
-    const float solidX = box.half.x + radius - kLineSlack;
-    const float solidY = box.half.y + radius - kLineSlack;
-    const float reachX = box.half.x + radius + kCornerClearance;
-    const float reachY = box.half.y + radius + kCornerClearance;
+    const float solidX = box.half.x + radius - balance::kCarLineSlack;
+    const float solidY = box.half.y + radius - balance::kCarLineSlack;
+    const float reachX = box.half.x + radius + balance::kCarCornerClearance;
+    const float reachY = box.half.y + radius + balance::kCarCornerClearance;
     const Vec2 from = pos - box.center;
     Vec2 to = targetPos - box.center;
     // A target standing right beside the car is "inside" the grown box. The best anyone
@@ -148,6 +143,30 @@ bool wayAround(const Obstacle& box, Vec2 pos, float radius, Vec2 targetPos, uint
     const bool tie = second - best < 1.0f && (side & 1u) != 0u;
     *corner = box.center + (tie ? secondCorner : bestCorner);
     return true;
+}
+
+// True when the player could stand here and walk away in a straight line. Wrecks can close a
+// pocket off on all sides, and a pocket like that fits the player but can't be walked into.
+bool playerCanWalkTo(const GameState& state, Vec2 spot) {
+    if (overlapsCar(state, spot, balance::kPlayerRadius)) return false;
+    const float radius = balance::kPlayerRadius - balance::kItemWayOutSlack;
+    for (int i = 0; i < balance::kItemWayOutLines; ++i) {
+        const Vec2 dir = fromAngle(kTau * static_cast<float>(i) / static_cast<float>(balance::kItemWayOutLines));
+        if (!lineBlocked(state, spot, spot + dir * balance::kItemWayOutReach, radius)) return true;
+    }
+    return false;
+}
+
+// True when the player can get close enough to pick up something lying here.
+bool collectableAt(const GameState& state, Vec2 spot) {
+    if (playerCanWalkTo(state, spot)) return true;
+    // A little inside the collect range, because the player's own position is what is measured.
+    const float reach = balance::kPickupCollectRadius - 2.0f;
+    for (int i = 0; i < balance::kItemWayOutLines; ++i) {
+        const Vec2 dir = fromAngle(kTau * static_cast<float>(i) / static_cast<float>(balance::kItemWayOutLines));
+        if (playerCanWalkTo(state, spot + dir * reach)) return true;
+    }
+    return false;
 }
 
 }  // namespace
@@ -204,7 +223,7 @@ Vec2 sweepCircle(const GameState& state, Vec2 from, Vec2 to, float radius) {
         const Vec2 before = pos;
         pos += stepBy;
         // Two cars can stand too close to fit between. Then it just stops where it was.
-        if (resolveCircle(state, pos, radius).hit && overlapsCar(state, pos, radius - kFitSlack)) return before;
+        if (resolveCircle(state, pos, radius).hit && overlapsCar(state, pos, radius - balance::kCarFitSlack)) return before;
     }
     return pos;
 }
@@ -275,26 +294,105 @@ bool lineBlocked(const GameState& state, Vec2 from, Vec2 to, float radius) {
     return false;
 }
 
-bool cornerToward(const GameState& state, Vec2 pos, float radius, Vec2 targetPos, Vec2* corner) {
-    const ObstacleTile* tile = tileAt(state, pos);
-    if (!tile) return false;
-    const Obstacle* nearest = nullptr;
-    float nearestGap = kStuckSearch;
-    for (int i = 0; i < tile->count; ++i) {
-        const Obstacle& box = tile->items[i];
-        const float gapX = std::max(std::abs(pos.x - box.center.x) - box.half.x, 0.0f);
-        const float gapY = std::max(std::abs(pos.y - box.center.y) - box.half.y, 0.0f);
-        const float gap = gapX + gapY;
-        if (gap < nearestGap) {
-            nearestGap = gap;
-            nearest = &box;
+bool rescueSpot(const GameState& state, Vec2 pos, float radius, Vec2 targetPos, float touchDistance, Vec2* spot) {
+    const Vec2 toTarget = targetPos - pos;
+    const float gap = length(toTarget);
+    if (gap < 1e-3f) return false;
+    const Vec2 dir = toTarget * (1.0f / gap);
+    const float reach = std::min(gap, balance::kZombieStuckLookAhead);
+    // It lands just out of reach if it can, so the player gets a moment to see it.
+    const float stopShort = touchDistance + balance::kZombieRescueStandOff;
+
+    // Walk the straight line, and keep the first clear spot after the last car it crosses, so
+    // one move gets past a whole pile and nothing is left between it and the target. The test
+    // is a little wider than the walker, so a line that only just scrapes a car counts as
+    // crossing it.
+    const float wideRadius = radius + balance::kZombieRescueClearance;
+    const int steps = static_cast<int>(reach / balance::kZombieRescueStep);
+    bool exitFound = false;
+    float exitAlong = 0.0f;
+    bool inCar = false;
+    for (int i = 1; i <= steps; ++i) {
+        const float along = static_cast<float>(i) * balance::kZombieRescueStep;
+        const bool solid = overlapsCar(state, pos + dir * along, wideRadius);
+        if (inCar && !solid) {
+            exitFound = true;
+            exitAlong = along;
+        }
+        inCar = solid;
+    }
+    if (exitFound && !inCar && gap - exitAlong >= stopShort) {
+        *spot = pos + dir * exitAlong;
+        return true;
+    }
+
+    // Spots on a circle, pushed out of the cars, because free room in a pile can be too thin for
+    // a spot picked blindly to land in. Each is judged by the test given.
+    const auto tryCircle = [&](Vec2 center, float across, auto&& good) {
+        for (int i = 0; i < balance::kZombieRescueRingSpots; ++i) {
+            Vec2 at = center + fromAngle(kTau * static_cast<float>(i) / static_cast<float>(balance::kZombieRescueRingSpots)) * across;
+            for (int round = 0; round < balance::kItemPushRounds; ++round) {
+                if (!resolveCircle(state, at, radius).hit) break;
+            }
+            if (overlapsCar(state, at, radius - balance::kCarFitSlack) || !good(at)) continue;
+            *spot = at;
+            return true;
+        }
+        return false;
+    };
+
+    // Too far away to see the target: the end of the line stands in for it, and the rest of the
+    // way is done by the next rescue, if it is needed at all.
+    if (gap > balance::kZombieStuckLookAhead) {
+        const float mostGapSq = (gap - balance::kZombieProgressMargin) * (gap - balance::kZombieProgressMargin);
+        const auto closer = [&](Vec2 at) { return distanceSq(at, targetPos) < mostGapSq; };
+        for (int ring = 0; ring <= balance::kZombieRescueRings; ++ring) {
+            if (tryCircle(pos + dir * reach, static_cast<float>(ring) * balance::kZombieRescueStep, closer)) return true;
+        }
+        return false;
+    }
+
+    // The target is near, and the line ends in a car. So look around the target itself, nearest
+    // first, for a spot with a clear run up to touching distance. Stopping there matters: a car
+    // right beside the target may be in the way of the last few units, but not of a touch.
+    const auto clearRun = [&](Vec2 at) {
+        const float atGap = distance(at, targetPos);
+        if (atGap >= gap - balance::kZombieProgressMargin) return false;
+        if (atGap <= touchDistance) return true;
+        return !lineBlocked(state, at, lerp(at, targetPos, (atGap - touchDistance) / atGap), radius);
+    };
+    for (int ring = 0; ring <= balance::kZombieRescueRings; ++ring) {
+        if (tryCircle(targetPos, stopShort + static_cast<float>(ring) * balance::kZombieRescueStep, clearRun)) return true;
+    }
+    // Failing that the target is in a slot this walker can't walk into. If there is room anywhere
+    // within touching distance it goes there. If not it stays put, because a move that doesn't
+    // reach the target would only send it back to walk the same way again and again.
+    const auto inTouch = [&](Vec2 at) { return distanceSq(at, targetPos) <= touchDistance * touchDistance; };
+    for (float across = touchDistance; across > 0.0f; across -= balance::kZombieRescueStep) {
+        if (tryCircle(targetPos, across, inTouch)) return true;
+    }
+    return false;
+}
+
+Vec2 placeItem(const GameState& state, Vec2 pos) {
+    // Nearly always a single push, or none. Leaving one car can put it into the next, so a
+    // pile takes more rounds than the two that walking needs.
+    Vec2 spot = pos;
+    for (int round = 0; round < balance::kItemPushRounds; ++round) {
+        if (!resolveCircle(state, spot, balance::kItemCarRadius).hit) break;
+    }
+    if (!overlapsCar(state, spot, balance::kItemCarRadius - balance::kCarFitSlack) && collectableAt(state, spot)) return spot;
+
+    // In the middle of a pile. The nearest circle around the drop with room for the player
+    // is always somewhere the item can be picked up.
+    for (int ring = 1; ring <= balance::kItemRings; ++ring) {
+        const float across = static_cast<float>(ring) * balance::kItemRingStep;
+        for (int i = 0; i < balance::kItemRingSpots; ++i) {
+            const Vec2 at = pos + fromAngle(kTau * static_cast<float>(i) / static_cast<float>(balance::kItemRingSpots)) * across;
+            if (playerCanWalkTo(state, at)) return at;
         }
     }
-    if (!nearest) return false;
-    const float margin = radius + balance::kCarCornerRadius;
-    const Vec2 fromCar = targetPos - nearest->center;
-    *corner = nearest->center + Vec2{(fromCar.x < 0.0f ? -1.0f : 1.0f) * (nearest->half.x + margin), (fromCar.y < 0.0f ? -1.0f : 1.0f) * (nearest->half.y + margin)};
-    return true;
+    return spot;
 }
 
 }  // namespace ls::obstacles

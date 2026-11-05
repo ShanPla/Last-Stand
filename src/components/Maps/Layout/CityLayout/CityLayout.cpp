@@ -1,5 +1,7 @@
 #include "components/Maps/Layout/CityLayout/CityLayout.h"
 
+#include "data/Balance.h"
+
 #include <algorithm>
 
 namespace ls::maps::city {
@@ -14,8 +16,6 @@ constexpr int kLotEdgeTop = 24;
 constexpr int kLotEdge = 20;
 
 constexpr int kMissingRoadPercent = 12;
-constexpr int kVerticalCarPercent = 55;
-constexpr int kHorizontalCarPercent = 60;
 
 }  // namespace
 
@@ -68,7 +68,7 @@ CarPlan verticalRoadCar(uint64_t seed, int i, int j) {
     CarPlan car;
     if (!verticalRoadExists(seed, i, j)) return car;
     TileRandom random(seed, i, j, kSaltVerticalCar);
-    if (!random.chance(kVerticalCarPercent)) return car;
+    if (!random.chance(balance::kCityVerticalCarPercent)) return car;
     const int y0 = j * kChunkHeight + kRoadHalfY;
     const int y1 = (j + 1) * kChunkHeight - kRoadHalfY;
     const int lane = random.chance(50) ? -kRoadHalfX / 2 : kRoadHalfX / 2;
@@ -83,7 +83,7 @@ CarPlan horizontalRoadCar(uint64_t seed, int i, int j) {
     CarPlan car;
     if (!horizontalRoadExists(seed, i, j)) return car;
     TileRandom random(seed, i, j, kSaltHorizontalCar);
-    if (!random.chance(kHorizontalCarPercent)) return car;
+    if (!random.chance(balance::kCityHorizontalCarPercent)) return car;
     const int x0 = i * kChunkWidth + kRoadHalfX;
     const int x1 = (i + 1) * kChunkWidth - kRoadHalfX;
     const int lane = random.chance(50) ? -kRoadHalfY / 2 + 5 : kRoadHalfY / 2 + 5;

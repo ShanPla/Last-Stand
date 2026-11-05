@@ -21,8 +21,7 @@ bool fireLandmines(GameState& state, const WeaponSlot& slot, const balance::Weap
         Projectile* shot = state.projectiles.add();
         if (!shot) break;
         const float angle = baseAngle + firstOffset + static_cast<float>(i) * balance::kMineSpreadRadians;
-        Vec2 pos = origin + fromAngle(angle) * balance::kMineDropDistance;
-        obstacles::resolveCircle(state, pos, balance::kItemCarRadius);
+        const Vec2 pos = obstacles::placeItem(state, origin + fromAngle(angle) * balance::kMineDropDistance);
         shot->pos = pos;
         shot->prevPos = pos;
         shot->vel = Vec2{};

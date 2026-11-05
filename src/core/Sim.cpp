@@ -228,6 +228,8 @@ uint64_t stateHash(const GameState& state) {
         mix(enemy.bladeCooldown);
         mix(enemy.id);
         mix(enemy.stuck);
+        mixVec(enemy.stuckFrom);
+        mix(enemy.stuckQueued);
         mix(enemy.type);
         mix(enemy.state);
         mix(enemy.elite);

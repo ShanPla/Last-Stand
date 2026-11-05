@@ -1,5 +1,7 @@
 #include "components/Maps/Layout/WastelandLayout/WastelandLayout.h"
 
+#include "data/Balance.h"
+
 #include <algorithm>
 #include <cstdlib>
 
@@ -41,7 +43,7 @@ int wreckLevel(uint64_t seed, const RoadFamily& f, int index, int along) {
     const int stretch = floorDiv(along, f.across ? 1344 : 784);
     TileRandom random(seed, index, stretch, f.salt + kSaltStretch);
     const int roll = random.range(0, 99);
-    return roll < 28 ? 3 : (roll < 62 ? 1 : 0);
+    return roll < balance::kHighwayPileupStretchPercent ? 3 : (roll < balance::kHighwayPileupStretchPercent + balance::kHighwayLitteredStretchPercent ? 1 : 0);
 }
 
 }  // namespace
@@ -124,7 +126,7 @@ RoadSlot decideRoadSlot(uint64_t seed, const RoadFamily& f, int index, const Roa
     // Wrecks on the road itself, more of them in a bad stretch.
     const int level = wreckLevel(seed, f, index, result.along);
     if (burial > 120) return result;
-    const int chance = level == 3 ? 42 : (level == 1 ? 7 : 2);
+    const int chance = level == 3 ? balance::kHighwayWreckPercentPileup : (level == 1 ? balance::kHighwayWreckPercentLittered : balance::kHighwayWreckPercentEmpty);
     if (roll >= chance) {
         result.skidMarks = roll < chance + 6;
         return result;
@@ -262,7 +264,7 @@ RoadStop roadStopAt(uint64_t seed, const RoadFamily& f, int index, int stretch) 
 CarPlan gasStationCar(uint64_t seed, const RoadFamily& f, int index, int stretch, const RoadStop& stop) {
     CarPlan car;
     TileRandom random(seed, index, stretch, f.salt + kSaltGasCar);
-    if (!stop.gas || !random.chance(kGasCarPercent)) return car;
+    if (!stop.gas || !random.chance(balance::kGasStationCarPercent)) return car;
     car.x = stop.x0 + random.range(30, kStopWidth - 30);
     car.y = stop.y0 + kStopHeight - random.range(6, 16);
     car.looks = random;

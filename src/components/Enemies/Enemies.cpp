@@ -100,7 +100,65 @@ bool goesAroundCars(const Enemy& enemy) { return !ignoresCars(enemy) && !(enemy.
 
 float carRadius(const Enemy& enemy) { return enemy.radius * balance::kZombieCarRadiusShare; }
 
-// The velocity that goes around a car, and the count of how long it has been at it.
+// True when a zombie nearer the player is touching this one on the side it is trying to walk
+// toward. Waiting in a queue isn't being stuck: the queue moves once those in front get there.
+// It has to be nearer, because two zombies heading for opposite corners of a car can block
+// each other head on. Then the nearer one has nobody to wait for, so it still gets rescued.
+bool heldByCrowd(const GameState& state, const Enemy& enemy, Vec2 heading) {
+    const Vec2 dir = normalizedOr(heading, Vec2{});
+    const float ownGapSq = distanceSq(enemy.pos, state.player.pos);
+    bool held = false;
+    state.enemyGrid.query(enemy.pos, enemy.radius + balance::largestPushedEnemyRadius(), [&](int other) {
+        if (other >= state.enemies.count) return false;
+        const Enemy& neighbour = state.enemies[other];
+        if (&neighbour == &enemy || distanceSq(neighbour.pos, state.player.pos) >= ownGapSq) return false;
+        const Vec2 delta = neighbour.pos - enemy.pos;
+        const float touch = enemy.radius + neighbour.radius;
+        if (lengthSq(delta) >= touch * touch) return false;
+        // Within 60 degrees either side of where it is going.
+        held = dot(delta, dir) > 0.5f * length(delta);
+        return held;
+    });
+    return held;
+}
+
+// Counts how long a zombie has gone without getting closer to the player while cars are in
+// its way. Steering can't tell us this, because a zombie pinned among wrecks can be steered
+// on some steps and not on others, or not at all. What counts is the result, and it is
+// measured from one spot held still until the zombie beats it, so walking back and forth
+// along a car doesn't reset anything. Both distances use where the player is now, so a
+// player running away doesn't look like a zombie falling behind. The count runs every step,
+// but the sums only run every kZombieStuckCheckSteps, which keeps 2,000 zombies cheap.
+void watchProgress(const GameState& state, Enemy& enemy, Vec2 wanted, Vec2 steered) {
+    enemy.stuck++;
+    if (enemy.stuck % balance::kZombieStuckCheckSteps != 0) return;
+    const Vec2 playerPos = state.player.pos;
+    const Vec2 toPlayer = playerPos - enemy.pos;
+    const float gap = length(toPlayer);
+    const bool closer = distance(enemy.stuckFrom, playerPos) - gap >= balance::kZombieProgressMargin;
+    const bool touching = gap <= enemy.radius + balance::kPlayerRadius + balance::kZombieTouchSlack;
+    // A Spitter keeping its distance or a Charger winding up isn't trying to get closer.
+    const bool chasing = dot(wanted, toPlayer) > 0.5f * length(wanted) * gap;
+    if (closer || touching || !chasing) {
+        enemy.stuck = 0;
+        enemy.stuckQueued = 0;
+        enemy.stuckFrom = enemy.pos;
+        return;
+    }
+    // With no car on the line ahead it is free to walk on, and that will show as progress at a
+    // later check. So this stretch of time doesn't count.
+    const Vec2 ahead = enemy.pos + toPlayer * (std::min(gap, balance::kZombieStuckLookAhead) / gap);
+    bool waiting = !obstacles::lineBlocked(state, enemy.pos, ahead, carRadius(enemy));
+    // Nor does waiting in a queue, up to a point: zombies pressed together among cars can take
+    // turns holding each other back forever, and then the queue is never going to move.
+    if (!waiting && enemy.stuckQueued < balance::kZombieQueueChecks && heldByCrowd(state, enemy, steered)) {
+        enemy.stuckQueued++;
+        waiting = true;
+    }
+    if (waiting) enemy.stuck = static_cast<uint16_t>(enemy.stuck - balance::kZombieStuckCheckSteps);
+}
+
+// The velocity that goes around a car.
 Vec2 aroundCars(const GameState& state, Enemy& enemy, Vec2 wanted) {
     if (!goesAroundCars(enemy)) return wanted;
     // Heading for the player, the way around is judged by the player's position. A Spitter
@@ -108,8 +166,7 @@ Vec2 aroundCars(const GameState& state, Enemy& enemy, Vec2 wanted) {
     const Vec2 toPlayer = state.player.pos - enemy.pos;
     const Vec2 target = dot(wanted, toPlayer) > 0.0f ? state.player.pos : enemy.pos + wanted;
     const Vec2 steered = obstacles::steerAround(state, enemy.pos, carRadius(enemy), wanted, target, enemy.id);
-    if (steered.x != wanted.x || steered.y != wanted.y) enemy.stuck++;
-    else if (enemy.stuck > 0) enemy.stuck--;
+    watchProgress(state, enemy, wanted, steered);
     return steered;
 }
 
@@ -127,16 +184,18 @@ void settleAgainstCars(GameState& state) {
             enemy.knock = enemy.dir * -balance::kChargerCrashKnock;
         }
         // No pathfinding means a zombie can get caught in the pocket between two cars. If it
-        // has spent far too long going around them it is moved past the car, because a zombie
+        // has gone far too long without getting closer it is moved past them, because a zombie
         // that never arrives would make hiding behind a car safe.
         if (enemy.stuck < balance::kZombieStuckSteps) continue;
         enemy.stuck = 0;
-        Vec2 corner;
-        if (!obstacles::cornerToward(state, enemy.pos, carRadius(enemy), playerPos, &corner)) continue;
-        enemy.pos = corner;
-        obstacles::resolveCircle(state, enemy.pos, carRadius(enemy));
-        enemy.prevPos = enemy.pos;
-        pushEvent(state, EventType::ZombieUnstuck, enemy.pos);
+        enemy.stuckQueued = 0;
+        enemy.stuckFrom = enemy.pos;
+        Vec2 spot;
+        if (!obstacles::rescueSpot(state, enemy.pos, carRadius(enemy), playerPos, enemy.radius + balance::kPlayerRadius, &spot)) continue;
+        enemy.pos = spot;
+        enemy.prevPos = spot;
+        enemy.stuckFrom = spot;
+        pushEvent(state, EventType::ZombieUnstuck, spot);
     }
 }
 
@@ -165,6 +224,7 @@ Enemy* spawn(GameState& state, EnemyType type, Vec2 pos, bool elite) {
     // Nothing spawns inside a car. The boss doesn't care, and arrives through them.
     if (!isBoss) obstacles::resolveCircle(state, enemy->pos, carRadius(*enemy));
     enemy->prevPos = enemy->pos;
+    enemy->stuckFrom = enemy->pos;
     return enemy;
 }
 

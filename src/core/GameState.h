@@ -48,6 +48,7 @@ struct Enemy {
     Vec2 prevPos;       // Position at the previous step, for render interpolation.
     Vec2 knock;         // Knockback velocity, decays each step.
     Vec2 dir;           // Locked direction, for dashes and attacks.
+    Vec2 stuckFrom;     // Where it stood when it last got closer to the player.
     float hp = 0.0f;
     float maxHp = 0.0f;
     float radius = 0.0f;
@@ -58,7 +59,8 @@ struct Enemy {
     float bladeCooldown = 0.0f;  // Stops one Combat Blade hitting every step.
     uint32_t id = 0;     // Stays the same when the pool moves this item.
     EnemyType type = EnemyType::Walker;
-    uint16_t stuck = 0;  // Steps in a row spent working its way around cars.
+    uint16_t stuck = 0;  // Steps since it last got closer to the player, while cars were in the way.
+    uint8_t stuckQueued = 0;  // Checks spent waiting behind other zombies, which don't count as stuck.
     uint8_t state = 0;   // Meaning depends on the enemy type's behaviour.
     bool elite = false;
 };

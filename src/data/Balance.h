@@ -38,10 +38,47 @@ inline constexpr float kCarClearOfStart = 240.0f;    // No car this close to the
 inline constexpr float kCarCornerRadius = 8.0f;      // Rounded corners, so nothing snags on one.
 inline constexpr float kCarSteerLookAhead = 24.0f;   // How far past its edge a zombie looks for a car.
 inline constexpr float kZombieCarRadiusShare = 0.8f; // Zombies squeeze in a little closer than their full width.
-inline constexpr int kZombieStuckSteps = 330;        // A slow Brute takes about this long to walk around a bus.
 inline constexpr float kChargerCrashKnock = 120.0f;  // It bounces back off the car this hard.
 inline constexpr float kChargerCrashSeconds = 1.5f;  // Stunned for this long, longer than a normal recovery.
-inline constexpr float kItemCarRadius = 10.0f;       // How far from a car a dropped gem, pickup or mine lands.
+inline constexpr float kCarCornerClearance = 3.0f;   // A walker heads this far wide of a corner, so it doesn't clip it.
+inline constexpr float kCarFitSlack = 0.25f;         // How much overlap still counts as having fit between two cars.
+inline constexpr float kCarLineSlack = 1.0f;         // A line running along a car's side counts as clear of it.
+
+// How many cars the maps place. Painters read the same layout, so a change here moves the
+// picture and the solid box together.
+inline constexpr int kCityVerticalCarPercent = 55;      // Blocks of north-south street with a car on them.
+inline constexpr int kCityHorizontalCarPercent = 60;    // The same for east-west streets.
+inline constexpr int kHighwayPileupStretchPercent = 28;    // Stretches of highway that hold a pileup.
+inline constexpr int kHighwayLitteredStretchPercent = 34;  // Stretches with a few wrecks. The rest are nearly empty.
+inline constexpr int kHighwayWreckPercentPileup = 42;   // Road slots holding a wreck, in a pileup.
+inline constexpr int kHighwayWreckPercentLittered = 7;  // The same, in a littered stretch.
+inline constexpr int kHighwayWreckPercentEmpty = 2;     // The same, in a nearly empty stretch.
+inline constexpr int kGasStationCarPercent = 70;        // Gas stations with a car parked at the pumps.
+
+// There is no pathfinding, so a zombie can end up pinned among wrecks. It is moved past them
+// once it has gone this long without getting closer, so hiding behind a car is never safe.
+inline constexpr int kZombieStuckSteps = 330;           // A slow Brute takes about this long to walk around a bus.
+inline constexpr int kZombieStuckCheckSteps = 55;       // Progress is only judged this often, which keeps 2,000 zombies cheap.
+inline constexpr int kZombieQueueChecks = 12;           // Checks it may wait behind other zombies before that stops being an excuse.
+inline constexpr float kZombieProgressMargin = 12.0f;   // Getting this much closer counts as progress, and shuffling doesn't.
+inline constexpr float kZombieStuckLookAhead = 200.0f;  // How far ahead a car still counts as being in the way.
+inline constexpr float kZombieTouchSlack = 1.0f;        // This close to touching the player, it has arrived.
+inline constexpr float kZombieRescueStandOff = 8.0f;    // It lands this far from touching the player, if there is room.
+inline constexpr float kZombieRescueStep = 8.0f;        // Spacing of the spots tried when looking for where to land.
+inline constexpr float kZombieRescueClearance = 4.0f;   // It lands this far clear of any car if it can, so it isn't pinned again at once.
+inline constexpr int kZombieRescueRings = 12;           // Circles of spots tried when the straight line finds nothing.
+inline constexpr int kZombieRescueRingSpots = 16;       // Spots on each circle.
+static_assert(kZombieStuckSteps % kZombieStuckCheckSteps == 0, "the limit must fall on a step that checks for progress");
+
+// Dropped items land where the player can collect them, even in a pile of overlapping wrecks.
+inline constexpr float kItemCarRadius = 10.0f;     // How far from a car a dropped gem, pickup or mine lands.
+inline constexpr int kItemPushRounds = 8;          // Tries at pushing an item out of overlapping cars.
+inline constexpr float kItemRingStep = 12.0f;      // Spacing of the circles tried when pushing isn't enough.
+inline constexpr int kItemRings = 30;              // That many circles reach past the biggest pile.
+inline constexpr int kItemRingSpots = 16;          // Spots on each circle.
+inline constexpr float kItemWayOutReach = 160.0f;  // A clear straight line this long means the player can walk there.
+inline constexpr int kItemWayOutLines = 8;         // Directions tried for that line.
+inline constexpr float kItemWayOutSlack = 4.0f;    // Rounded corners let the player pass closer than the line test thinks.
 
 // XP needed to go from this level to the next.
 inline constexpr int xpForLevel(int level) { return 5 + (level - 1) * 4 + (level - 1) * (level - 1) / 3; }

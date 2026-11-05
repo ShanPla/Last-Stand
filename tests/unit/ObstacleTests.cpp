@@ -7,6 +7,7 @@
 #include "components/Obstacles/Obstacles.h"
 #include "components/Pickups/Pickups.h"
 #include "components/Weapons/Weapons.h"
+#include "components/WorldView/DashPath.h"
 #include "core/Sim.h"
 #include "data/Balance.h"
 
@@ -535,5 +536,431 @@ TEST_CASE("the browser test's long walk on seed 4 meets no car") {
             obstacles::update(*state);
             CHECK_FALSE(obstacles::overlapsCar(*state, state->player.pos, 20.0f));
         }
+    }
+}
+
+// --- Wreck piles -----------------------------------------------------------------
+
+namespace {
+
+constexpr EnemyType kAllWalkers[] = {EnemyType::Walker, EnemyType::Runner, EnemyType::Brute, EnemyType::Bloater, EnemyType::Crawler, EnemyType::Charger};
+
+// A run with nothing in it yet, and the player at this spot.
+std::unique_ptr<GameState> runAt(MapId map, uint64_t seed, Vec2 spot) {
+    auto state = std::make_unique<GameState>();
+    sim::newRun(*state, seed, Difficulty::Normal, map);
+    state->player.weaponCount = 0;
+    state->player.xpToNext = 1 << 30;
+    state->player.pos = spot;
+    state->player.prevPos = spot;
+    obstacles::update(*state);
+    return state;
+}
+
+// Spots where the player fits, right beside two wrecks standing close together. That is where
+// a zombie is most likely to get pinned. maxGap is how far apart the wrecks may be.
+std::vector<Vec2> spotsAmongWrecks(MapId map, uint64_t seed, float maxGap, int wanted) {
+    std::vector<Vec2> spots;
+    auto state = runAt(map, seed, Vec2{});
+    for (int y = -30; y <= 30; y += 3) {
+        for (int x = -30; x <= 30; x += 3) {
+            const std::vector<Obstacle> cars = listOf(map, seed, x, y);
+            for (size_t a = 0; a < cars.size(); ++a) {
+                for (size_t b = a + 1; b < cars.size(); ++b) {
+                    const float gapX = std::abs(cars[a].center.x - cars[b].center.x) - cars[a].half.x - cars[b].half.x;
+                    const float gapY = std::abs(cars[a].center.y - cars[b].center.y) - cars[a].half.y - cars[b].half.y;
+                    if (std::max(gapX, gapY) > maxGap) continue;
+                    const Vec2 middle = (cars[a].center + cars[b].center) * 0.5f;
+                    state->player.pos = middle;
+                    obstacles::update(*state);
+                    for (float dy = -60.0f; dy <= 60.0f; dy += 30.0f) {
+                        for (float dx = -60.0f; dx <= 60.0f; dx += 30.0f) {
+                            const Vec2 spot = middle + Vec2{dx, dy};
+                            if (maps::tileOf(spot.x) != x || maps::tileOf(spot.y) != y) continue;
+                            if (obstacles::overlapsCar(*state, spot, balance::kPlayerRadius)) continue;
+                            if (obstacles::distanceToNearestCar(*state, spot, 40.0f) >= 30.0f) continue;
+                            spots.push_back(spot);
+                            if (static_cast<int>(spots.size()) >= wanted) return spots;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return spots;
+}
+
+// False when the player stands in a slot so tight that this zombie can't get close enough to
+// touch him from anywhere. Then not arriving is no fault of the walking.
+bool hasRoomToTouch(const GameState& state, Vec2 playerPos, EnemyType type) {
+    const float size = balance::kEnemyStats[static_cast<int>(type)].radius;
+    const float reach = size + balance::kPlayerRadius;
+    for (float dy = -reach; dy <= reach; dy += 1.0f) {
+        for (float dx = -reach; dx <= reach; dx += 1.0f) {
+            if (dx * dx + dy * dy > reach * reach) continue;
+            if (!obstacles::overlapsCar(state, playerPos + Vec2{dx, dy}, size * balance::kZombieCarRadiusShare - 0.25f)) return true;
+        }
+    }
+    return false;
+}
+
+struct ArrivalResult {
+    int zombies = 0;
+    int stillAway = 0;  // Never arrived, though they had room to.
+    int noRoom = 0;     // Never arrived, and had no room to.
+    int rescues = 0;
+};
+
+// The player stands still with 24 zombies of 6 types placed around him. Whoever arrives leaves,
+// so a crowd around the player can't block the rest. So do zombies from the wave table.
+ArrivalResult zombiesArriving(MapId map, uint64_t seed, Vec2 spot) {
+    auto state = runAt(map, seed, spot);
+    struct Waiting {
+        uint32_t id;
+        EnemyType type;
+    };
+    std::vector<Waiting> waiting;
+    int placed = 0;
+    for (const EnemyType type : kAllWalkers) {
+        for (int i = 0; i < 4; ++i) {
+            const float angle = kTau * static_cast<float>(placed++) / 24.0f;
+            if (Enemy* enemy = enemies::spawn(*state, type, spot + fromAngle(angle) * 420.0f, false)) waiting.push_back({enemy->id, type});
+        }
+    }
+    ArrivalResult result;
+    result.zombies = static_cast<int>(waiting.size());
+    for (int step = 0; step < 120 * 60 && !waiting.empty(); ++step) {
+        keepAlive(*state);
+        state->player.invulnerable = 1.0f;
+        sim::step(*state, InputFrame{});
+        for (const SimEvent& event : state->events) {
+            if (event.type == EventType::ZombieUnstuck) {
+                ++result.rescues;
+                CHECK_FALSE(obstacles::overlapsCar(*state, event.pos, 5.0f));
+            }
+        }
+        for (int i = state->enemies.count - 1; i >= 0; --i) {
+            const Enemy& enemy = state->enemies[i];
+            const auto found = std::find_if(waiting.begin(), waiting.end(), [&](const Waiting& w) { return w.id == enemy.id; });
+            if (found == waiting.end()) {
+                state->enemies.removeAt(i);
+            } else if (distance(enemy.pos, spot) <= enemy.radius + balance::kPlayerRadius + 1.0f) {
+                waiting.erase(found);
+                state->enemies.removeAt(i);
+            }
+        }
+    }
+    for (const Waiting& w : waiting) {
+        if (hasRoomToTouch(*state, spot, w.type)) ++result.stillAway;
+        else ++result.noRoom;
+    }
+    return result;
+}
+
+// True when the player can walk from here to open ground, checked on a fine grid. This is the
+// slow and exact answer, which the game's own quick test is held to.
+bool playerWalksOutFrom(const GameState& state, Vec2 from) {
+    constexpr float kCell = 4.0f;
+    constexpr int kSpan = 62;  // About 250 units each way, past any pile.
+    std::vector<char> seen((2 * kSpan + 1) * (2 * kSpan + 1), 0);
+    std::vector<std::pair<int, int>> open{{0, 0}};
+    while (!open.empty()) {
+        const auto [x, y] = open.back();
+        open.pop_back();
+        if (x == -kSpan || x == kSpan || y == -kSpan || y == kSpan) return true;
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                char& mark = seen[(x + dx + kSpan) + (y + dy + kSpan) * (2 * kSpan + 1)];
+                if (mark) continue;
+                mark = 1;
+                const Vec2 at = from + Vec2{static_cast<float>(x + dx) * kCell, static_cast<float>(y + dy) * kCell};
+                if (!obstacles::overlapsCar(state, at, balance::kPlayerRadius)) open.push_back({x + dx, y + dy});
+            }
+        }
+    }
+    return false;
+}
+
+// True when the player can walk to somewhere within collect range of an item here.
+bool collectable(const GameState& state, Vec2 item) {
+    const float reach = balance::kPickupCollectRadius;
+    for (float dy = -reach; dy <= reach; dy += 4.0f) {
+        for (float dx = -reach; dx <= reach; dx += 4.0f) {
+            if (dx * dx + dy * dy > reach * reach) continue;
+            const Vec2 at = item + Vec2{dx, dy};
+            if (!obstacles::overlapsCar(state, at, balance::kPlayerRadius) && playerWalksOutFrom(state, at)) return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+TEST_CASE("zombies pinned in a wreck pile still arrive, as long as there is room to touch the player") {
+    ArrivalResult total;
+    const auto add = [&](MapId map, uint64_t seed, Vec2 spot) {
+        const ArrivalResult one = zombiesArriving(map, seed, spot);
+        CHECK_MESSAGE(one.stillAway == 0, "map ", static_cast<int>(map), " seed ", seed, " at ", spot.x, ", ", spot.y, ": ", one.stillAway, " zombies never arrived");
+        total.zombies += one.zombies;
+        total.stillAway += one.stillAway;
+        total.noRoom += one.noRoom;
+        total.rescues += one.rescues;
+    };
+    // A Runner used to stand at (7131.7, -17419.3) here forever without counting as stuck.
+    add(MapId::Wasteland, 1, Vec2{7140.7f, -17485.4f});
+    for (uint64_t seed = 1; seed <= 20; ++seed) {
+        for (const Vec2 spot : spotsAmongWrecks(MapId::Wasteland, seed, 30.0f, 5)) add(MapId::Wasteland, seed, spot);
+    }
+    for (uint64_t seed = 1; seed <= 5; ++seed) {
+        for (const Vec2 spot : spotsAmongWrecks(MapId::City, seed, 200.0f, 2)) add(MapId::City, seed, spot);
+    }
+    MESSAGE(total.zombies, " zombies, ", total.noRoom, " with no room to touch the player, ", total.rescues, " rescues");
+    CHECK(total.rescues > 0);
+}
+
+TEST_CASE("a rescue lands clear of every car, and closer to the player") {
+    int found = 0;
+    for (uint64_t seed = 1; seed <= 10; ++seed) {
+        for (const Vec2 target : spotsAmongWrecks(MapId::Wasteland, seed, 30.0f, 8)) {
+            auto state = runAt(MapId::Wasteland, seed, target);
+            for (int i = 0; i < 12; ++i) {
+                for (const EnemyType type : kAllWalkers) {
+                    const float size = balance::kEnemyStats[static_cast<int>(type)].radius;
+                    const float radius = size * balance::kZombieCarRadiusShare;
+                    Vec2 from = target + fromAngle(kTau * static_cast<float>(i) / 12.0f) * 120.0f;
+                    obstacles::resolveCircle(*state, from, radius);
+                    Vec2 spot;
+                    if (!obstacles::rescueSpot(*state, from, radius, target, size + balance::kPlayerRadius, &spot)) continue;
+                    ++found;
+                    CHECK_FALSE(obstacles::overlapsCar(*state, spot, radius - 0.5f));
+                    CHECK(distance(spot, target) < distance(from, target));
+                }
+            }
+        }
+    }
+    CHECK(found > 0);
+}
+
+TEST_CASE("nobody is rescued for keeping its distance, or for chasing a player who runs") {
+    SUBCASE("a Spitter circling with a car between it and the player") {
+        Obstacle car;
+        auto state = runBeside(MapId::City, 5, &car);
+        const Vec2 side{0.0f, 1.0f};
+        standClear(*state, car.center + side * (car.half.y + balance::kPlayerRadius + 1.0f), side);
+        Enemy* spitter = enemies::spawn(*state, EnemyType::Spitter, state->player.pos - side * balance::kSpitterKeepDistance, false);
+        REQUIRE(spitter);
+        const uint32_t id = spitter->id;
+        // Held in place, so it never gets closer and the car stays in the way. All that keeps
+        // it from counting as stuck is that it isn't trying to come closer.
+        const Vec2 heldAt = spitter->pos;
+        REQUIRE(obstacles::lineBlocked(*state, heldAt, state->player.pos, spitter->radius * balance::kZombieCarRadiusShare));
+        for (int step = 0; step < 60 * 30; ++step) {
+            for (Enemy& enemy : state->enemies) {
+                if (enemy.id == id) enemy.pos = heldAt;
+            }
+            keepAlive(*state);
+            state->player.invulnerable = 1.0f;
+            sim::step(*state, InputFrame{});
+            for (const SimEvent& event : state->events) CHECK(event.type != EventType::ZombieUnstuck);
+            for (int i = state->enemies.count - 1; i >= 0; --i) {
+                if (state->enemies[i].id != id) state->enemies.removeAt(i);
+            }
+            state->enemyBullets.clear();
+        }
+    }
+    SUBCASE("a pack running after the player through the cars") {
+        for (const MapId map : kBothMaps) {
+            auto state = runAt(map, 21, Vec2{});
+            for (int i = 0; i < 40; ++i) {
+                enemies::spawn(*state, kAllWalkers[i % 6], fromAngle(kTau * static_cast<float>(i) / 40.0f) * 150.0f, false);
+            }
+            std::vector<uint32_t> ids;
+            for (const Enemy& enemy : state->enemies) ids.push_back(enemy.id);
+            int rescues = 0;
+            for (int step = 0; step < 60 * 40; ++step) {
+                keepAlive(*state);
+                state->player.invulnerable = 1.0f;
+                InputFrame input;
+                input.moveX = std::cos(static_cast<float>(step) * 0.002f);
+                input.moveY = std::sin(static_cast<float>(step) * 0.002f);
+                sim::step(*state, input);
+                for (const SimEvent& event : state->events) rescues += event.type == EventType::ZombieUnstuck ? 1 : 0;
+                for (int i = state->enemies.count - 1; i >= 0; --i) {
+                    if (std::find(ids.begin(), ids.end(), state->enemies[i].id) == ids.end()) state->enemies.removeAt(i);
+                }
+            }
+            // Out of 40 zombies over 40 seconds. Now and then a car really does hold one up.
+            MESSAGE("map ", static_cast<int>(map), ": ", rescues, " rescues of a pack chasing the player");
+            CHECK(rescues <= 4);
+        }
+    }
+}
+
+TEST_CASE("a zombie pinned behind a car waits for a queue, but not forever") {
+    Obstacle car;
+    auto state = runBeside(MapId::City, 5, &car);
+    // The player is past the car's left corner, so the way there leads left along the car.
+    standClear(*state, car.center + Vec2{-car.half.x - 10.0f, car.half.y + balance::kPlayerRadius + 60.0f}, Vec2{0.0f, 1.0f});
+    Enemy* first = enemies::spawn(*state, EnemyType::Walker, car.center - Vec2{0.0f, car.half.y + 12.0f}, false);
+    REQUIRE(first);
+    const uint32_t id = first->id;
+    const Vec2 pinnedAt = first->pos;
+    Enemy* second = enemies::spawn(*state, EnemyType::Walker, pinnedAt - Vec2{first->radius * 2.0f - 1.0f, 0.0f}, false);
+    REQUIRE(second);
+    const uint32_t otherId = second->id;
+    const Vec2 otherAt = second->pos;
+    // Both are held in place, one in the way of the other, so nobody can get anywhere.
+    bool queued = false;
+    int rescuedAt = -1;
+    for (int step = 0; step < 60 * 60 && rescuedAt < 0; ++step) {
+        for (Enemy& enemy : state->enemies) {
+            if (enemy.id == id) enemy.pos = pinnedAt;
+            if (enemy.id == otherId) {
+                enemy.pos = otherAt;
+                enemy.stuck = 0;  // It has nobody to wait for, and this test is about the other one.
+            }
+        }
+        keepAlive(*state);
+        sim::step(*state, InputFrame{});
+        for (const SimEvent& event : state->events) {
+            if (event.type == EventType::ZombieUnstuck && rescuedAt < 0) rescuedAt = step;
+        }
+        for (int i = state->enemies.count - 1; i >= 0; --i) {
+            const Enemy& enemy = state->enemies[i];
+            if (enemy.id == id) queued = queued || enemy.stuckQueued > 0;
+            else if (enemy.id != otherId) state->enemies.removeAt(i);
+        }
+    }
+    CHECK(queued);
+    // Waiting doesn't count, up to the limit. After that the rescue comes as usual.
+    const int waited = balance::kZombieQueueChecks * balance::kZombieStuckCheckSteps;
+    CHECK(rescuedAt >= waited);
+    CHECK(rescuedAt <= waited + balance::kZombieStuckSteps + balance::kZombieStuckCheckSteps);
+}
+
+TEST_CASE("anything dropped on a car lands where the player can collect it") {
+    struct Target {
+        MapId map;
+        int drops;
+    };
+    for (const Target target : {Target{MapId::Wasteland, 3000}, Target{MapId::City, 600}}) {
+        int drops = 0;
+        for (uint64_t seed = 1; seed < 200 && drops < target.drops; ++seed) {
+            auto state = runAt(target.map, seed, Vec2{});
+            for (int y = -30; y <= 30 && drops < target.drops; y += 3) {
+                for (int x = -30; x <= 30 && drops < target.drops; x += 3) {
+                    const std::vector<Obstacle> cars = listOf(target.map, seed, x, y);
+                    if (cars.empty()) continue;
+                    state->player.pos = Vec2{(static_cast<float>(x) + 0.5f) * maps::kChunkWorldSize, (static_cast<float>(y) + 0.5f) * maps::kChunkWorldSize};
+                    obstacles::update(*state);
+                    for (const Obstacle& car : cars) {
+                        state->pickups.clear();
+                        state->gems.clear();
+                        pickups::spawnPickup(*state, car.center, PickupType::Heal);
+                        pickups::dropGem(*state, car.center, 1);
+                        REQUIRE(state->pickups.count == 1);
+                        REQUIRE(state->gems.count == 1);
+                        for (const Vec2 item : {state->pickups[0].pos, state->gems[0].pos}) {
+                            ++drops;
+                            CHECK_FALSE(obstacles::overlapsCar(*state, item, 1.0f));
+                            CHECK_MESSAGE(collectable(*state, item), "map ", static_cast<int>(target.map), " seed ", seed, " dropped at ", car.center.x, ", ", car.center.y);
+                        }
+                    }
+                }
+            }
+        }
+        CHECK(drops >= target.drops);
+    }
+}
+
+TEST_CASE("mines laid in a wreck pile land clear of every car") {
+    int mines = 0;
+    for (uint64_t seed = 1; seed <= 10; ++seed) {
+        for (const Vec2 spot : spotsAmongWrecks(MapId::Wasteland, seed, 30.0f, 4)) {
+            auto state = runAt(MapId::Wasteland, seed, spot);
+            weapons::grant(*state, WeaponId::Landmines);
+            enemies::spawn(*state, EnemyType::Walker, spot + Vec2{200.0f, 0.0f}, false);
+            for (int step = 0; step < 150; ++step) {
+                keepAlive(*state);
+                state->player.invulnerable = 1.0f;
+                sim::step(*state, InputFrame{});
+                for (const Projectile& shot : state->projectiles) {
+                    if (shot.kind != ProjectileKind::Mine) continue;
+                    ++mines;
+                    CHECK_FALSE(obstacles::overlapsCar(*state, shot.pos, 1.0f));
+                }
+            }
+        }
+    }
+    CHECK(mines > 0);
+}
+
+// --- Dash afterimage -------------------------------------------------------------
+
+namespace {
+
+constexpr float kGhostSpacing = 28.0f;
+
+// Plays a whole dash and records it the same way the drawing code does.
+worldview::DashPath recordDash(GameState& state, Vec2 direction) {
+    worldview::DashPath path;
+    for (int step = 0; step < 30; ++step) {
+        keepAlive(state);
+        InputFrame input;
+        input.moveX = direction.x;
+        input.moveY = direction.y;
+        input.dash = step == 0;
+        sim::step(state, input);
+        if (state.player.dashLeft <= 0.0f) break;
+        if (path.empty()) path.add(state.player.prevPos);
+        path.add(state.player.pos);
+    }
+    return path;
+}
+
+}  // namespace
+
+TEST_CASE("the dash afterimage follows where the soldier really went") {
+    SUBCASE("in the open the copies trail straight behind him") {
+        auto state = runAt(MapId::City, 1, Vec2{});
+        const Vec2 start = state->player.pos;
+        const Vec2 direction{1.0f, 0.0f};
+        const worldview::DashPath path = recordDash(*state, direction);
+        const Vec2 at = state->player.pos;
+        Vec2 ghost;
+        REQUIRE(path.pointBack(at, kGhostSpacing, &ghost));
+        CHECK(std::abs(ghost.x - (at.x - kGhostSpacing)) < 8.0f);
+        CHECK(ghost.y == doctest::Approx(start.y));
+        // No further back than where the dash began.
+        CHECK_FALSE(path.pointBack(at, distance(at, start) + 12.0f, &ghost));
+    }
+    SUBCASE("a dash into a car goes nowhere, so there are no copies") {
+        for (const MapId map : kBothMaps) {
+            Obstacle car;
+            auto state = runBeside(map, 3, &car);
+            const Vec2 side{0.0f, -1.0f};
+            standClear(*state, car.center + side * (car.half.y + balance::kPlayerRadius + 1.0f), side);
+            const Vec2 before = state->player.pos;
+            const worldview::DashPath path = recordDash(*state, side * -1.0f);
+            // Only check when nothing else let him slip past the car.
+            REQUIRE(distance(state->player.pos, before) < 2.0f);
+            Vec2 ghost;
+            CHECK_FALSE(path.pointBack(state->player.pos, kGhostSpacing, &ghost));
+        }
+    }
+    SUBCASE("sliding along a car, the copies stay on his path and out of the car") {
+        Obstacle car;
+        auto state = runBeside(MapId::City, 3, &car);
+        const Vec2 side{0.0f, -1.0f};
+        standClear(*state, car.center + side * (car.half.y + balance::kPlayerRadius + 1.0f) + Vec2{-car.half.x * 0.5f, 0.0f}, side);
+        const worldview::DashPath path = recordDash(*state, normalizedOr(Vec2{1.0f, 1.0f}, Vec2{}));
+        int ghosts = 0;
+        for (int i = 1; i <= 4; ++i) {
+            Vec2 ghost;
+            if (!path.pointBack(state->player.pos, static_cast<float>(i) * kGhostSpacing, &ghost)) continue;
+            ++ghosts;
+            CHECK_FALSE(obstacles::overlapsCar(*state, ghost, balance::kPlayerRadius - 1.0f));
+        }
+        CHECK(ghosts > 0);
     }
 }

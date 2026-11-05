@@ -103,10 +103,10 @@ inline const StructInfo& rngInfo() {
 }
 
 inline const StructInfo& enemyInfo() {
-    static const StructInfo info{"Enemy", sizeof(Enemy), 3,
-        {LS_FLT(Enemy, pos), LS_DRAW(Enemy, prevPos), LS_FLT(Enemy, knock), LS_FLT(Enemy, dir), LS_FLT(Enemy, hp),
+    static const StructInfo info{"Enemy", sizeof(Enemy), 2,
+        {LS_FLT(Enemy, pos), LS_DRAW(Enemy, prevPos), LS_FLT(Enemy, knock), LS_FLT(Enemy, dir), LS_FLT(Enemy, stuckFrom), LS_FLT(Enemy, hp),
          LS_FLT(Enemy, maxHp), LS_FLT(Enemy, radius), LS_FLT(Enemy, speed), LS_FLT(Enemy, contactDamage),
-         LS_FLT(Enemy, timer), LS_DRAW(Enemy, flash), LS_FLT(Enemy, bladeCooldown), LS_NUM(Enemy, id), LS_NUM(Enemy, stuck),
+         LS_FLT(Enemy, timer), LS_DRAW(Enemy, flash), LS_FLT(Enemy, bladeCooldown), LS_NUM(Enemy, id), LS_NUM(Enemy, stuck), LS_NUM(Enemy, stuckQueued),
          LS_NUM(Enemy, type), LS_NUM(Enemy, state), LS_NUM(Enemy, elite)}, &untouchedBytes<Enemy>};
     return info;
 }

@@ -42,8 +42,13 @@ bool lineBlocked(const GameState& state, Vec2 from, Vec2 to, float radius);
 // How far from the nearest car's edge a point is, up to limit. Used by the balance tool.
 float distanceToNearestCar(const GameState& state, Vec2 pos, float limit);
 
-// The nearest place a stuck walker can stand: past the corner of the car that is holding
-// it, on the side nearer the target. Returns false when no car is close.
-bool cornerToward(const GameState& state, Vec2 pos, float radius, Vec2 targetPos, Vec2* corner);
+// Where to move a walker that has been pinned among cars for too long: clear of every car, and
+// closer to the target, from where it can walk up to touching distance. Returns false when
+// there is no such place.
+bool rescueSpot(const GameState& state, Vec2 pos, float radius, Vec2 targetPos, float touchDistance, Vec2* spot);
+
+// Where a dropped gem, pickup or mine lands if it is dropped here: clear of every car, and
+// somewhere the player can get close enough to collect it.
+Vec2 placeItem(const GameState& state, Vec2 pos);
 
 }  // namespace ls::obstacles
