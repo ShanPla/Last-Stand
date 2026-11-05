@@ -127,7 +127,7 @@ void drawControlsHint(const Layout& l, float alpha) {
     if (alpha <= 0.01f) return;
     const float size = 22.0f * l.u;
     const char* first = moveHint();
-    const char* second = "Weapons fire on their own. Collect green gems.";
+    const char* second = "Weapons fire on their own. Collect blue gems.";
     const float width = std::max(font::measure(first, size), font::measure(second, size * 0.72f)) + 36.0f * l.u;
     const float height = size * 2.5f;
     const float maxWidth = l.width();
