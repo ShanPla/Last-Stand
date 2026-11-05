@@ -44,7 +44,7 @@ const char* moveText() {
     switch (input().lastDevice) {
         case input::Device::Touch: return "Drag anywhere to run. Tap the DASH button to dodge.";
         case input::Device::Gamepad: return "Left stick to run. RB dashes, and makes you untouchable for a moment.";
-        default: return "WASD or arrows to run. Shift or Space dashes, and makes you untouchable for a moment.";
+        default: return "WASD or arrows to run. Space or Shift dashes, and makes you untouchable for a moment.";
     }
 }
 

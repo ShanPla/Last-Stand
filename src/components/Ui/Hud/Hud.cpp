@@ -119,7 +119,7 @@ const char* moveHint() {
     switch (input().lastDevice) {
         case input::Device::Touch: return "Drag to move, tap DASH to dash";
         case input::Device::Gamepad: return "Left stick to move, RB to dash";
-        default: return "WASD or arrows to move, Shift to dash";
+        default: return "WASD or arrows to move, Space to dash";
     }
 }
 
