@@ -1,5 +1,7 @@
 #include "core/App.h"
 #include "components/Ui/Icons/Icons.h"
+#include "core/Platform.h"
+#include "data/Theme.h"
 
 #include "raylib.h"
 
@@ -31,7 +33,8 @@ static void setWindowIconFromCode() {
 }
 #endif
 
-int main() {
+int main(int argc, char** argv) {
+    ls::platform::setCommandLine(argc, argv);  // For --debug on the native build.
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     SetTraceLogLevel(LOG_WARNING);
     InitWindow(1280, 720, "Last Stand");

@@ -1,5 +1,7 @@
 #include "core/Platform.h"
 
+#include "core/DebugSwitch.h"
+
 #include "raylib.h"
 
 #ifdef __EMSCRIPTEN__
@@ -239,11 +241,34 @@ void syncCanvasSize(float renderScale) {
 #endif
 }
 
+#ifndef __EMSCRIPTEN__
+namespace {
+int g_argc = 0;
+char** g_argv = nullptr;
+}  // namespace
+#endif
+
+void setCommandLine(int argc, char** argv) {
+#ifndef __EMSCRIPTEN__
+    g_argc = argc;
+    g_argv = argv;
+#else
+    (void)argc;
+    (void)argv;
+#endif
+}
+
 bool debugEnabled() {
 #ifdef __EMSCRIPTEN__
     return EM_ASM_INT({ return new URLSearchParams(location.search).has('debug') ? 1 : 0; }) != 0;
 #else
-    return true;
+    // The build system defines LS_RELEASE_BUILD for Release builds, which are the ones players get.
+#ifdef LS_RELEASE_BUILD
+    constexpr bool kReleaseBuild = true;
+#else
+    constexpr bool kReleaseBuild = false;
+#endif
+    return nativeDebugWanted(kReleaseBuild, g_argc, g_argv);
 #endif
 }
 

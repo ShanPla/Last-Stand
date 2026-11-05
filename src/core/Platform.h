@@ -23,8 +23,12 @@ bool consumeTouchStart(float* x, float* y);
 // True once after the tab was hidden or the window lost focus, so the game can pause.
 bool consumeFocusLost();
 
-// True when the page was opened with ?debug, which shows the debug overlay.
+// True when the debug overlay should show: the page was opened with ?debug, or on native
+// when the build is not a Release build or the program was started with --debug.
 bool debugEnabled();
+
+// Remembers the program's arguments, for --debug. Native only, and call it before init.
+void setCommandLine(int argc, char** argv);
 
 // Space taken by phone notches and rounded corners, in drawing buffer pixels.
 struct SafeInsets {

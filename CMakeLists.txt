@@ -108,6 +108,10 @@ endif()
 
 add_executable(laststand src/main.cpp src/core/Platform.cpp ${LS_APP_SOURCE} ${LS_GAME_SOURCES} "${LS_FONT_CPP}")
 target_link_libraries(laststand PRIVATE ls_sim ls_audio raylib)
+# Release builds are the ones players get. They hide the debug overlay (native: unless run
+# with --debug). The check is on the configuration, not NDEBUG, because the RelWithDebInfo
+# build used for development also defines NDEBUG.
+target_compile_definitions(laststand PRIVATE "$<$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>:LS_RELEASE_BUILD>")
 # The native save folder code needs windows.h, so it is a file of its own, apart from raylib.
 if(NOT EMSCRIPTEN)
   target_sources(laststand PRIVATE src/core/NativePaths.cpp)
