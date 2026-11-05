@@ -1,5 +1,7 @@
 #include "components/Audio/Router/Router.h"
 
+#include "data/Balance.h"
+
 #include <algorithm>
 
 namespace ls::audio::router {
@@ -67,6 +69,12 @@ bool Router::route(const SimEvent& event, float now, PlayRequest& out) {
         case EventType::PlayerHit: return start(SfxId::PlayerHit, SfxId::PlayerHit, now, 0.75f + std::min(0.25f, event.value / 80.0f), 0.03f, out);
         case EventType::PlayerDied: return start(SfxId::PlayerDied, SfxId::PlayerDied, now, 1.0f, 0.0f, out);
         case EventType::ZombieUnstuck: return false;  // Only the balance tool counts these.
+        case EventType::CarCrushed: {
+            // Louder the closer it is to the player, and silent when it is far out of sight.
+            const float loudness = 1.0f - event.value / balance::kCarCrushHeardWithin;
+            if (loudness <= 0.0f) return false;
+            return start(SfxId::CarCrush, SfxId::CarCrush, now, 0.45f + 0.55f * loudness, 0.07f, out);
+        }
         case EventType::PlayerDashed: return start(SfxId::PlayerDash, SfxId::PlayerDash, now, 1.0f, 0.03f, out);
         case EventType::GemCollected: {
             if (!throttle_.allow(SfxId::Gem0, now, sfx::info(SfxId::Gem0).minInterval)) return false;

@@ -37,6 +37,29 @@ struct Obstacle {
     CarSprite sprite = CarSprite::CitySide;
 };
 
+// Names one car for as long as a run lasts. Where its feet stand on the map comes from the
+// seed alone, so this stays the same however many tile lists the car appears in, and however
+// often they are worked out again. Two plain numbers, so it can sit in the game state.
+struct CarId {
+    int texelX = 0;
+    int texelY = 0;
+};
+
+inline bool isCar(CarId id, const Obstacle& obstacle) { return id.texelX == obstacle.texelX && id.texelY == obstacle.texelY; }
+
+// A read-only look at the cars the boss has flattened, for the painters and the chunks.
+struct CrushedCars {
+    const CarId* items = nullptr;
+    int count = 0;
+
+    bool holds(int texelX, int texelY) const {
+        for (int i = 0; i < count; ++i) {
+            if (items[i].texelX == texelX && items[i].texelY == texelY) return true;
+        }
+        return false;
+    }
+};
+
 struct TexelRect {
     int x0, y0, x1, y1;  // From (x0, y0) up to but not including (x1, y1).
 };

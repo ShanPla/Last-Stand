@@ -377,7 +377,7 @@ TEST_CASE("the router limits rates and picks the right sound") {
             const bool accepted = r4.route(makeEvent(eventType, static_cast<uint8_t>(detail)), clock, req);
             CAPTURE(type);
             CAPTURE(detail);
-            if (type > static_cast<int>(EventType::PlayerDashed)) CHECK_FALSE(accepted);
+            if (type > static_cast<int>(EventType::CarCrushed)) CHECK_FALSE(accepted);
             // These three look the sound up in a table by detail, so a detail past the table is refused.
             if (eventType == EventType::WeaponFired && detail >= static_cast<int>(WeaponId::Count)) CHECK_FALSE(accepted);
             if (eventType == EventType::EnemyHit && detail >= static_cast<int>(WeaponId::Count)) CHECK_FALSE(accepted);

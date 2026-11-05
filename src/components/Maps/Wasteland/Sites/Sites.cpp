@@ -139,7 +139,7 @@ void gasStation(Paint& p, TileRandom& r, int x0, int y0, int x1, int y1, CarPlan
 
     // A car that never got its last tank, tires and a burning drum someone left.
     if (car.exists) {
-        CarMark mark(p);
+        CarMark mark(p, CarSprite::WreckSide, car.x, car.y);
         carSide(p, car.x, car.y, car.looks);
     }
     tirePile(p, x0 + r.range(8, 22), y1 - r.range(6, 22), r);
@@ -293,7 +293,7 @@ void wreckYard(Paint& p, TileRandom& r, const SiteSpot& spot, LightList& lights)
         if (!wreckYardSprite(item.kind, &sprite)) {
             tirePile(p, item.x, item.y, r);
         } else if (clearOfStart(makeObstacle(sprite, item.x, item.y))) {
-            CarMark mark(p);
+            CarMark mark(p, sprite, item.x, item.y);
             if (sprite == CarSprite::WreckSide) carSide(p, item.x, item.y, r);
             else if (sprite == CarSprite::WreckOnRoof) carOnRoof(p, item.x, item.y, r);
             else busSide(p, item.x, item.y, r);

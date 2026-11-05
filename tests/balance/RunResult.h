@@ -65,6 +65,7 @@ struct RunResult {
     int dashes = 0;
     float carHugSeconds = 0.0f;  // Time with a solid car this close, which would show hiding.
     int zombiesUnstuck = 0;      // Zombies that got caught among cars and had to be moved.
+    int carsCrushed = 0;         // Cars the boss flattened.
 
     std::vector<float> sampleZombies;  // One entry every kSampleSeconds.
     std::vector<float> sampleHp;

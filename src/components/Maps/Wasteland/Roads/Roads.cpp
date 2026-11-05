@@ -318,7 +318,7 @@ void furnishRoad(Paint& p, const Desert& d, const Span& s, int slot, LightList& 
     }
     if (!decided.wreck) return;
     {
-        CarMark mark(p);
+        CarMark mark(p, decided.sprite, decided.x, decided.y);
         switch (decided.sprite) {
             case CarSprite::BusSide: busSide(p, decided.x, decided.y, random); break;
             case CarSprite::TankerSide: tankerSide(p, decided.x, decided.y, random); break;

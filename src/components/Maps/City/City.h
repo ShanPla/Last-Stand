@@ -7,6 +7,6 @@
 namespace ls::maps::city {
 
 void paintGroundRows(uint64_t seed, int chunkX, int chunkY, Color* pixels, int rowFrom, int rowTo);
-int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights);
+int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed);
 
 }  // namespace ls::maps::city

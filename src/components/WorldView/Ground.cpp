@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 
 namespace ls::worldview {
 
@@ -50,6 +51,8 @@ struct Chunk {
     int lightCount = 0;
     maps::Obstacle cars[maps::kMaxObstaclesPerTile];
     int carCount = 0;
+    int flatCars = 0;    // How many cars of its tile were painted flat.
+    bool stale = false;  // On screen, and its picture still shows a car that has gone flat.
 };
 
 Chunk g_pool[kPoolSize];
@@ -74,9 +77,37 @@ struct PaintJob {
     int x = 0;
     int y = 0;
     int bandsDone = 0;
+    bool repaint = false;  // For a chunk on screen whose picture has gone out of date.
 };
 
 PaintJob g_job;
+
+// A chunk on screen can't change in one go without a hitch, so its new picture is painted a
+// piece per frame like any other, and goes up to one of these spare textures. Only when every
+// chunk showing the crushed car is ready do they all swap at once, so a car over a chunk's
+// edge never shows half flat. A car's picture can touch at most four chunks.
+constexpr int kSpareCount = 4;
+
+struct SparePicture {
+    Texture2D texture{};
+    bool ready = false;
+    int x = 0;
+    int y = 0;
+    maps::Light lights[maps::kMaxLightsPerChunk];
+    int lightCount = 0;
+};
+
+SparePicture g_spares[kSpareCount];
+maps::CrushedCars g_crushed;  // What the simulation said this frame.
+int g_crushedSeen = 0;        // How many of those the chunks already know about.
+int g_lastSwapSize = 0;       // For the tests: how many chunks changed picture in one go, last time.
+double g_slowestUpdate = 0.0;  // For the timing test: the longest updateGround, in seconds.
+
+// Times updateGround, however it returns.
+struct UpdateTimer {
+    double started = GetTime();
+    ~UpdateTimer() { g_slowestUpdate = std::max(g_slowestUpdate, GetTime() - started); }
+};
 
 struct ChunkRange {
     int x0, y0, x1, y1;  // Inclusive.
@@ -105,41 +136,65 @@ Chunk* findChunk(int x, int y, uint64_t seed) {
     return nullptr;
 }
 
+void loadTexture(Texture2D& texture, int width, int height) {
+    if (texture.id != 0) rlUnloadTexture(texture.id);
+    texture.id = rlLoadTexture(nullptr, width, height, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
+    texture.width = width;
+    texture.height = height;
+    texture.mipmaps = 1;
+    texture.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    // Nearest filtering keeps the ground's pixels square, matching the sprites.
+    SetTextureFilter(texture, TEXTURE_FILTER_POINT);
+    SetTextureWrap(texture, TEXTURE_WRAP_CLAMP);
+}
+
 void loadPoolTextures() {
     const int width = g_halfResolution ? maps::kChunkWidth / 2 : maps::kChunkWidth;
     const int height = g_halfResolution ? maps::kChunkHeight / 2 : maps::kChunkHeight;
     for (Chunk& chunk : g_pool) {
-        if (chunk.texture.id != 0) rlUnloadTexture(chunk.texture.id);
         chunk.ready = false;
-        chunk.texture.id = rlLoadTexture(nullptr, width, height, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
-        chunk.texture.width = width;
-        chunk.texture.height = height;
-        chunk.texture.mipmaps = 1;
-        chunk.texture.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
-        // Nearest filtering keeps the ground's pixels square, matching the sprites.
-        SetTextureFilter(chunk.texture, TEXTURE_FILTER_POINT);
-        SetTextureWrap(chunk.texture, TEXTURE_WRAP_CLAMP);
+        loadTexture(chunk.texture, width, height);
+    }
+    for (SparePicture& spare : g_spares) {
+        spare.ready = false;
+        loadTexture(spare.texture, width, height);
     }
 }
 
-// Fills in everything about a chunk except its lights, and sends g_pixels to its texture.
-void storeChunk(Chunk& chunk, int x, int y, uint64_t seed) {
-    g_paintCount++;
-    chunk.carCount = maps::obstaclesInTile(g_map, seed, x, y, chunk.cars, maps::kMaxObstaclesPerTile);
-    chunk.x = x;
-    chunk.y = y;
-    chunk.seed = seed;
-    chunk.ready = true;
-    chunk.lastUsed = g_frame;
+// Sends g_pixels to a texture.
+void uploadPixels(Texture2D& texture) {
     if (g_halfResolution) {
         for (int py = 0; py < maps::kChunkHeight / 2; ++py) {
             for (int px = 0; px < maps::kChunkWidth / 2; ++px) {
                 g_halfPixels[py * (maps::kChunkWidth / 2) + px] = g_pixels[py * 2 * maps::kChunkWidth + px * 2];
             }
         }
-        UpdateTexture(chunk.texture, g_halfPixels);
+        UpdateTexture(texture, g_halfPixels);
     } else {
-        UpdateTexture(chunk.texture, g_pixels);
+        UpdateTexture(texture, g_pixels);
+    }
+}
+
+// Fills in everything about a chunk except its lights, and sends g_pixels to its texture.
+void storeChunk(Chunk& chunk, int x, int y, uint64_t seed) {
+    g_paintCount++;
+    // Its list is for the depth pass and the see-through figures, so a flat car stays out.
+    const int listed = maps::obstaclesInTile(g_map, seed, x, y, chunk.cars, maps::kMaxObstaclesPerTile);
+    chunk.carCount = 0;
+    for (int i = 0; i < listed; ++i) {
+        if (!g_crushed.holds(chunk.cars[i].texelX, chunk.cars[i].texelY)) chunk.cars[chunk.carCount++] = chunk.cars[i];
+    }
+    chunk.flatCars = listed - chunk.carCount;
+    chunk.stale = false;
+    chunk.x = x;
+    chunk.y = y;
+    chunk.seed = seed;
+    chunk.ready = true;
+    chunk.lastUsed = g_frame;
+    uploadPixels(chunk.texture);
+    // This picture is the newest, so one waiting for the same chunk must not replace it.
+    for (SparePicture& spare : g_spares) {
+        if (spare.x == x && spare.y == y) spare.ready = false;
     }
 }
 
@@ -149,8 +204,110 @@ void paintWhole(Chunk& chunk, int x, int y, uint64_t seed) {
     g_job.active = false;
     g_paintStages++;
     g_paintsInOneGo++;
-    chunk.lightCount = maps::renderChunk(g_map, seed, x, y, g_pixels, chunk.lights);
+    chunk.lightCount = maps::renderChunk(g_map, seed, x, y, g_pixels, chunk.lights, g_crushed);
     storeChunk(chunk, x, y, seed);
+}
+
+// Tells the chunks about cars that have gone flat since last frame. The depth pass and the
+// see-through figures drop the car at once, since those cost nothing. A chunk on screen is
+// marked to be painted again, and one out of sight is just forgotten until it is needed.
+void noteNewlyCrushed(const ChunkRange& visible, uint64_t seed) {
+    // A shorter list means a new run with the same seed. Flat pictures would now be wrong.
+    if (g_crushed.count < g_crushedSeen) {
+        for (Chunk& chunk : g_pool) {
+            if (chunk.flatCars > 0) chunk.ready = false;
+        }
+        for (SparePicture& spare : g_spares) spare.ready = false;
+        g_crushedSeen = 0;
+    }
+    for (; g_crushedSeen < g_crushed.count; ++g_crushedSeen) {
+        const maps::CarId car = g_crushed.items[g_crushedSeen];
+        for (Chunk& chunk : g_pool) {
+            if (!chunk.ready || chunk.seed != seed) continue;
+            int kept = 0;
+            bool touches = false;
+            for (int i = 0; i < chunk.carCount; ++i) {
+                if (!maps::isCar(car, chunk.cars[i])) {
+                    chunk.cars[kept++] = chunk.cars[i];
+                    continue;
+                }
+                // A tile's list reaches past its edges, so it can name a car with no pixels here.
+                const maps::TexelRect reach = maps::flatCarReach(chunk.cars[i]);
+                touches = reach.x1 > chunk.x * maps::kChunkWidth && reach.x0 < (chunk.x + 1) * maps::kChunkWidth && reach.y1 > chunk.y * maps::kChunkHeight && reach.y0 < (chunk.y + 1) * maps::kChunkHeight;
+            }
+            if (kept == chunk.carCount) continue;
+            chunk.carCount = kept;
+            chunk.flatCars++;
+            if (!touches) continue;
+            const bool onScreen = chunk.x >= visible.x0 && chunk.x <= visible.x1 && chunk.y >= visible.y0 && chunk.y <= visible.y1;
+            if (onScreen) chunk.stale = true;
+            else chunk.ready = false;
+        }
+    }
+}
+
+void swapInSpares(uint64_t seed) {
+    int swapped = 0;
+    for (SparePicture& spare : g_spares) {
+        if (!spare.ready) continue;
+        spare.ready = false;
+        Chunk* chunk = findChunk(spare.x, spare.y, seed);
+        if (!chunk) continue;
+        std::swap(chunk->texture, spare.texture);
+        chunk->lightCount = spare.lightCount;
+        std::copy(spare.lights, spare.lights + spare.lightCount, chunk->lights);
+        swapped++;
+    }
+    if (swapped > 0) g_lastSwapSize = swapped;
+}
+
+// The spare already holding this chunk, or a free one. If all are in use the ones ready now
+// go up first, which only happens when the boss flattens cars on many chunks in a few frames.
+SparePicture& spareFor(int x, int y, uint64_t seed) {
+    for (SparePicture& spare : g_spares) {
+        if (spare.ready && spare.x == x && spare.y == y) return spare;
+    }
+    for (SparePicture& spare : g_spares) {
+        if (!spare.ready) return spare;
+    }
+    swapInSpares(seed);
+    return g_spares[0];
+}
+
+// One piece of painting a chunk that is on screen and out of date. Returns true when it used
+// up this frame's painting. These come before the chunks ahead of the camera, because the
+// dust of a crush only hides the change for a moment.
+bool stepRepaint(uint64_t seed) {
+    Chunk* stale = nullptr;
+    for (Chunk& chunk : g_pool) {
+        if (chunk.ready && chunk.stale && chunk.seed == seed) {
+            stale = &chunk;
+            break;
+        }
+    }
+    if (!stale) {
+        swapInSpares(seed);
+        return false;
+    }
+    if (!g_job.active || !g_job.repaint || g_job.x != stale->x || g_job.y != stale->y) g_job = PaintJob{true, stale->x, stale->y, 0, true};
+    g_paintStages++;
+    if (g_job.bandsDone < kGroundBands) {
+        const int rowFrom = g_job.bandsDone * kBandRows;
+        const int rowTo = std::min(rowFrom + kBandRows, static_cast<int>(maps::kChunkHeight));
+        maps::paintGroundRows(g_map, seed, g_job.x, g_job.y, g_pixels, rowFrom, rowTo);
+        g_job.bandsDone++;
+        return true;
+    }
+    SparePicture& spare = spareFor(g_job.x, g_job.y, seed);
+    spare.lightCount = maps::paintDetails(g_map, seed, g_job.x, g_job.y, g_pixels, spare.lights, g_crushed);
+    uploadPixels(spare.texture);
+    spare.x = g_job.x;
+    spare.y = g_job.y;
+    spare.ready = true;
+    stale->stale = false;
+    g_paintCount++;
+    g_job.active = false;
+    return true;
 }
 
 // A slot keeps its old chunk until something needs the room, so after a new run starts it can
@@ -187,7 +344,7 @@ void stepPaintJob(const ChunkRange& visible, uint64_t seed) {
         return;
     }
     Chunk& chunk = evictionTarget(visible, seed);
-    chunk.lightCount = maps::paintDetails(g_map, seed, g_job.x, g_job.y, g_pixels, chunk.lights);
+    chunk.lightCount = maps::paintDetails(g_map, seed, g_job.x, g_job.y, g_pixels, chunk.lights, g_crushed);
     storeChunk(chunk, g_job.x, g_job.y, seed);
     g_job.active = false;
 }
@@ -197,6 +354,8 @@ void stepPaintJob(const ChunkRange& visible, uint64_t seed) {
 void initGround() { loadPoolTextures(); }
 
 int groundPaintCount() { return g_paintCount; }
+
+int groundLastSwapSize() { return g_lastSwapSize; }
 
 // For the timing hook below. Marks the slot as empty, so the real picture gets painted again.
 void uploadSpareForTiming() {
@@ -212,11 +371,17 @@ void setGroundHalfResolution(bool half) {
     if (g_pool[0].texture.id != 0) loadPoolTextures();
 }
 
-void updateGround(const View& view, uint64_t seed, maps::MapId map) {
+void updateGround(const View& view, uint64_t seed, maps::MapId map, maps::CrushedCars crushed) {
+    const UpdateTimer timer;
     g_frame++;
     // A new seed makes the picture so far wrong.
-    if (seed != g_seed) g_job.active = false;
+    if (seed != g_seed) {
+        g_job.active = false;
+        for (SparePicture& spare : g_spares) spare.ready = false;
+        g_crushedSeen = 0;
+    }
     g_seed = seed;
+    g_crushed = crushed;
     // A new map makes every painted chunk wrong, along with its lights. Only the flags
     // change here: the textures stay, and get painted over.
     if (map != g_map) {
@@ -226,9 +391,12 @@ void updateGround(const View& view, uint64_t seed, maps::MapId map) {
             chunk.ready = false;
             chunk.lightCount = 0;
         }
+        for (SparePicture& spare : g_spares) spare.ready = false;
+        g_crushedSeen = 0;
     }
     const ChunkRange visible = visibleChunks(view, 0.0f);
     const ChunkRange ahead = visibleChunks(view, kPaintAheadWorld);
+    noteNewlyCrushed(visible, seed);
 
     // Anything on screen must be there now. This only paints several at once on the
     // first frame, after a jump, or when a run starts with a new seed.
@@ -241,6 +409,8 @@ void updateGround(const View& view, uint64_t seed, maps::MapId map) {
             }
         }
     }
+
+    if (stepRepaint(seed)) return;
 
     // One piece of one chunk per frame ahead of the camera, so walking never causes a hitch.
     bool anyMissing = false;
@@ -266,7 +436,7 @@ void updateGround(const View& view, uint64_t seed, maps::MapId map) {
     if (!jobStillNeeded) g_job.active = false;
     if (!g_job.active) {
         if (!anyMissing) return;
-        g_job = PaintJob{true, firstMissingX, firstMissingY, 0};
+        g_job = PaintJob{true, firstMissingX, firstMissingY, 0, false};
     }
     stepPaintJob(visible, seed);
 }
@@ -583,6 +753,115 @@ EMSCRIPTEN_KEEPALIVE const char* ls_check_staged_paint(int map, int seed, int re
         }
     }
     std::snprintf(json, sizeof(json), "{\"chunks\":%d,\"pixels\":%d,\"lights\":%d}", chunks, differentPixels, differentLights);
+    return json;
+}
+
+// Test hook: the slowest updateGround since the last call, in milliseconds.
+EMSCRIPTEN_KEEPALIVE double ls_ground_slowest_ms() {
+    const double slowest = ls::worldview::g_slowestUpdate * 1000.0;
+    ls::worldview::g_slowestUpdate = 0.0;
+    return slowest;
+}
+
+// Test hook: flattens each car around the start, one at a time, and paints every chunk that
+// can show it, with and without the flat car, whole and in the job's pieces. It counts:
+// pixels changed outside the car's own reach, which means the rest of the map moved; marked
+// pixels left where only this car stood, which would mean it still covers figures; chunks
+// that started from a different private picture, which would mean a visible seam; and chunks
+// that should show the car but never painted it, which would cut the picture at an edge.
+EMSCRIPTEN_KEEPALIVE const char* ls_check_flat_cars(int map, int seed, int reach) {
+    using namespace ls;
+    static char json[192];
+    static Color intact[maps::kChunkWidth * maps::kChunkHeight];
+    static Color flat[maps::kChunkWidth * maps::kChunkHeight];
+    const maps::MapId id = maps::mapFromIndex(map);
+    const uint64_t wide = static_cast<uint64_t>(seed);
+    worldview::g_job.active = false;
+    maps::Light lights[maps::kMaxLightsPerChunk];
+
+    int cars = 0, overEdge = 0, unchanged = 0, outside = 0, stillMarked = 0, seams = 0, missed = 0, stagedDifferent = 0;
+    maps::CarId done[256];
+    int doneCount = 0;
+    for (int tileY = -reach; tileY <= reach; ++tileY) {
+        for (int tileX = -reach; tileX <= reach; ++tileX) {
+            maps::Obstacle list[maps::kMaxObstaclesPerTile];
+            const int count = maps::obstaclesInTile(id, wide, tileX, tileY, list, maps::kMaxObstaclesPerTile);
+            for (int n = 0; n < count && doneCount < 256; ++n) {
+                const maps::Obstacle& car = list[n];
+                const maps::CarId carId{car.texelX, car.texelY};
+                if (maps::CrushedCars{done, doneCount}.holds(car.texelX, car.texelY)) continue;
+                done[doneCount++] = carId;
+                cars++;
+                const maps::CrushedCars crushed{&carId, 1};
+                const maps::TexelRect rect = maps::spriteRect(car);
+                const maps::TexelRect outer = maps::flatCarReach(car);
+                const int chunk0X = static_cast<int>(std::floor(static_cast<float>(outer.x0) / maps::kChunkWidth));
+                const int chunk1X = static_cast<int>(std::floor(static_cast<float>(outer.x1) / maps::kChunkWidth));
+                const int chunk0Y = static_cast<int>(std::floor(static_cast<float>(outer.y0) / maps::kChunkHeight));
+                const int chunk1Y = static_cast<int>(std::floor(static_cast<float>(outer.y1) / maps::kChunkHeight));
+                if (static_cast<int>(std::floor(static_cast<float>(rect.x0) / maps::kChunkWidth)) != static_cast<int>(std::floor(static_cast<float>(rect.x1 - 1) / maps::kChunkWidth)) ||
+                    static_cast<int>(std::floor(static_cast<float>(rect.y0) / maps::kChunkHeight)) != static_cast<int>(std::floor(static_cast<float>(rect.y1 - 1) / maps::kChunkHeight))) {
+                    overEdge++;
+                }
+                uint32_t firstSum = 0;
+                int changed = 0;
+                for (int cy = chunk0Y; cy <= chunk1Y; ++cy) {
+                    for (int cx = chunk0X; cx <= chunk1X; ++cx) {
+                        const int left = cx * maps::kChunkWidth;
+                        const int top = cy * maps::kChunkHeight;
+                        maps::renderChunk(id, wide, cx, cy, intact, lights);
+                        uint32_t sum = 0;
+                        maps::setFlatCarProbe(&sum);
+                        maps::renderChunk(id, wide, cx, cy, flat, lights, crushed);
+                        maps::setFlatCarProbe(nullptr);
+                        if (sum != 0u && firstSum != 0u && sum != firstSum) seams++;
+                        if (sum != 0u) firstSum = sum;
+                        // A flat car spreads and throws bits a few texels past its old picture.
+                        constexpr int kStamp = 7;
+                        const bool showsCar = rect.x0 - kStamp < left + maps::kChunkWidth && rect.x1 + kStamp > left && rect.y0 < top + maps::kChunkHeight && rect.y1 + kStamp > top;
+                        if (showsCar && sum == 0u) missed++;
+                        for (int py = 0; py < maps::kChunkHeight; ++py) {
+                            for (int px = 0; px < maps::kChunkWidth; ++px) {
+                                const Color& a = intact[py * maps::kChunkWidth + px];
+                                const Color& b = flat[py * maps::kChunkWidth + px];
+                                const int gx = left + px;
+                                const int gy = top + py;
+                                if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) {
+                                    changed++;
+                                    if (gx < outer.x0 || gx >= outer.x1 || gy < outer.y0 || gy >= outer.y1) outside++;
+                                }
+                                if (b.a != maps::kCarBody || gx < rect.x0 || gx >= rect.x1 || gy < rect.y0 || gy >= rect.y1) continue;
+                                // Another car in a pile may well stand here, and keeps its mark.
+                                bool other = false;
+                                maps::Obstacle near[maps::kMaxObstaclesPerTile];
+                                const int nearCount = maps::obstaclesInTile(id, wide, cx, cy, near, maps::kMaxObstaclesPerTile);
+                                for (int k = 0; k < nearCount && !other; ++k) {
+                                    if (maps::isCar(carId, near[k])) continue;
+                                    const maps::TexelRect them = maps::flatCarReach(near[k]);
+                                    other = gx >= them.x0 && gx < them.x1 && gy >= them.y0 && gy < them.y1;
+                                }
+                                if (!other) stillMarked++;
+                            }
+                        }
+                        // Whole or in pieces, over a dirty buffer: the same picture.
+                        for (int band = 0; band < worldview::kGroundBands; ++band) {
+                            const int rowFrom = band * worldview::kBandRows;
+                            maps::paintGroundRows(id, wide, cx, cy, worldview::g_pixels, rowFrom, std::min(rowFrom + worldview::kBandRows, static_cast<int>(maps::kChunkHeight)));
+                        }
+                        maps::paintDetails(id, wide, cx, cy, worldview::g_pixels, lights, crushed);
+                        for (int i = 0; i < maps::kChunkWidth * maps::kChunkHeight; ++i) {
+                            const Color& a = flat[i];
+                            const Color& b = worldview::g_pixels[i];
+                            if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) stagedDifferent++;
+                        }
+                    }
+                }
+                if (changed == 0) unchanged++;
+            }
+        }
+    }
+    std::snprintf(json, sizeof(json), "{\"cars\":%d,\"overEdge\":%d,\"unchanged\":%d,\"outside\":%d,\"stillMarked\":%d,\"seams\":%d,\"missed\":%d,\"stagedDifferent\":%d}", cars, overEdge, unchanged, outside, stillMarked, seams, missed,
+                  stagedDifferent);
     return json;
 }
 

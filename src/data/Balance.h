@@ -318,6 +318,10 @@ inline constexpr float kBossLeashDistance = 560.0f;         // Further than this
 // cycle. The fastest player (speed passive 5, dashing whenever allowed) averages 327 units per
 // second, or 2940 per cycle. So the boss always gains, and running away can't stall a run.
 inline constexpr float kBossCatchUpSpeed = 430.0f;
+// A car goes flat once the boss's body reaches this far into its box. A little past touching,
+// so the crush lands as it steps onto the car and not while there is still a gap between them.
+inline constexpr float kBossCrushOverlap = 6.0f;
+inline constexpr float kCarCrushHeardWithin = 900.0f;       // A crush further from the player than this is silent.
 inline constexpr float kBossAddsPerSecond = 0.2f;           // Walkers during the boss fight, which keep XP coming.
 inline constexpr float kBossAmmoCrateSeconds = 12.0f;       // A crate lands this often, so guns can't stay empty.
 inline constexpr float kBossAmmoCrateDistance = 50.0f;      // How far from the player it lands.

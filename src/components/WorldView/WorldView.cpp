@@ -405,7 +405,7 @@ void draw(const GameState& state, float alpha) {
     if (!g_ready) init();
     fitTargetToWindow();
     const Vec2 ringCenter = aimCamera(state, alpha);
-    updateGround(g_view, state.run.seed, state.run.map);
+    updateGround(g_view, state.run.seed, state.run.map, maps::CrushedCars{state.run.crushed, state.run.crushedCount});
 
     const Vec2 playerWorld = lerp(state.player.prevPos, state.player.pos, alpha);
     updateSoldierAnimation(playerWorld, GetFrameTime());
@@ -552,7 +552,7 @@ extern "C" {
 // Test hook: what the renderer drew on its last frame, which the simulation can't report.
 EMSCRIPTEN_KEEPALIVE const char* ls_query_world() {
     using namespace ls::worldview;
-    static char json[448];
+    static char json[512];
     const SoldierDebug soldier = g_lastDrawnState ? soldierDebug(*g_lastDrawnState) : SoldierDebug{};
     // The car nearest the soldier, whose feet are at the anchor.
     CarOnScreen car{};
@@ -568,8 +568,8 @@ EMSCRIPTEN_KEEPALIVE const char* ls_query_world() {
     const ScreenPoint boxTopLeft = project(g_view, car.boxMin);
     const ScreenPoint boxBottomRight = project(g_view, car.boxMax);
     std::snprintf(json, sizeof(json),
-                  "{\"telegraphing\":%d,\"telegraphsShown\":%d,\"heldGun\":%d,\"muzzleFrames\":%d,\"chunkPaints\":%d,\"cars\":%d,\"silhouettes\":%d,\"pixelScale\":%.3f,\"car\":[%.1f,%.1f,%.1f,%.1f],\"carBox\":[%.1f,%.1f,%.1f,%.1f],\"worldBox\":[%.1f,%.1f,%.1f,%.1f]}",
-                  g_telegraphCount, g_telegraphsShown, soldier.heldGun, soldier.muzzleFrames, groundPaintCount(), g_carCount, g_silhouettesShown,
+                  "{\"telegraphing\":%d,\"telegraphsShown\":%d,\"heldGun\":%d,\"muzzleFrames\":%d,\"chunkPaints\":%d,\"cars\":%d,\"crushed\":%d,\"flatSwap\":%d,\"silhouettes\":%d,\"pixelScale\":%.3f,\"car\":[%.1f,%.1f,%.1f,%.1f],\"carBox\":[%.1f,%.1f,%.1f,%.1f],\"worldBox\":[%.1f,%.1f,%.1f,%.1f]}",
+                  g_telegraphCount, g_telegraphsShown, soldier.heldGun, soldier.muzzleFrames, groundPaintCount(), g_carCount, g_lastDrawnState ? g_lastDrawnState->run.crushedCount : 0, groundLastSwapSize(), g_silhouettesShown,
                   static_cast<double>(g_view.pixelScale), static_cast<double>(car.left), static_cast<double>(car.top), static_cast<double>(car.right), static_cast<double>(car.bottom),
                   static_cast<double>(boxTopLeft.x), static_cast<double>(boxTopLeft.y), static_cast<double>(boxBottomRight.x), static_cast<double>(boxBottomRight.y),
                   static_cast<double>(car.boxMin.x), static_cast<double>(car.boxMin.y), static_cast<double>(car.boxMax.x), static_cast<double>(car.boxMax.y));

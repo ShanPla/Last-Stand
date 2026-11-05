@@ -7,8 +7,8 @@
 // a zombie that is about to walk into one turns toward its nearer corner.
 namespace ls::obstacles {
 
-// Brings the cached lists up to date around the player. Runs first in every step, and costs
-// nothing until the player crosses into a new tile.
+// Brings the cached lists up to date around the player, leaving out flattened cars. Runs first
+// in every step, and costs nothing until the player crosses into a new tile.
 void update(GameState& state);
 
 // Throws the cache away, for a new run or a different map.
@@ -31,6 +31,12 @@ Vec2 sweepCircle(const GameState& state, Vec2 from, Vec2 to, float radius);
 // when no car is close ahead. targetPos is what the walker is trying to reach, and side
 // breaks a tie between the two ways around.
 Vec2 steerAround(const GameState& state, Vec2 pos, float radius, Vec2 velocity, Vec2 targetPos, uint32_t side);
+
+// Flattens every car that a circle at this point overlaps, for the boss's body. A flat car
+// leaves the solid lists at once, so nothing that asks this component about cars can see it
+// any more. Each car is flattened once, and pushes one CarCrushed event. If the list in the
+// state is ever full, a car simply stays whole and solid, as all cars used to.
+void crushUnder(GameState& state, Vec2 pos, float radius);
 
 // True when a circle at this point overlaps a car.
 bool overlapsCar(const GameState& state, Vec2 pos, float radius);

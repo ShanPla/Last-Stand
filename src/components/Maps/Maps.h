@@ -32,14 +32,15 @@ struct Light {
 inline constexpr int kMaxLightsPerChunk = 12;
 
 // Paints one chunk into pixels, which holds kChunkWidth by kChunkHeight colors. Writes
-// its lights into lights, and returns how many. It uses no global state.
-int renderChunk(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights);
+// its lights into lights, and returns how many. It uses no global state, so the same seed
+// and the same crushed cars always give the same picture.
+int renderChunk(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed = {});
 
 // The same painting in two stages, so it can be spread over several frames on a slow device.
 // First the bare ground, in any bands of rows, which must cover the chunk from top to bottom.
 // Then the details over it. The result is exactly what renderChunk paints in one go.
 void paintGroundRows(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, int rowFrom, int rowTo);
-int paintDetails(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights);
+int paintDetails(MapId map, uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* lights, CrushedCars crushed = {});
 
 // What to show if a chunk is somehow not ready yet.
 Color fallbackGround(MapId map);

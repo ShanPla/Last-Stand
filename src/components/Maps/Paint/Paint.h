@@ -1,6 +1,7 @@
 #pragma once
 
-#include "components/Maps/Layout/TileRandom/TileRandom.h"
+#include "components/Maps/FlatCar/FlatCar.h"
+#include "components/Maps/Layout/Layout.h"
 
 #include "raylib.h"
 
@@ -100,6 +101,28 @@ public:
 
     void setMarking(unsigned char alpha) { marking_ = alpha; }
 
+    // The cars the boss has flattened, so the car painters can tell which ones to flatten.
+    void setCrushed(CrushedCars crushed) { crushed_ = crushed; }
+    const CrushedCars& crushed() const { return crushed_; }
+
+    // Where this paints. FlatCar borrows this to catch a car's picture before it reaches the
+    // chunk, with no change to the painters themselves.
+    struct Surface {
+        Color* pixels;
+        int originX;
+        int originY;
+        int width;
+        int height;
+    };
+    Surface surface() const { return {pixels_, originX_, originY_, width_, height_}; }
+    void setSurface(const Surface& surface) {
+        pixels_ = surface.pixels;
+        originX_ = surface.originX;
+        originY_ = surface.originY;
+        width_ = surface.width;
+        height_ = surface.height;
+    }
+
 private:
     Color* pixels_;
     int originX_;
@@ -107,18 +130,35 @@ private:
     int width_;
     int height_;
     unsigned char marking_ = kPlainGround;
+    CrushedCars crushed_;
 };
 
 // While one of these exists, what is painted counts as the body of a solid car. The ground
 // never shows its alpha, so that spare value can say which pixels are car. The renderer
 // uses it to let a car cover whatever stands behind it, with no second copy of the car.
+//
+// It is also where a crushed car goes flat. Its painter runs as usual and uses up the same
+// random numbers, so nothing painted after it changes. Only the picture goes somewhere else
+// first, and what lands on the chunk is the flat version, with no marks, so it covers nothing.
 class CarMark {
 public:
-    explicit CarMark(Paint& paint) : paint_(paint) { paint_.setMarking(kCarBody); }
-    ~CarMark() { paint_.setMarking(kPlainGround); }
+    CarMark(Paint& paint, CarSprite sprite, int x, int y) : paint_(paint), sprite_(sprite), x_(x), y_(y), flat_(paint.crushed().holds(x, y)) {
+        paint_.setMarking(kCarBody);
+        if (flat_) beginFlatCar(paint_, sprite_, x_, y_);
+    }
+    ~CarMark() {
+        paint_.setMarking(kPlainGround);
+        if (flat_) finishFlatCar(paint_, sprite_, x_, y_);
+    }
+    CarMark(const CarMark&) = delete;
+    CarMark& operator=(const CarMark&) = delete;
 
 private:
     Paint& paint_;
+    CarSprite sprite_;
+    int x_;
+    int y_;
+    bool flat_;
 };
 
 }  // namespace ls::maps

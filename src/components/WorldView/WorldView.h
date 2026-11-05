@@ -45,7 +45,16 @@ inline constexpr int kSceneCarEmpty = -105;        // A car, with the soldier be
 inline constexpr int kSceneCarBehind = -106;       // The same, with a zombie behind the car.
 inline constexpr int kSceneCarFront = -107;        // The same, with a zombie in front of the car.
 inline constexpr int kSceneCarBoth = -108;         // The same, with both.
+inline constexpr int kSceneCarOfSprite = -120;     // The first car with sprite number N, at -120 - N, with the soldier beside it.
+inline constexpr int kSceneCarOverEdge = -130;     // The first car whose picture crosses a chunk's edge.
 void setupShowcase(GameState& state, int extraZombies);
+
+// Debug only: flattens the car nearest the soldier, the way the boss's body would.
+void crushNearestCar(GameState& state);
+
+// Debug only: the first side-on car, with the boss about to walk over it toward the soldier
+// and the simulation really running, for the moment of a crush.
+void placeBossBesideCar(GameState& state);
 
 // Debug only: keeps the showcase animating while the simulation is held still.
 void tickShowcase(GameState& state);

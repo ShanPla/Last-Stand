@@ -14,8 +14,9 @@ namespace ls::worldview {
 void initGround();
 
 // Paints what the next frames will need. Must run outside any drawing pass.
-// The map comes from the run, so the picture and the solid cars can't disagree.
-void updateGround(const View& view, uint64_t seed, maps::MapId map);
+// The map and the flattened cars come from the run, so the picture and the solid cars can't
+// disagree. The same seed and the same flattened cars always give the same picture.
+void updateGround(const View& view, uint64_t seed, maps::MapId map, maps::CrushedCars crushed);
 
 void drawGround(const View& view, const DayLook& look);
 
@@ -45,5 +46,8 @@ void setGroundHalfResolution(bool half);
 
 // For the browser tests: chunks painted so far. Standing still, this must stop rising.
 int groundPaintCount();
+
+// For the browser tests: how many chunks changed to a flat car's picture in the same frame.
+int groundLastSwapSize();
 
 }  // namespace ls::worldview

@@ -23,6 +23,9 @@ inline constexpr int kMaxZones = 256;
 inline constexpr int kMaxGems = 800;
 inline constexpr int kMaxPickups = 32;
 inline constexpr int kMaxEvents = 512;
+// Cars the boss can flatten in one run. Far more than the fastest boss can reach in a 15 minute
+// fight on the busiest map. A unit test walks that fight to check. See obstacles::crushUnder.
+inline constexpr int kMaxCrushedCars = 1024;
 // How full the event list may get before each kind of event stops being added.
 inline constexpr int kEventLimitHits = 256;
 inline constexpr int kEventLimitCommon = 448;
@@ -202,6 +205,10 @@ struct RunState {
     float bossHpFraction = 0.0f;  // Copied each step, for the HUD boss bar.
     int debugEnemyTarget = 0;     // Debug stress test only.
     int debugProjectileTarget = 0;
+    // Cars the boss has flattened, oldest first. It only grows during a run, so anyone who
+    // keeps a picture of the map can tell what is new by the count alone.
+    maps::CarId crushed[kMaxCrushedCars];
+    int crushedCount = 0;
 };
 
 // Things that happened this step. The simulation only records them. Effects and
@@ -212,6 +219,7 @@ enum class EventType : uint8_t {
     Explosion,  // detail is the weapon that made it. value is the blast radius.
     PlayerDashed,  // At the spot the dash started. The direction is in player.dashDir.
     ZombieUnstuck,  // A zombie was stuck among cars and got moved. Only the balance tool counts these.
+    CarCrushed,  // At the middle of the car. detail is its maps::CarSprite. value is how far away the player was.
 };
 
 struct SimEvent {
@@ -253,8 +261,8 @@ struct GameState {
     Pool<Pickup, kMaxPickups> pickups;
     Pool<SimEvent, kMaxEvents> events;  // Cleared by whoever reads them.
     SpatialHash<kMaxEnemies> enemyGrid;
-    // Worked out only from the map, the seed and the player's tile, all of which are hashed.
-    // So it can't make two runs differ, and it stays out of the state hash.
+    // Worked out only from the map, the seed, the player's tile and the crushed list, all of
+    // which are hashed. So it can't make two runs differ, and it stays out of the state hash.
     ObstacleCache obstacleCache;
 
     float timeSeconds() const { return static_cast<float>(run.tick) * kDt; }
@@ -262,7 +270,8 @@ struct GameState {
 
 // The list is shared by every step of a frame, and hits are pushed before the kills,
 // level-ups and deaths of the same step. So frequent events stop early, which keeps
-// room for the rarer ones that matter more. Rare events may use the whole list.
+// room for the rarer ones that matter more. Rare events may use the whole list, and that
+// includes a crushed car, so no flood of hits can swallow one.
 inline constexpr int eventLimit(EventType type) {
     switch (type) {
         case EventType::EnemyHit:

@@ -92,9 +92,9 @@ void recycleIfFar(const GameState& state, Enemy& enemy) {
     }
 }
 
-// The boss walks straight through cars, because it is wider than a car is deep, its attacks
-// assume straight paths, and it should look like it is crushing them. A dashing Charger keeps
-// its locked direction on purpose: that is how it ends up crashing.
+// The boss walks straight through cars, because it is wider than a car is deep and its attacks
+// assume straight paths, and it flattens each one it steps on. A dashing Charger keeps its
+// locked direction on purpose: that is how it ends up crashing.
 bool ignoresCars(const Enemy& enemy) { return enemy.type == EnemyType::Boss; }
 bool goesAroundCars(const Enemy& enemy) { return !ignoresCars(enemy) && !(enemy.type == EnemyType::Charger && enemy.state == kChargerDash); }
 
@@ -175,7 +175,10 @@ void settleAgainstCars(GameState& state) {
     const Vec2 playerPos = state.player.pos;
     for (int i = 0; i < state.enemies.count; ++i) {
         Enemy& enemy = state.enemies[i];
-        if (ignoresCars(enemy)) continue;
+        if (ignoresCars(enemy)) {
+            obstacles::crushUnder(state, enemy.pos, enemy.radius - balance::kBossCrushOverlap);
+            continue;
+        }
         const obstacles::Push push = obstacles::resolveCircle(state, enemy.pos, carRadius(enemy));
         if (push.hit && enemy.type == EnemyType::Charger && enemy.state == kChargerDash) {
             // A crash: it bounces off and is stunned for a moment, which is the player's reward.

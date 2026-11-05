@@ -74,6 +74,8 @@ enum DebugCommand {
     kSetDashCooldown = 42,  // Percent of the full cooldown left.
     kShowCarBoxes = 43,  // 1 outlines each car's solid box over the picture.
     kCarCover = 44,      // 0 stops cars hiding what stands behind them, for comparing pictures.
+    kCrushNearestCar = 45,  // Flattens the car nearest the soldier.
+    kBossBesideCar = 46,    // The boss about to walk over a car, with the simulation running.
 };
 
 // Which screen is showing. Level-up is not here: it is a phase of a running game.
@@ -653,7 +655,7 @@ void debugCommand(int command, int value) {
     // Any other debug command hands control back to the simulation, except the ones
     // that only move the camera or the clock, which also work while it is held still.
     const bool keepsShowcase = command == kSetTime || command == kMovePlayerX || command == kMovePlayerY || command == kSetQuality || command == kSetShake ||
-                               command == kSetFlash || command == kSetDamageNumbers || command == kSetReducedMotion || command == kPushEvent || command == kResetFxCounters || command == kSetMap || command == kShowCarBoxes || command == kCarCover;
+                               command == kSetFlash || command == kSetDamageNumbers || command == kSetReducedMotion || command == kPushEvent || command == kResetFxCounters || command == kSetMap || command == kShowCarBoxes || command == kCarCover || command == kCrushNearestCar;
     if (!keepsShowcase) g_showcase = command == kShowcase;
     switch (command) {
         case kShowcase: worldview::setupShowcase(s, value); break;
@@ -767,6 +769,8 @@ void debugCommand(int command, int value) {
         case kHoldSim: g_holdSim = value != 0; break;
         case kShowCarBoxes: worldview::setShowCarBoxes(value != 0); break;
         case kCarCover: worldview::setCarCover(value != 0); break;
+        case kCrushNearestCar: worldview::crushNearestCar(s); break;
+        case kBossBesideCar: worldview::placeBossBesideCar(s); break;
         case kSetDashCooldown: s.player.dashCooldown = balance::kDashCooldownSeconds * static_cast<float>(value) / 100.0f; break;
         case kLevelUp:
             if (!g_inDemo) upgrades::addXp(s, std::max(1, s.player.xpToNext - s.player.xp));

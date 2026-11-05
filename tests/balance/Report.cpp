@@ -4,6 +4,7 @@
 #include "components/Enemies/Waves/Waves.h"
 #include "data/Balance.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -87,6 +88,10 @@ void printOutcome(std::FILE* out, const std::vector<RunResult>& runs) {
     if (!killTimes.empty()) {
         std::fprintf(out, "Boss kill time p10 / median / p90: %s seconds   (mean %.0f)\n", spread(killTimes, false).c_str(),
                      mean(killTimes));
+    }
+    if (reached > 0) {
+        const auto crushed = collectIf(runs, [](const RunResult& r) { return r.bossReached; }, [](const RunResult& r) { return static_cast<double>(r.carsCrushed); });
+        std::fprintf(out, "Cars the boss flattened per fight (mean): %.1f, most: %.0f\n", mean(crushed), *std::max_element(crushed.begin(), crushed.end()));
     }
     const auto lost = [](const RunResult& r) { return r.bossReached && !r.bossKilled; };
     const auto survived = collectIf(runs, lost, [](const RunResult& r) { return static_cast<double>(r.bossFightSeconds); });

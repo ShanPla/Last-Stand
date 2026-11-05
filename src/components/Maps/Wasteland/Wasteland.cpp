@@ -13,8 +13,9 @@ void paintGroundRows(uint64_t seed, int chunkX, int chunkY, Color* pixels, int r
     paintTerrainRows(paint, desertFor(seed), rowFrom, rowTo);
 }
 
-int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* outLights) {
+int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* outLights, CrushedCars crushed) {
     Paint paint(pixels, chunkX * kChunkWidth, chunkY * kChunkHeight, kChunkWidth, kChunkHeight);
+    paint.setCrushed(crushed);
     LightList lights{outLights, 0, &paint};
     const Desert desert = desertFor(seed);
 

@@ -72,6 +72,8 @@ void newRun(GameState& state, uint64_t seed, Difficulty difficulty, maps::MapId 
 
 void setMap(GameState& state, maps::MapId map) {
     state.run.map = map;
+    // A crushed car is named by where it stands, which only means something on its own map.
+    state.run.crushedCount = 0;
     obstacles::invalidate(state);
     obstacles::update(state);
 }
@@ -142,7 +144,7 @@ uint64_t stateHash(const GameState& state) {
     // Everything below can change what a later step does. What is left out is only
     // for drawing: previous positions (derived from the last step), hit flashes,
     // the event list (cleared by its reader), the enemy grid (rebuilt each step) and the
-    // obstacle cache (worked out from the map, the seed and the player's tile).
+    // obstacle cache (worked out from the map, the seed, the player's tile and the crushed list).
     // A new field that a step reads must be added here, or the determinism tests
     // cannot see it.
     mixBytes(&state.rng.state, sizeof(state.rng.state));
@@ -175,6 +177,12 @@ uint64_t stateHash(const GameState& state) {
     mix(run.bossHpFraction);
     mix(run.debugEnemyTarget);
     mix(run.debugProjectileTarget);
+    // Flat cars stop being solid, so they change every later step.
+    mix(run.crushedCount);
+    for (int i = 0; i < run.crushedCount; ++i) {
+        mix(run.crushed[i].texelX);
+        mix(run.crushed[i].texelY);
+    }
 
     const Player& player = state.player;
     mixVec(player.pos);

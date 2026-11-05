@@ -15,8 +15,8 @@
 // not grow. Padding is only the gap the compiler leaves for alignment.
 //
 // GameState::obstacleCache is not listed on purpose: it is worked out only from run.map,
-// run.seed and player.pos, which are all listed and hashed, so it can't change a later step
-// on its own. A unit test checks that it always equals a fresh computation.
+// run.seed, player.pos and run.crushed, which are all listed and hashed, so it can't change a
+// later step on its own. Unit tests check that it always equals a fresh computation.
 
 #include "components/Enemies/Enemies.h"
 #include "components/Pickups/Pickups.h"
@@ -171,6 +171,11 @@ inline const StructInfo& cardInfo() {
     return info;
 }
 
+inline const StructInfo& carIdInfo() {
+    static const StructInfo info{"CarId", sizeof(maps::CarId), 0, {LS_NUM(maps::CarId, texelX), LS_NUM(maps::CarId, texelY)}, &untouchedBytes<maps::CarId>};
+    return info;
+}
+
 inline const StructInfo& playerInfo() {
     static const StructInfo info{"Player", sizeof(Player), 0,
         {LS_FLT(Player, pos), LS_DRAW(Player, prevPos), LS_FLT(Player, facing), LS_FLT(Player, aim), LS_FLT(Player, hp),
@@ -182,20 +187,21 @@ inline const StructInfo& playerInfo() {
 }
 
 inline const StructInfo& runStateInfo() {
-    static const StructInfo info{"RunState", sizeof(RunState), 7,
+    static const StructInfo info{"RunState", sizeof(RunState), 11,
         {LS_NUM(RunState, phase), LS_NUM(RunState, difficulty), LS_NUM(RunState, map), LS_NUM(RunState, seed), LS_NUM(RunState, tick),
          LS_NUM(RunState, nextId), LS_NUM(RunState, kills), LS_NUM(RunState, rerollsLeft), LS_NUM(RunState, pendingLevels),
          LS_NEST(RunState, offers), LS_NUM(RunState, offerCount), LS_FLT(RunState, damageByWeapon),
          LS_FLT(RunState, waveAccumulators), LS_NUM(RunState, nextEliteEvent), LS_NUM(RunState, nextPickupDropKills),
          LS_FLT(RunState, bladeAngle), LS_NUM(RunState, bossSpawned), LS_NUM(RunState, bossPhase),
-         LS_FLT(RunState, bossHpFraction), LS_NUM(RunState, debugEnemyTarget), LS_NUM(RunState, debugProjectileTarget)}, &untouchedBytes<RunState>};
+         LS_FLT(RunState, bossHpFraction), LS_NUM(RunState, debugEnemyTarget), LS_NUM(RunState, debugProjectileTarget),
+         LS_NEST(RunState, crushed), LS_COUNT(RunState, crushedCount)}, &untouchedBytes<RunState>};
     return info;
 }
 
 inline std::vector<const StructInfo*> allStructInfos() {
     return {&rngInfo(),        &enemyInfo(),      &projectileInfo(), &enemyBulletInfo(), &zoneInfo(),   &gemInfo(),
             &pickupInfo(),     &weaponSlotInfo(), &passiveSlotInfo(), &playerStatsInfo(), &cardInfo(),  &playerInfo(),
-            &runStateInfo()};
+            &runStateInfo(),   &carIdInfo()};
 }
 
 // Names a visited struct for a failure message, such as enemies[3] or player.
@@ -222,6 +228,7 @@ void visitStructs(State& s, bool everyElement, Fn&& fn) {
     fn(rngInfo(), bytesOf(s.rng), "rng", -1);
     fn(runStateInfo(), bytesOf(s.run), "run", -1);
     for (int i = 0; i < kOffersPerLevel; ++i) fn(cardInfo(), bytesOf(s.run.offers[i]), "run.offers", i);
+    for (int i = 0; i < s.run.crushedCount; ++i) fn(carIdInfo(), bytesOf(s.run.crushed[i]), "run.crushed", i);
     fn(playerInfo(), bytesOf(s.player), "player", -1);
     fn(playerStatsInfo(), bytesOf(s.player.stats), "player.stats", -1);
     for (int i = 0; i < s.player.weaponCount; ++i) fn(weaponSlotInfo(), bytesOf(s.player.weapons[i]), "player.weapons", i);
@@ -260,6 +267,8 @@ inline std::unique_ptr<GameState> makeBusyState(uint64_t seed = 31) {
     weapons::grant(*state, WeaponId::Shotgun);
     state->player.passives[0] = PassiveSlot{PassiveId::Damage, 1};
     state->player.passiveCount = 1;
+    state->run.crushed[0] = maps::CarId{1234, 567};
+    state->run.crushedCount = 1;
     enemies::spawn(*state, EnemyType::Charger, Vec2{500.0f, 100.0f}, false);
     state->projectiles.add()->life = 1.0f;
     state->enemyBullets.add()->life = 1.0f;

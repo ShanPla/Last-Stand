@@ -41,6 +41,7 @@ constexpr float kShakeBossSeen = 0.6f;
 constexpr float kShakeBossPhase = 0.7f;
 constexpr float kShakeBossDied = 1.0f;
 constexpr float kShakeEvolution = 0.6f;
+constexpr float kShakeCarCrush = 0.42f;  // Small: about one art pixel, and it never adds up.
 constexpr float kShakeReach = 720.0f;  // World units. A blast this far away shakes nothing.
 
 constexpr float kPauseBossPhase = 0.07f;
@@ -81,6 +82,7 @@ Budget g_muzzleBudget{28.0f, 6.0f};
 Budget g_casingBudget{10.0f, 3.0f};
 Budget g_gemBudget{24.0f, 6.0f};
 Budget g_playerBloodBudget{8.0f, 2.0f};
+Budget g_crushBudget{4.0f, 3.0f};
 
 // --- State --------------------------------------------------------------------
 
@@ -139,6 +141,13 @@ float shakeScale() { return g_settings.reducedMotion ? 0.0f : g_settings.screenS
 void addShake(float trauma, bool quiet) {
     if (quiet || shakeScale() <= 0.0f) return;
     g_shake.add(trauma);
+    g_counters.shakeEvents++;
+}
+
+// For small events that come in runs. See ScreenShake::raiseTo.
+void raiseShake(float trauma, bool quiet) {
+    if (quiet || shakeScale() <= 0.0f) return;
+    g_shake.raiseTo(trauma);
     g_counters.shakeEvents++;
 }
 
@@ -324,6 +333,38 @@ void onPlayerHit(const GameState& state, const SimEvent& event, bool quiet) {
         g_nearDeathArmed = false;
         addHitPause(kPauseNearDeath, quiet);
     }
+}
+
+// The boss has just flattened a car. A thick puff along the whole car, because the repaint
+// takes a few frames and the dust is what hides the moment the picture changes.
+void onCarCrushed(const GameState& state, const SimEvent& event, bool quiet) {
+    const float away = distance(event.pos, state.player.pos);
+    if (away < kShakeReach && nearView(event.pos)) raiseShake(kShakeCarCrush * (1.0f - 0.5f * away / kShakeReach), quiet);
+    if (!nearView(event.pos) || !g_crushBudget.take()) return;
+    const Vec2 half = maps::makeObstacle(static_cast<maps::CarSprite>(event.detail), 0, 0).half;
+    const bool big = std::max(half.x, half.y) > 60.0f;
+    for (const float along : {-0.7f, -0.25f, 0.25f, 0.7f}) {
+        Burst dust;
+        dust.at = event.pos + Vec2{half.x * along, half.y * along};
+        dust.height = 6.0f;
+        dust.count = big ? 16 : 12;
+        dust.speedMin = 6.0f;
+        dust.speedMax = 70.0f;
+        dust.liftMin = 10.0f;
+        dust.liftMax = 55.0f;
+        dust.lifeMin = 0.35f;
+        dust.lifeMax = 0.8f;
+        dust.gravity = 50.0f;
+        dust.sizeMin = 3;
+        dust.sizeMax = 5;
+        dust.colors = theme::kFxCrushDust;
+        dust.colorCount = 3;
+        dust.flags = kFlagTinted | kFlagDrag | kFlagShrink;
+        emitBurst(dust, g_random);
+    }
+    groundRing(event.pos, big ? 18 : 12, big ? 230.0f : 170.0f, theme::kFxCrushDust, 3, 0.4f, 2, kFlagTinted);
+    chunkBurst(event.pos, 10.0f, big ? 16 : 10, theme::kFxCrushMetal, 3, 190.0f, 3);
+    impactSparks(event.pos, 8.0f, Vec2{}, big ? 8 : 5, theme::kFxSpark);
 }
 
 void onBomb(const SimEvent& event, bool quiet) {
@@ -516,6 +557,7 @@ void consumeEvents(const GameState& state, bool quiet) {
                 break;
             case EventType::PlayerDashed: onPlayerDashed(state, event); break;
             case EventType::ZombieUnstuck: break;
+            case EventType::CarCrushed: onCarCrushed(state, event, quiet); break;
             case EventType::ReloadStarted:
             case EventType::WeaponDry: break;
         }
@@ -534,6 +576,7 @@ void update(float dtReal, bool worldMoving) {
     g_casingBudget.refill(worldDt, amount);
     g_gemBudget.refill(worldDt, amount);
     g_playerBloodBudget.refill(worldDt, 1.0f);
+    g_crushBudget.refill(worldDt, 1.0f);
     updateParticles(worldDt);
     updateStains(worldDt);
     g_numbers.update(worldDt);

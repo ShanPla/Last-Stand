@@ -246,6 +246,28 @@ Samples killThud() {
     });
 }
 
+// A heavy metal crunch. A deep thump for the weight coming down, then panels giving way as a
+// quick rattle of bursts through a resonant filter, which is what makes noise sound like metal.
+Samples carCrush() {
+    Noise n(67);
+    Biquad clang;
+    clang.bandpass(1250.0f, 4.0f);
+    Biquad creak;
+    creak.bandpass(430.0f, 3.0f);
+    OnePole lp;
+    lp.setCutoff(1400.0f);
+    return render(0.62f, [&](float t, size_t) {
+        // Each buckle starts a little later and dies quickly. Together they read as a crumple.
+        float buckles = 0.0f;
+        for (const float start : {0.0f, 0.045f, 0.1f, 0.17f, 0.26f}) {
+            if (t >= start) buckles += decay(t - start, 0.09f);
+        }
+        const float noise = n.next();
+        return thump(t, 120.0f, 38.0f, 0.09f, 2.2f) * decay(t, 0.34f) * 1.1f + clang.process(noise) * buckles * 1.5f + creak.process(noise) * buckles * 1.1f +
+               lp.low(noise) * decay(t, 0.07f) * 0.8f;
+    });
+}
+
 Samples killPop() {
     Noise n(27);
     Biquad bp;
@@ -556,7 +578,7 @@ const Entry kEntries[kSfxCount] = {
     {{"reload", 1, 0.20f}, 0.34f},         {{"dry", 1, 0.25f}, 0.30f},          {{"enemy_hit", 2, 0.08f}, 0.18f},
     {{"kill_squelch", 4, 0.05f}, 0.42f},   {{"kill_thud", 3, 0.05f}, 0.42f},    {{"kill_pop", 3, 0.05f}, 0.38f},
     {{"elite_killed", 2, 0.15f}, 0.62f},   {{"player_hit", 2, 0.12f}, 0.65f},   {{"player_died", 1, 2.0f}, 0.75f},
-    {{"dash", 1, 0.2f}, 0.42f},
+    {{"dash", 1, 0.2f}, 0.42f},            {{"car_crush", 2, 0.22f}, 0.6f},
     {{"gem_0", 2, 0.035f}, 0.26f},         {{"gem_1", 2, 0.035f}, 0.26f},       {{"gem_2", 2, 0.035f}, 0.26f},
     {{"gem_3", 2, 0.035f}, 0.26f},         {{"gem_4", 2, 0.035f}, 0.26f},       {{"gem_5", 2, 0.035f}, 0.26f},
     {{"gem_6", 2, 0.035f}, 0.26f},         {{"gem_7", 2, 0.035f}, 0.26f},       {{"gem_8", 2, 0.035f}, 0.26f},
@@ -595,6 +617,7 @@ Samples renderSfx(SfxId id) {
         case SfxId::PlayerHit: out = playerHit(); break;
         case SfxId::PlayerDied: out = playerDied(); break;
         case SfxId::PlayerDash: out = playerDash(); break;
+        case SfxId::CarCrush: out = carCrush(); break;
         case SfxId::LevelUp: out = levelUp(); break;
         case SfxId::PickupHeal: out = pickupHeal(); break;
         case SfxId::PickupMagnet: out = pickupMagnet(); break;

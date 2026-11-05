@@ -31,6 +31,24 @@ const ObstacleTile* tileAt(const GameState& state, Vec2 pos) {
     return tile.valid && tile.tileX == tileX && tile.tileY == tileY ? &tile : nullptr;
 }
 
+// The lists must stay exactly what a fresh look at the map would give, whatever order things
+// were crushed in, or the cache could make two replays differ. So a car comes out by closing
+// the gap, and never by swapping the last one into its place.
+void removeFromTile(ObstacleTile& tile, maps::CarId car) {
+    int kept = 0;
+    for (int i = 0; i < tile.count; ++i) {
+        if (!maps::isCar(car, tile.items[i])) tile.items[kept++] = tile.items[i];
+    }
+    tile.count = kept;
+}
+
+// One car can be in several tiles' lists, because a list reaches past its tile's edges.
+void removeFromCache(GameState& state, maps::CarId car) {
+    for (ObstacleTile& tile : state.obstacleCache.tiles) {
+        if (tile.valid) removeFromTile(tile, car);
+    }
+}
+
 // Pushes a circle out of one box. The box is shrunk by the corner radius and the circle grows
 // by the same amount, which is the same test as a box with rounded corners.
 bool pushOutOf(const Obstacle& box, Vec2& pos, float radius, Vec2* normal) {
@@ -193,7 +211,35 @@ void update(GameState& state) {
             tile.tileY = y;
             tile.valid = true;
             tile.count = maps::obstaclesInTile(state.run.map, state.run.seed, x, y, tile.items, maps::kMaxObstaclesPerTile);
+            // This is the one place a flat car is kept out of what is solid, so walking away
+            // and coming back finds it flat. Everything else reads these lists.
+            for (int i = 0; i < state.run.crushedCount && tile.count > 0; ++i) removeFromTile(tile, state.run.crushed[i]);
         }
+    }
+}
+
+// A tile's list holds what is near it, so one tile is enough only for a body this small.
+static_assert(balance::kEnemyStats[static_cast<int>(EnemyType::Boss)].radius <= maps::kObstacleReachWorld);
+
+void crushUnder(GameState& state, Vec2 pos, float radius) {
+    const int tileX = maps::tileOf(pos.x);
+    const int tileY = maps::tileOf(pos.y);
+    ObstacleTile& tile = state.obstacleCache.tiles[slotOf(tileX, tileY)];
+    if (!tile.valid || tile.tileX != tileX || tile.tileY != tileY) return;
+    int i = 0;
+    while (i < tile.count) {
+        const Obstacle box = tile.items[i];
+        const float gapX = std::max(std::abs(pos.x - box.center.x) - box.half.x, 0.0f);
+        const float gapY = std::max(std::abs(pos.y - box.center.y) - box.half.y, 0.0f);
+        if (gapX * gapX + gapY * gapY >= radius * radius || state.run.crushedCount >= kMaxCrushedCars) {
+            ++i;
+            continue;
+        }
+        const maps::CarId car{box.texelX, box.texelY};
+        state.run.crushed[state.run.crushedCount++] = car;
+        // Taking it out closes the gap, so the next car is now at this same index.
+        removeFromCache(state, car);
+        pushEvent(state, EventType::CarCrushed, box.center, distance(box.center, state.player.pos), static_cast<uint8_t>(box.sprite));
     }
 }
 

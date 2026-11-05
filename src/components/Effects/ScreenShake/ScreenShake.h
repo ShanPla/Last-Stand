@@ -17,6 +17,10 @@ public:
 
     void add(float trauma) { trauma_ = std::min(1.0f, trauma_ + trauma); }
 
+    // Brings the shake up to this level if it is below it, and adds nothing if it isn't. So
+    // many small events in a row can't build up to a big shake, or pile onto one already going.
+    void raiseTo(float trauma) { trauma_ = std::max(trauma_, std::min(1.0f, trauma)); }
+
     // scale is the player's setting: 0 to 1, or 0 with reduced motion. randomX and
     // randomY are from -1 to 1, and are passed in so a test can choose them.
     void update(float dt, float scale, float randomX, float randomY) {

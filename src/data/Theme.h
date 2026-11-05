@@ -314,6 +314,8 @@ inline constexpr Color kWreckPaints[5][3] = {
 inline constexpr Color kWreckBurnt[3] = {{30, 26, 26, 255}, {46, 40, 38, 255}, {66, 56, 50, 255}};
 inline constexpr Color kBusPaint[3] = {{86, 70, 38, 255}, {112, 92, 50, 255}, {132, 112, 68, 255}};
 inline constexpr Color kTankerPaint[3] = {{74, 76, 78, 255}, {104, 106, 106, 255}, {134, 134, 130, 255}};
+// Bits left scattered around a flattened car: broken glass, bent metal and rust flakes.
+inline constexpr Color kFlatCarBits[3] = {{150, 168, 174, 255}, {78, 80, 84, 255}, {116, 66, 40, 255}};
 inline constexpr Color kDustyGlass{42, 46, 50, 255};
 inline constexpr Color kDustyGlassShine{84, 92, 94, 255};
 
@@ -463,6 +465,9 @@ inline constexpr Color kFxEvolvedSpark[3] = {{246, 236, 255, 255}, {196, 140, 25
 inline constexpr Color kFxSmoke[2] = {{84, 80, 78, 255}, {112, 106, 100, 255}};
 inline constexpr Color kFxDebris[3] = {{52, 46, 44, 255}, {78, 70, 64, 255}, {104, 94, 84, 255}};
 inline constexpr Color kFxDust[2] = {{92, 84, 72, 255}, {122, 112, 96, 255}};
+// What flies when the boss flattens a car: pale road dust, and bent metal, rust and glass.
+inline constexpr Color kFxCrushDust[3] = {{96, 88, 78, 255}, {128, 118, 102, 255}, {158, 148, 128, 255}};
+inline constexpr Color kFxCrushMetal[3] = {{84, 86, 90, 255}, {128, 74, 44, 255}, {170, 186, 190, 255}};
 inline constexpr Color kFxBrass{226, 186, 84, 255};
 inline constexpr Color kFxGemSparkle[3] = {{214, 255, 244, 255}, {214, 234, 255, 255}, {236, 222, 255, 255}};
 inline constexpr Color kFxLevelUp[3] = {{255, 240, 170, 255}, {255, 206, 96, 255}, {150, 230, 214, 255}};

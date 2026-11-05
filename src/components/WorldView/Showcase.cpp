@@ -2,6 +2,7 @@
 #include "components/Enemies/Charger/Charger.h"
 #include "components/Enemies/Enemies.h"
 #include "components/Maps/Layout/Layout.h"
+#include "components/Obstacles/Obstacles.h"
 #include "components/Weapons/Weapons.h"
 #include "core/Math.h"
 #include "components/WorldView/Showcase.h"
@@ -11,6 +12,7 @@
 
 #include "raylib.h"
 
+#include <algorithm>
 #include <cmath>
 #include <initializer_list>
 
@@ -263,6 +265,30 @@ bool findSideCar(const GameState& state, maps::Obstacle* found) {
     return false;
 }
 
+// The first car in widening rings around the start that passes a test.
+template <class Test>
+bool findCar(const GameState& state, maps::Obstacle* found, Test&& wanted) {
+    maps::Obstacle list[maps::kMaxObstaclesPerTile];
+    for (int ring = 1; ring < 40; ++ring) {
+        for (int y = -ring; y <= ring; ++y) {
+            for (int x = -ring; x <= ring; ++x) {
+                const int count = maps::obstaclesInTile(state.run.map, state.run.seed, x, y, list, maps::kMaxObstaclesPerTile);
+                for (int i = 0; i < count; ++i) {
+                    if (!wanted(list[i])) continue;
+                    *found = list[i];
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+void standBesideCar(GameState& state, const maps::Obstacle& car) {
+    state.player.pos = car.center + Vec2{-car.half.x - balance::kPlayerRadius - 2.0f, 0.0f};
+    state.player.prevPos = state.player.pos;
+}
+
 void placeCarScene(GameState& state, int scene) {
     maps::Obstacle car;
     if (!findSideCar(state, &car)) return;
@@ -279,6 +305,21 @@ void placeCarScene(GameState& state, int scene) {
 
 void placeTestScene(GameState& state, int scene) {
     const Vec2 right{1.0f, 0.0f};
+    maps::Obstacle chosen;
+    if (scene <= kSceneCarOfSprite && scene > kSceneCarOfSprite - 8) {
+        const auto sprite = static_cast<maps::CarSprite>(kSceneCarOfSprite - scene);
+        if (findCar(state, &chosen, [&](const maps::Obstacle& car) { return car.sprite == sprite; })) standBesideCar(state, chosen);
+        return;
+    }
+    if (scene == kSceneCarOverEdge) {
+        const auto overEdge = [](const maps::Obstacle& car) {
+            const maps::TexelRect rect = maps::spriteRect(car);
+            return std::floor(static_cast<float>(rect.x0) / maps::kChunkWidth) != std::floor(static_cast<float>(rect.x1 - 1) / maps::kChunkWidth) ||
+                   std::floor(static_cast<float>(rect.y0) / maps::kChunkHeight) != std::floor(static_cast<float>(rect.y1 - 1) / maps::kChunkHeight);
+        };
+        if (findCar(state, &chosen, overEdge)) standBesideCar(state, chosen);
+        return;
+    }
     if (scene <= kSceneCarEmpty && scene >= kSceneCarBoth) {
         placeCarScene(state, scene);
         return;
@@ -434,6 +475,40 @@ void setupShowcase(GameState& state, int extraZombies) {
     placeShots(state, layout);
     placeZones(state, layout);
     placeRewards(state, layout);
+}
+
+void crushNearestCar(GameState& state) {
+    obstacles::update(state);
+    maps::Obstacle list[maps::kMaxObstaclesPerTile];
+    const Vec2 at = state.player.pos;
+    const int count = maps::obstaclesInTile(state.run.map, state.run.seed, maps::tileOf(at.x), maps::tileOf(at.y), list, maps::kMaxObstaclesPerTile);
+    float nearest = 1.0e30f;
+    Vec2 center;
+    for (int i = 0; i < count; ++i) {
+        if (maps::CrushedCars{state.run.crushed, state.run.crushedCount}.holds(list[i].texelX, list[i].texelY)) continue;
+        const float gap = std::max(std::abs(at.x - list[i].center.x) - list[i].half.x, 0.0f) + std::max(std::abs(at.y - list[i].center.y) - list[i].half.y, 0.0f);
+        if (gap < nearest) {
+            nearest = gap;
+            center = list[i].center;
+        }
+    }
+    if (nearest < 1.0e30f) obstacles::crushUnder(state, center, 1.0f);
+}
+
+void placeBossBesideCar(GameState& state) {
+    maps::Obstacle car;
+    if (!findSideCar(state, &car)) return;
+    state.enemies.clear();
+    state.run.bossSpawned = true;
+    const float radius = balance::kEnemyStats[static_cast<int>(EnemyType::Boss)].radius;
+    state.player.pos = car.center + Vec2{car.half.x + 170.0f, 0.0f};
+    state.player.prevPos = state.player.pos;
+    obstacles::update(state);
+    obstacles::resolveCircle(state, state.player.pos, balance::kPlayerRadius);
+    state.player.prevPos = state.player.pos;
+    // Far enough that the picture has settled by the time it arrives, so a measurement of the
+    // crush doesn't catch the chunks painted for the jump to this place.
+    enemies::spawn(state, EnemyType::Boss, car.center + Vec2{-car.half.x - radius - 110.0f, 0.0f}, false);
 }
 
 void tickShowcase(GameState& state) {

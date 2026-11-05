@@ -225,7 +225,7 @@ void paintVerticalRoad(Paint& p, uint64_t seed, int i, int j, LightList& lights)
     if (random.chance(35)) brokenSign(p, walkRight + random.range(-3, 3), random.range(y0 + 40, y1 - 40), random);
     if (random.chance(30)) boards(p, walkRight, random.range(y0 + 10, y1 - 10), random);
     if (CarPlan car = verticalRoadCar(seed, i, j); car.exists) {
-        CarMark mark(p);
+        CarMark mark(p, CarSprite::CityEnd, car.x, car.y);
         carEnd(p, car.x, car.y, car.looks);
     }
     if (random.chance(35)) barrier(p, centerX + random.range(-kRoadHalfX / 2, kRoadHalfX / 2), random.range(y0 + 16, y1 - 10), random);
@@ -298,7 +298,7 @@ void paintHorizontalRoad(Paint& p, uint64_t seed, int i, int j, LightList& light
     if (random.chance(35)) brokenSign(p, random.range(x0 + 60, x1 - 60), walkBottom, random);
     if (random.chance(30)) boards(p, random.range(x0 + 20, x1 - 20), walkBottom, random);
     if (CarPlan car = horizontalRoadCar(seed, i, j); car.exists) {
-        CarMark mark(p);
+        CarMark mark(p, CarSprite::CitySide, car.x, car.y);
         carSide(p, car.x, car.y, car.looks);
     }
     if (random.chance(30)) barrier(p, random.range(x0 + 30, x1 - 30), centerY + random.range(-kRoadHalfY / 2, kRoadHalfY / 2), random);
@@ -341,8 +341,9 @@ void paintGroundRows(uint64_t seed, int chunkX, int chunkY, Color* pixels, int r
     paintBase(paint, roadsAround(seed, chunkX, chunkY), rowFrom, rowTo);
 }
 
-int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* outLights) {
+int paintDetails(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* outLights, CrushedCars crushed) {
     Paint paint(pixels, chunkX * kChunkWidth, chunkY * kChunkHeight, kChunkWidth, kChunkHeight);
+    paint.setCrushed(crushed);
     LightList lights{outLights, 0, &paint};
     const Roads roads = roadsAround(seed, chunkX, chunkY);
 

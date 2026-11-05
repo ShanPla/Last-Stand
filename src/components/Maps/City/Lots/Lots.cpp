@@ -315,7 +315,7 @@ void paintParkingLot(Paint& p, TileRandom& random, const LotArea& a, CarPlan* ca
     }
     for (int i = 0; i < carCount; ++i) {
         if (!cars[i].exists) continue;
-        CarMark mark(p);
+        CarMark mark(p, CarSprite::CitySide, cars[i].x, cars[i].y);
         carSide(p, cars[i].x, cars[i].y, cars[i].looks);
     }
     tires(p, a.x1 - 20, a.y1 - 10);
