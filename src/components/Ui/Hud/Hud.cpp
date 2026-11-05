@@ -61,9 +61,13 @@ void drawPauseIcon(Rectangle r, bool hot) {
 
 bool touchLayout() { return input().lastDevice == input::Device::Touch; }
 
+// Measured in UI pixels as well as design units. Those pixels grow in whole steps, so at some
+// window sizes a height in design units alone left the bar with no room inside its border.
+float xpBarHeight(const Layout& l) { return std::max(8.0f * l.u, 5.0f * l.px); }
+
 // Where the held-weapon and passive rows end, which is where the small dash indicator starts.
 float buildBottom(const Layout& l) {
-    const float rowY = l.top + 6.0f * l.u + 10.0f * l.u;
+    const float rowY = l.top + xpBarHeight(l) + 10.0f * l.u;
     const float weaponY = rowY + 22.0f * l.u + 34.0f * l.u;
     return weaponY + weaponSlotsHeight(46.0f * l.u) + 6.0f * l.u + 32.0f * l.u + 8.0f * l.u;
 }
@@ -195,7 +199,7 @@ HudPresses drawHud(const GameState& state, float hintAlpha, bool playing) {
     }
 
     // XP bar along the top edge of the safe area.
-    const float xpHeight = 6.0f * u;
+    const float xpHeight = xpBarHeight(l);
     const float xpFraction = static_cast<float>(player.xp) / static_cast<float>(std::max(1, player.xpToNext));
     bar(Rectangle{l.left, l.top, l.width(), xpHeight}, xpFraction, theme::kUiXp, withAlpha(theme::kUiBarBack, 0.85f));
 

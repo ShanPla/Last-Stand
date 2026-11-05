@@ -211,7 +211,9 @@ void bar(Rectangle rect, float fraction, Color fill, Color back) {
     const Rectangle r = snapRect(rect);
     const float p = px();
     fillRect(r.x, r.y, r.width, r.height, tint(theme::kUiBorderDark));
-    const Rectangle in = inset(r, p);
+    // A bar too thin for a border gives it up, because a border on both sides would leave no
+    // room at all, and a bar that silently draws nothing looks like one that never fills.
+    const Rectangle in = r.height >= p * 3.0f ? inset(r, p) : r;
     if (in.width <= 0.0f || in.height <= 0.0f) return;
     fillRect(in.x, in.y, in.width, in.height, tint(back));
     const float f = clamp01(fraction);
