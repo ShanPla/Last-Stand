@@ -1,5 +1,9 @@
 // Performance measurement, run by hand: node tests/e2e/perf.mjs [enemies] [shots] [width] [height]
 // Uses this machine's real GPU, not the software renderer the other tests use.
+// Frames stay tied to the screen's refresh, as they are for a player. Chrome's switch that lifts
+// that limit gives big frame rates, but also 14 ms slow frames that vanish without it, most likely
+// the page waiting for the graphics process to catch up. No player would ever see those.
+// To see how much room is left under the refresh rate, read the work times from perfscenes.mjs.
 import { chromium } from 'playwright-core';
 import { startServer } from './harness.mjs';
 
@@ -12,7 +16,7 @@ const web = await startServer();
 const browser = await chromium.launch({
   executablePath: process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: true,
-  args: ['--headless=new', '--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-frame-rate-limit=false'],
+  args: ['--headless=new', '--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-gpu-rasterization'],
 });
 const page = await (await browser.newContext({ viewport: { width, height } })).newPage();
 page.on('pageerror', (error) => console.error('page error:', String(error)));
