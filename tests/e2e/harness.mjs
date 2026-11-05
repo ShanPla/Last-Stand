@@ -36,6 +36,13 @@ export async function startServer(port = 0) {
     }
   });
   await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+  // Connections kept open after a test would stop the server closing, and then the test
+  // file would never exit. Close them all whenever the server closes.
+  const closeServer = server.close.bind(server);
+  server.close = (callback) => {
+    server.closeAllConnections();
+    return closeServer(callback);
+  };
   return { server, sent, url: `http://127.0.0.1:${server.address().port}/` };
 }
 
@@ -91,6 +98,11 @@ export const CMD = {
   setQuality: 20, setShake: 21, setFlash: 22, setDamageNumbers: 23, setReducedMotion: 24, pushEvent: 25, resetFxCounters: 26, runSteps: 27, setMap: 28,
 };
 
+// Dash, held-still simulation and cooldown, kept apart from the list above.
+CMD.dash = 40;
+CMD.holdSim = 41;
+CMD.setDashCooldown = 42;
+
 export const readState = (page) => page.evaluate(() => JSON.parse(Module.ccall('ls_query_state', 'string', [], [])));
 
 // Screen name, settings, best run, and button rectangles. Rectangles are also given in
@@ -98,11 +110,6 @@ export const readState = (page) => page.evaluate(() => JSON.parse(Module.ccall('
 export const readUi = (page) => page.evaluate(() => {
   const ui = JSON.parse(Module.ccall('ls_query_ui', 'string', [], []));
   const sx = innerWidth / ui.width;
-// Dash, held-still simulation and cooldown, kept apart from the list above.
-CMD.dash = 40;
-CMD.holdSim = 41;
-CMD.setDashCooldown = 42;
-
   const sy = innerHeight / ui.height;
   for (const b of ui.buttons) { b.cx = (b.x + b.w / 2) * sx; b.cy = (b.y + b.h / 2) * sy; b.cw = b.w * sx; b.ch = b.h * sy; }
   return ui;
