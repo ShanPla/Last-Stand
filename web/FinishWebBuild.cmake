@@ -37,13 +37,16 @@ set(LS_SITE_FILES index.html index.js index.wasm manifest.webmanifest ${LS_NESTE
 
 # The build id is a hash of all those files plus the worker itself: the same
 # content always gives the same id, and any change gives a new offline cache.
+# The worker also gets each file's own hash as [file, hash] pairs, and checks every file
+# it downloads against them, so a host serving files from two different builds can't
+# get a mixed set cached.
 file(READ "${WEB_DIR}/sw.js" LS_WORKER)
 set(LS_HASHES "${LS_WORKER}")
 set(LS_PRECACHE "")
 foreach(item IN LISTS LS_SITE_FILES)
   file(SHA256 "${OUT_DIR}/${item}" LS_FILE_HASH)
   string(APPEND LS_HASHES "${item}=${LS_FILE_HASH};")
-  string(APPEND LS_PRECACHE "\"${item}\",")
+  string(APPEND LS_PRECACHE "[\"${item}\",\"${LS_FILE_HASH}\"],")
 endforeach()
 string(SHA256 LS_BUILD_ID "${LS_HASHES}")
 string(SUBSTRING "${LS_BUILD_ID}" 0 12 LS_BUILD_ID)

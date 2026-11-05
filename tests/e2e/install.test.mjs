@@ -204,7 +204,7 @@ test('every URL in the page, manifest and worker is relative', async () => {
   const urls = [
     ...pageUrls,
     manifest.id, manifest.start_url, manifest.scope, ...manifest.icons.map((i) => i.src),
-    ...JSON.parse(worker.match(/const FILES = (\[.*\]);/)[1]),
+    ...JSON.parse(worker.match(/const FILES = (\[.*\]);/)[1]).map(([file]) => file), // Each entry is [file, hash].
     // Quoted file names the page scripts load: loadWasm('index.wasm', ...) and register('sw.js', ...).
     ...[...scripts.join('\n').matchAll(/(?:loadWasm|register)\('([^']*)'/g)].map((m) => m[1]),
   ];
@@ -278,7 +278,7 @@ test('a new build replaces the old cache, and a build that fails to install chan
   // A broken build: one listed file does not exist, so the new worker cannot install.
   await writeFile(workerFile, original
     .replace(/laststand-[0-9a-f]+/, 'laststand-broken')
-    .replace('"index.html",', '"index.html","does-not-exist.js",'));
+    .replace('["index.html",', '["does-not-exist.js","00"],["index.html",'));
   await page.evaluate(() => navigator.serviceWorker.getRegistration().then((r) => r.update())).catch(() => {});
   await page.waitForTimeout(1500);
   assert.deepEqual(await page.evaluate(() => caches.keys()), [oldKey], 'the failed install touched the cache');
