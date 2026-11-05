@@ -19,6 +19,7 @@ Nav g_nav;
 enum Focus { kFocusPlay = 0, kFocusDifficulty, kFocusMap, kFocusSettings, kFocusHowTo, kFocusCount };
 constexpr int kSelectorRows = 2;     // Rows of selectors above Settings. The layout budgets for this many.
 constexpr float kLogoLeast = 56.0f;  // Smallest logo, in design units, before the best run makes way.
+constexpr float kBestPanelWidth = 400.0f;  // The best run's corner panel on wide windows.
 
 // Chunky logo lettering: a stack of hard dark-red copies behind the letters, so the
 // word looks cut out of a block, like the title of an old arcade game.
@@ -77,7 +78,7 @@ void resetTitleScreen() { g_nav = Nav{}; }
 TitleAction drawTitleScreen(SaveData& data) {
     const Layout& l = layout();
     const float u = l.u;
-    const bool wide = !l.portrait && l.width() >= 760.0f * u;
+    const bool wide = !l.portrait && l.width() >= 700.0f * u;
     TitleAction action = TitleAction::None;
 
     // The column the menu sits in: left aligned on wide screens, centered otherwise.
@@ -108,13 +109,20 @@ TitleAction drawTitleScreen(SaveData& data) {
     const float taglineBlock = 26.0f * u + 26.0f * u;
     // On a very short window, Settings and How to Play share a row, so that every
     // button stays on screen and inside the safe area.
-    const bool shareLastRow = l.height() - fullButtons - taglineBlock - (wide ? 0.0f : 28.0f * u) - 8.0f * u < kLogoLeast * u * 1.85f;
-    const float buttonsBlock = shareLastRow ? fullButtons - smallHeight - rowGap : fullButtons;
-    // The best run is dropped when keeping it would squeeze the logo too small.
     // Without the side column, the credit line sits under the buttons and needs room too.
     const float creditRoom = wide ? 0.0f : 28.0f * u;
+    const float sharedButtons = fullButtons - smallHeight - rowGap;
+    const auto bestFits = [&](float buttons) {
+        return (l.height() - buttons - taglineBlock - creditRoom - 8.0f * u - bestBlock) / 1.85f >= kLogoLeast * u;
+    };
+    // A window with no side column has nowhere else for the best run, so it shares the row
+    // for that too, when that makes the difference.
+    const bool shareForBest = !wide && !bestFits(fullButtons) && bestFits(sharedButtons);
+    const bool shareLastRow = shareForBest || l.height() - fullButtons - taglineBlock - creditRoom - 8.0f * u < kLogoLeast * u * 1.85f;
+    const float buttonsBlock = shareLastRow ? sharedButtons : fullButtons;
+    // The best run is dropped when keeping it would squeeze the logo too small.
     const float roomWithoutBest = l.height() - buttonsBlock - taglineBlock - creditRoom - 8.0f * u;
-    const bool roomForBest = (roomWithoutBest - bestBlock) / 1.85f >= kLogoLeast * u;
+    const bool roomForBest = bestFits(buttonsBlock);
     const float logoRoom = roomForBest ? roomWithoutBest - bestBlock : roomWithoutBest;
     const float wanted = std::min(wide ? 110.0f * u : 128.0f * u, logoRoom / 1.85f);
     const float logoSize = font::fitSize("STAND", font::snapSize(wanted * 0.95f), columnWidth - 5.0f * l.px, l.px);
@@ -170,8 +178,20 @@ TitleAction drawTitleScreen(SaveData& data) {
     }
     y += smallHeight + 26.0f * u;
 
-    // Best run for the chosen level, as long as there is room under the buttons.
-    if (roomForBest && y + 76.0f * u < l.bottom) drawBest(data.bestFor(data.difficulty), data.difficulty, buttonX, y, buttonWidth);
+    // Best run for the chosen level, under the buttons if there is room. A wide window has no
+    // room in the column, but it has the whole demo side, so the record goes in a corner there.
+    const float bestHeight = 24.0f * u + 34.0f * u + 22.0f * u;
+    if (roomForBest && y + 76.0f * u < l.bottom) {
+        drawBest(data.bestFor(data.difficulty), data.difficulty, buttonX, y, buttonWidth);
+        registerExtent("best run", Rectangle{buttonX, y, buttonWidth, bestHeight});
+    } else if (wide) {
+        const float pad = 14.0f * u;
+        const float width = std::min(kBestPanelWidth * u, l.right - (columnX + columnWidth + 40.0f * u) - 12.0f * u);
+        const Rectangle plate{l.right - width, l.bottom - 30.0f * u - bestHeight - pad * 2.0f, width, bestHeight + pad * 2.0f};
+        panel(plate, withAlpha(theme::kHudPlate, 0.92f), theme::kUiBorder, 0.0f);
+        drawBest(data.bestFor(data.difficulty), data.difficulty, plate.x + pad, plate.y + pad, width - pad * 2.0f);
+        registerExtent("best run", plate);
+    }
 
     // Credit line in the corner.
     const char* credit = "C++20  -  raylib  -  WebAssembly";
