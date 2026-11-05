@@ -6,7 +6,7 @@ This document explains how the code works. It is written for someone who knows p
 
 **What this document covers.** It describes the code that exists in this repository now. Work that has not been written yet is marked **Planned**, and all of it is listed once, in [section 11](#11-planned-work-not-in-the-code-yet).
 
-**How to read it.** Sections 1 to 3 give the big picture, including how the pixel-art world is drawn. Section 4 covers the memory tricks that keep the game fast, including the sprite atlas and the ground chunks. Section 5 covers game content (weapons, zombies, waves, the boss) and how to add more. Sections 6 and 7 cover the user interface, input, saves, the browser build and audio. Section 8 covers testing and measured performance. Section 9 lists the major decisions, and section 10 maps every topic to its files.
+**How to read it.** Sections 1 to 3 give the big picture, including how the pixel-art world is drawn. Section 4 covers the memory tricks that keep the game fast, including the sprite atlas and the ground chunks. Section 5 covers game content (weapons, zombies, waves, the boss, difficulty, the dash and the solid cars) and how to add more. Section 2 also covers the effects that give the game its feel. Sections 6 and 7 cover the user interface, input, saves, the browser build, installing and offline play, and audio. Section 8 covers testing and measured performance. Section 9 lists the major decisions, and section 10 maps every topic to its files.
 
 Contents:
 
@@ -71,17 +71,20 @@ flowchart LR
         Platform["core/Platform.cpp: browser glue"]
         Input["components/Input: one merged input snapshot"]
 
-        subgraph Sim["Simulation: plain C++, no raylib"]
+        subgraph Sim["Simulation: plain C++, no raylib, built as ls_sim"]
             Step["core/Sim.cpp: one fixed step"]
             Modules["Player, Waves, Enemies, Weapons, Pickups, Upgrades"]
+            Obstacles["components/Obstacles: solid cars"]
+            Layout["components/Maps/Layout: where cars stand, from the seed"]
             State[("GameState: plain data")]
         end
 
         WorldView["components/WorldView: pixel-art world renderer"]
-        Maps["components/Maps: paints the ground, one map today"]
+        Maps["components/Maps: paints the ground, two maps"]
+        Effects["components/Effects: particles, numbers, shake, glow"]
         Ui["components/Ui: HUD and screens"]
         Audio["components/Audio: generated sound"]
-        Save["core/Save.cpp: settings and best run"]
+        Save["core/Save.cpp and SaveFile.cpp: settings and best runs"]
         Data["data/Balance.h and data/Theme.h"]
     end
 
@@ -93,12 +96,18 @@ flowchart LR
     App -->|"InputFrame, once per step"| Step
     Step --> Modules
     Modules -->|"read and write"| State
+    Modules -->|"slide around cars"| Obstacles
+    Obstacles -->|"which cars are near"| Layout
     State -.->|"read only"| WorldView
     WorldView -->|"asks for ground chunks by seed"| Maps
+    Maps -->|"same layout, so painted cars match solid cars"| Layout
+    State -.->|"read only, plus events"| Effects
+    WorldView --- Effects
     State -.->|"read only"| Ui
     Ui -->|"menu choices"| App
     State -->|"events list"| App
     App -->|"events"| Audio
+    App -->|"events"| Effects
     App --> Save
     Data -.-> Modules
     Data -.-> WorldView
@@ -106,7 +115,7 @@ flowchart LR
     Data -.-> Ui
 ```
 
-Solid arrows carry data or calls. Dotted arrows are read-only. The world renderer draws into a low-resolution picture and scales it up. The UI is drawn afterward at full resolution, on top.
+Solid arrows carry data or calls. Dotted arrows are read-only. The world renderer draws into a low-resolution picture and scales it up. The UI is drawn afterward at full resolution, on top. `Maps/Layout` is the one part of the maps that the simulation can see, which is how a painted car and a solid car always stand in the same place.
 
 ### What each module owns
 
@@ -116,20 +125,23 @@ Solid arrows carry data or calls. Dotted arrows are read-only. The world rendere
 | Simulation step | [`src/core/Sim.cpp`](../src/core/Sim.cpp) | The order in which game systems run each step | Player, Waves, Enemies, Weapons, Pickups, Upgrades |
 | Game state | [`src/core/GameState.h`](../src/core/GameState.h) | Every number that describes a run: the player, all zombies, all shots, the clock, the random generator | Read by everyone, written by the simulation |
 | Containers and helpers | [`Pool.h`](../src/core/Pool.h), [`SpatialHash.h`](../src/core/SpatialHash.h), [`Rng.h`](../src/core/Rng.h), [`Math.h`](../src/core/Math.h) | Fixed-size storage, fast neighbour search, seeded random numbers, 2D vectors | Simulation |
-| Player | [`src/components/Player`](../src/components/Player) | Movement, damage taken, healing | State |
+| Player | [`src/components/Player`](../src/components/Player) | Movement, the dash, damage taken, healing | State, Obstacles |
+| Obstacles | [`src/components/Obstacles`](../src/components/Obstacles) | Solid cars as the simulation sees them: a cache of nearby cars, pushing circles out of them, sliding, steering zombies around them, rescuing stuck zombies, placing dropped items | State, Maps/Layout |
 | Enemies | [`src/components/Enemies`](../src/components/Enemies) | One folder per zombie type, the boss, the wave table logic | State, Pickups |
 | Weapons | [`src/components/Weapons`](../src/components/Weapons) | One folder per weapon, ammo and reloading, projectiles and zones | State, Enemies |
 | Pickups | [`src/components/Pickups`](../src/components/Pickups) | XP gems, health, magnets, bombs, ammo crates | State, Upgrades |
 | Upgrades | [`src/components/Upgrades`](../src/components/Upgrades) | XP and levels, the level-up cards, passives, evolutions | State, Weapons |
 | Input | [`src/components/Input`](../src/components/Input) | Turning keyboard, gamepad, touch and mouse into one snapshot | Platform |
 | World renderer | [`src/components/WorldView`](../src/components/WorldView) | Drawing the world from the state: the low-resolution render target, the sprite atlas and palette, the shaders, the camera, the day cycle, the ground chunk cache | State (read only), Maps |
-| Maps | [`src/components/Maps`](../src/components/Maps) | Painting square chunks of ground, and the lamps and fires on them, from a seed. One map today, the ruined city | Data (colors). Called by the world renderer only |
-| UI | [`src/components/Ui`](../src/components/Ui) | HUD, title, level-up cards, pause, settings, game over, font, icons | State (read only), Input |
+| Maps | [`src/components/Maps`](../src/components/Maps) | Painting square chunks of ground, and the lamps and fires on them, from a seed. Two maps: the ruined city and the desert wasteland | Data (colors). Called by the world renderer only |
+| Map layout | [`src/components/Maps/Layout`](../src/components/Maps/Layout) | Where the solid cars stand, worked out from the map, the seed and a tile position. No raylib, so it is built into `ls_sim`. Both the simulation and the painters read it | Nothing else |
+| Effects | [`src/components/Effects`](../src/components/Effects) | Game feel: particles, ground stains, damage numbers, screen shake, hit pause, glow, flashes, and the check for a device that is too slow. Reads state and events only | State (read only), Events |
+| UI | [`src/components/Ui`](../src/components/Ui) | HUD, title (with the difficulty and map selectors), level-up cards, pause, settings, game over, font, icons | State (read only), Input |
 | Audio | [`src/components/Audio`](../src/components/Audio) | Sound effects and music made in code, and the event-to-sound router | Events |
-| Saves | [`src/core/Save.cpp`](../src/core/Save.cpp) | Turning settings and best-run numbers into text and back | Platform |
-| Platform | [`src/core/Platform.cpp`](../src/core/Platform.cpp) | The few things that differ between browser and Windows: canvas size, storage, touch events, safe areas | raylib, the browser |
+| Saves | [`src/core/Save.cpp`](../src/core/Save.cpp), [`SaveFile.cpp`](../src/core/SaveFile.cpp) | Turning settings, the chosen difficulty and map, and best-run numbers into text and back. `SaveFile` reads and writes the Windows save file safely | Platform |
+| Platform | [`src/core/Platform.cpp`](../src/core/Platform.cpp), [`DebugSwitch.h`](../src/core/DebugSwitch.h) | The few things that differ between browser and Windows: canvas size, storage, touch events, safe areas, and whether the debug overlay shows | raylib, the browser |
 | Data | [`Balance.h`](../src/data/Balance.h), [`Theme.h`](../src/data/Theme.h) | Every tuning number, every color, and the time-of-day table | Everything |
-| Page shell | [`web/`](../web) | The HTML page, loading bar, WebGL error message, canvas styling | The WASM file |
+| Page shell | [`web/`](../web) | The HTML page, loading bar, WebGL error message, canvas styling, the install button, the offline worker | The WASM file |
 
 ### Rules that keep the modules apart
 
@@ -137,7 +149,7 @@ Solid arrows carry data or calls. Dotted arrows are read-only. The world rendere
 - **The simulation never reads the clock.** Time only exists as a count of steps.
 - **The renderer and the audio only read.** They never change the game state.
 - **Events flow one way.** The simulation writes a list of things that happened. Others read it.
-- **Maps stay out of the simulation.** A map only paints a picture of the ground. Nothing in the simulation asks what is on the ground, zombies and the soldier walk straight across every prop, and there are no solid obstacles. The Maps folder is built into the game program, not into `ls_sim`, and its header includes raylib, so a simulation file that tried to use it would fail to compile.
+- **The painting half of the maps stays out of the simulation.** A map's props (barrels, signs, rubble, trees) are decoration: the soldier and the zombies walk straight across them. The painters live in the Maps folder, which is built into the game program and not into `ls_sim`, and its header includes raylib, so a simulation file that tried to use a painter would fail to compile. Only one small part is shared on purpose: [`Maps/Layout`](../src/components/Maps/Layout) decides where the solid cars stand. It uses no raylib and is linked into `ls_sim`, and the painters ask it too, so a car you see is always a car you bump into. `run.map` in the state says which map a run is on (see [solid cars](#solid-cars)).
 
 ---
 
@@ -149,14 +161,16 @@ This section follows `frame()` in [`App.cpp`](../src/core/App.cpp) and `sim::ste
 flowchart TD
     A["frame starts: read frame time, cap it at 0.1 s"] --> B["input::update merges keyboard, gamepad, touch, mouse"]
     B --> C["UI layout, audio unlock, pause on focus loss, back key"]
-    C --> D{"Is time running?"}
+    C --> C2["effects::filterSimulationTime: a hit pause may keep back part of the frame's time"]
+    C2 --> D{"Is time running?"}
     D -->|"real run on the play screen"| E["runSimulation: add time to accumulator, call sim::step for each 1/60 s owed, at most 5"]
     D -->|"title screen"| F["runDemo: same loop, scripted bot"]
     D -->|"pause, menus, game over"| G["no steps"]
-    E --> H["events: audio::onEvent for each, worldview::consumeEvents, then clear the list"]
+    E --> H["events: audio::onEvent, worldview::consumeEvents, effects::consumeEvents, then clear the list"]
     F --> H
     G --> H
-    H --> I["run ended? finishRun: summary, best run, save"]
+    H --> H2["effects::update moves particles and numbers on"]
+    H2 --> I["run ended? finishRun: summary, best run, save"]
     I --> J["audio::update: pick music layers"]
     J --> K["alpha = accumulator / step length"]
     K --> L["world pass: worldview::draw paints the world small, then scales it up"]
@@ -170,8 +184,8 @@ flowchart TD
 2. **Read the clock.** `GetFrameTime()` gives the real seconds since the last frame. The code keeps `rawDt` for statistics and uses `dtReal = min(rawDt, 0.1)`. The cap stops a long stall (for example a hidden tab) from running a huge pile of steps afterward.
 3. **Read input.** `input::update` merges every device into one `Snapshot` (see [section 6](#input-handling)). Before that, the joystick is switched on only while a real run is in the playing phase, and the pause button's rectangle is given to the input code so a touch that starts on it presses it instead of starting the joystick.
 4. **Housekeeping.** The first press of any kind unlocks audio, because browsers refuse to play sound before the user does something. If the tab or window lost focus since the last frame, the game pauses. The back key (Esc, P, gamepad B or Start) pauses while playing and steps back out of menus.
-5. **Advance time**, but only where time should move: in a real run on the play screen (`runSimulation`) or in the title demo (`runDemo`). Pause, settings, how-to-play and game over run no steps. The details are in [the next subsection](#fixed-timestep-the-accumulator).
-6. **Handle events.** Each event the steps produced goes to `audio::onEvent` (not during the title demo, which makes no sound). `worldview::consumeEvents` reads the same list for animation timing (the soldier's muzzle flash and recoil), for where to lay down corpses, and for smoke. Then the list is cleared. See [the events subsection](#the-event-list).
+5. **Advance time**, but only where time should move: in a real run on the play screen (`runSimulation`) or in the title demo (`runDemo`). Pause, settings, how-to-play and game over run no steps. Before this, `effects::filterSimulationTime` may hold back a little of the frame's time for a **hit pause** (see [effects](#effects-particles-numbers-shake-and-glow)). The details are in [the next subsection](#fixed-timestep-the-accumulator).
+6. **Handle events.** Each event the steps produced goes to `audio::onEvent` (not during the title demo, which makes no sound). `worldview::consumeEvents` reads the same list for animation timing (the soldier's muzzle flash and recoil), for where to lay down corpses, and for smoke. `effects::consumeEvents` turns the same events into particles, numbers, shake and flashes. Then the list is cleared. See [the events subsection](#the-event-list). After that `effects::update` moves the particles and numbers on, using real time, and the frame-time watch decides whether the device is too slow for the extras.
 7. **Check for the end of a run.** If the phase became `Dead` or `Won`, `finishRun` builds the summary, updates the best run, saves, and moves to the game over screen.
 8. **Update music.** `audio::update` receives how far through the ten minutes the run is, and whether the boss is out.
 9. **Compute `alpha`** (explained below), then **draw**: the world pass, then the UI pass, then the optional debug overlay, then `EndDrawing()`. The world pass draws into a small picture and scales it up ([inside the world pass](#inside-the-world-pass)). The UI pass draws on top at full screen resolution.
@@ -229,13 +243,13 @@ const float alpha = g_accumulator / kDt;
 
 1. **Fit the render target to the window.** The target is a small picture, as many art pixels as the window needs. `chooseScale` decides how many screen pixels one art pixel takes. It aims for about 360 art pixel rows on landscape windows (about 420 columns on portrait ones), and it prefers a whole number (2, 3, 4...) when one is within 17% of the ideal. It also zooms in just far enough that the edge of the view never shows ground beyond the spawn circle (`kSpawnRadius`, 960 world units, minus a margin of 34). So a zombie is never seen appearing out of nothing. This is worked out for each window shape, and a browser test checks nine different shapes.
 2. **Aim the camera, snapped to whole art pixels.** The camera sits on the soldier's interpolated position, rounded to the nearest art pixel (`aimCamera`). The soldier is therefore always drawn in the same spot of the picture, and the ground scrolls past in whole-pixel steps. Sprites and ground share one grid, so nothing shimmers against anything else.
-3. **Paint ground chunks that are about to be needed** (`updateGround`). See [section 4](#texture-memory-the-sprite-atlas-and-the-ground-chunks).
-4. **Open the render target and draw the ground** as a few textured quads, through the ground shader, which also applies the time-of-day grading. At dusk and night, pools of light from lamps and fires are then multiplied onto the ground.
-5. **Draw flat marks on the ground:** boss warning shapes, mine trigger rings and the soldier's ring.
-6. **Draw sprites** through the palette shader, in this order: lamp bulbs and fire, corpses, mines, gems and pickups, all shadows, then every figure sorted by depth, so nearer figures cover farther ones. The soldier is drawn a second time, faintly, on top of the crowd so he is never lost.
+3. **Paint ground chunks that are about to be needed** (`updateGround`). See [section 4](#texture-memory-the-sprite-atlas-and-the-ground-chunks). The camera's whole-pixel position also gets the screen shake offset (`effects::shakeArtPixels`), which is always a whole number of art pixels.
+4. **Open the render target and draw the ground** as a few textured quads, through the ground shader, which also applies the time-of-day grading. Then the cars are written into the **depth buffer** (see [how cars are drawn in front of and behind characters](#how-cars-are-drawn-in-front-of-and-behind-characters)). At dusk and night, pools of light from lamps and fires are then multiplied onto the ground.
+5. **Draw flat marks on the ground:** blood, bile and scorch stains first (so they can never hide a warning), then boss warning shapes, mine trigger rings and the soldier's ring.
+6. **Draw sprites** through the palette shader, in this order: lamp bulbs and fire, corpses, mines, gems and pickups, all shadows, the dash afterimage, then every figure sorted by depth, so nearer figures cover farther ones. A zombie standing behind a car is also drawn as a see-through silhouette, so it is never lost. The soldier is drawn a second time, faintly, on top of the crowd so he is never lost.
 7. **Draw the overlays that must stay readable above a crowd:** the Charger's warning line, health bars on elites and the boss, blade trails, and the soldier's ring.
-8. **Draw shots and blasts:** a soft warm glow under explosions (blended by adding colors), then explosion rings, bullets, beams and lightning.
-9. **Draw smoke, flames, grenades, rockets, blades and the muzzle flash,** and last of all enemy bullets, so nothing can hide a bullet that can hurt.
+8. **Draw shots and blasts:** a soft warm glow under explosions (blended by adding colors) on weak devices, then explosion rings, bullets, beams and lightning, then the particles.
+9. **Draw smoke, flames, grenades, rockets, blades and the muzzle flash.** Then the glow layer, any full-screen flash and the damage numbers. Last of all come enemy bullets, so nothing can hide a bullet that can hurt.
 10. **Close the render target and scale it up** over the window with the present shader. This is the only scaling step in the world.
 
 The sorting in step 6 is a **counting sort** by screen height, the same linear-time idea as in [section 4](#the-counting-sort), using 512 buckets and fixed arrays. Figures in the same bucket are at almost the same height on screen, so their order cannot be noticed.
@@ -261,11 +275,11 @@ The inverse, `unproject`, finds the ground point under a picture pixel. The rend
 
 #### The day cycle
 
-The time of day is worked out from `state.timeSeconds()`, which is `run.tick` times the step length. [`DayCycle.cpp`](../src/components/WorldView/DayCycle.cpp) blends between the rows of `kDayKeys` in [`Theme.h`](../src/data/Theme.h): golden afternoon (0 s), low sun (120 s), dusk (210 s), late dusk (300 s), night (370 s), deep night (500 s) and a blood-red sky (590 to 600 s, as the boss arrives). Each row sets the ground tint, how colorful the ground is, a small lift, a gentle tint for sprites, how bright the lamps are, how long sun shadows are, and how dark the corners are.
+The time of day is worked out from `state.timeSeconds()`, which is `run.tick` times the step length. Both maps use the same day cycle. [`DayCycle.cpp`](../src/components/WorldView/DayCycle.cpp) blends between the rows of `kDayKeys` in [`Theme.h`](../src/data/Theme.h): golden afternoon (0 s), low sun (120 s), dusk (210 s), late dusk (300 s), night (370 s), deep night (500 s) and a blood-red sky (590 to 600 s, as the boss arrives). Each row sets the ground tint, how colorful the ground is, a small lift, a gentle tint for sprites, how bright the lamps are, how long sun shadows are, and how dark the corners are.
 
 The ground is graded strongly. Sprites are graded only a little, so zombies and bullets stay readable at the darkest moment. Nothing about the day cycle is stored in the simulation, and it cannot change the outcome of a run. The title-screen demo calls `setFixedDayTime` to hold the clock at dusk (240 s).
 
-[`Ground.cpp`](../src/components/WorldView/Ground.cpp) draws the lamp and fire light. Street lamps switch on as the lamp level rises, and a lamp now and then buzzes dimmer. Fires burn all the time and flicker. The setting **Reduced motion** (`setReducedMotion`) freezes the flicker, the buzzing and the fire animation. The day cycle itself keeps moving.
+[`Ground.cpp`](../src/components/WorldView/Ground.cpp) draws the lamp and fire light. Street lamps switch on as the lamp level rises, and a lamp now and then buzzes dimmer. Fires burn all the time and flicker. The setting **Reduced motion** (`setReducedMotion`) freezes the flicker, the buzzing and the fire animation. The day cycle itself keeps moving. Fires flicker and animate at a calmer pace on the wasteland map (`fireFlickerTicks` and `fireFrameTicks` in [`Maps.h`](../src/components/Maps/Maps.h)).
 
 ### What one simulation step does
 
@@ -273,10 +287,11 @@ The ground is graded strongly. Sprites are graded only a little, so zombies and 
 
 ```cpp
 run.tick++;
+obstacles::update(state);           // refresh the cached list of cars near the player
 applyStressTargets(state);          // debug only
-player::update(state, input.moveX, input.moveY);
+player::update(state, input.moveX, input.moveY, input.dash);   // walk or dash, sliding along cars
 waves::update(state);               // spawn from the wave table, elites, boss
-enemies::update(state);             // grid rebuild, move zombies, contact damage, grid rebuild
+enemies::update(state);             // grid rebuild, move zombies around cars, contact damage, grid rebuild
 weapons::update(state);             // fire, move shots and zones, apply hits
 enemies::updateBullets(state);      // enemy bullets against the player
 pickups::update(state);             // gems and pickups
@@ -287,6 +302,11 @@ upgrades::update(state);            // open the level-up screen if a level is ow
 
 Before this, `step` returns at once if the run is over. If the phase is `LevelUp`, it only handles the card choice and returns, so the world is frozen while the cards are on screen.
 
+Two rules settle what happens when two things arrive in the same step:
+
+- **Death beats everything else in a step.** All damage to the player has landed by the end of the step, so the check at the bottom of `sim::step` is final. If the boss dies in the same step as the player, the boss still counts as killed, but the run is a loss. Without the rule, the result would depend only on the order of the calls above.
+- **A card beats a reroll in one step.** During level-up, a card index means "the card on screen now". A reroll would swap it for one the player has not seen, so if both arrive in one step the card is taken and the reroll is not spent.
+
 ### Where collisions happen
 
 There is no single "collision pass". Each system checks hits when it moves its own objects:
@@ -296,6 +316,7 @@ There is no single "collision pass". Each system checks hits when it moves its o
 - **Enemy bullet touches player:** inside `enemies::updateBullets`.
 - **Player touches a gem or pickup:** inside `pickups::update`.
 - **Boss attack zone touches player:** when the zone's warning time ends, inside `weapons::update`.
+- **Soldier or zombie touches a car:** inside `player::update` (through `sweepCircle`) and at the end of the zombie movement in `enemies::update` (through `resolveCircle`). See [solid cars](#solid-cars). Bullets, blasts and beams ignore cars.
 
 Every check is the same simple test: is the distance between two centers smaller than the sum of the two radii? The code compares squared distances, which avoids a square root.
 
@@ -307,7 +328,32 @@ While the step runs, systems record things that happened with `pushEvent`:
 pushEvent(state, EventType::PlayerHit, player.pos, taken);
 ```
 
-An event holds a type, a position, a number and a small detail field (which weapon, which zombie type). The events for a frame accumulate in `state.events`, a pool with room for 512. `frame()` hands them to the audio and renderer, then clears the list. If the list is full, further events are dropped. That is safe because events only drive sound and animation, and never change the simulation. Every blast sends an `Explosion` event, even one that hits nothing (`explode` in [`Weapons.cpp`](../src/components/Weapons/Weapons.cpp)), so a mine going off in an empty street still makes a sound.
+An event holds a type, a position, a number and a small detail field (which weapon, which zombie type). The events for a frame accumulate in `state.events`, a pool with room for 512. `frame()` hands them to the audio, the renderer and the effects, then clears the list. If the list is full, further events are dropped. That is safe because events only drive sound and animation, and never change the simulation.
+
+Not every event may use the whole list. `eventLimit` in [`GameState.h`](../src/core/GameState.h) gives each kind a ceiling, in **tiers**: hits (`EnemyHit`) stop first, then the common events (`EnemyKilled`, `GemCollected`, `WeaponFired`, `Explosion`), and every rare event (a level-up, a death, a boss phase, a dash) may use the full 512. In a frame with 2,000 zombies, thousands of hits could otherwise fill the list before the step reaches the level-up or the player's death, and those are the ones that matter. Every blast sends an `Explosion` event, even one that hits nothing (`explode` in [`Weapons.cpp`](../src/components/Weapons/Weapons.cpp)), so a mine going off in an empty street still makes a sound.
+
+### Effects: particles, numbers, shake and glow
+
+[`src/components/Effects`](../src/components/Effects) makes the game feel good: sparks, blood, damage numbers, screen shake, a short freeze on big hits, glow on shots and explosions, and flashes. It follows the same rule as the renderer: it only **reads** the state and the events, and it has its own random generator, so nothing it does can change how a run plays out. All its memory is fixed when the program starts. [`Effects.h`](../src/components/Effects/Effects.h) is the public header, and `App.cpp` calls it once or twice per frame (see [section 2](#step-by-step)).
+
+Each piece is a small folder with its own header, and the pieces that are pure logic use no raylib, so unit tests can run them:
+
+| Piece | What it does |
+|---|---|
+| `Particles` | A fixed pool of 1,400 small squares of whole art pixels, plus 120 ground stains (blood, bile, scorch). When the pool is full a burst overwrites the oldest, so a huge fight can never use more memory or time than a small one |
+| `Bursts` | Named recipes for particles (a blood spray, sparks, embers, gore, a shock ring, a level-up fountain), so the code that reacts to an event reads like a list of what happens |
+| `DamageNumbers` | Numbers that stay readable with thousands of zombies. Nearby hits add up into one number instead of each showing its own, new small numbers are rate limited, and there is a hard cap of 16 on screen. A hit far above the usual size is shown bigger |
+| `ScreenShake` | "Trauma": big events add to one number that drains away, and the shake grows with its square, so small hits stay subtle and big ones hit. The result is always whole art pixels, so pixels never turn uneven |
+| `HitPause` | A freeze of at most 0.12 s on big moments, with a 0.7 s cooldown so several big moments cannot add up to a stutter. It takes time away from the simulation (`filterSimulationTime`), and the steps still run in the same order with the same input, only a little later. So a run stays deterministic |
+| `Glow` | One bright layer. Each glow is a small additive quad whose falloff is worked out in a shader in a few hard bands with a checker pattern, so it reads as pixel art and not as a smooth blur. At most 480 per frame |
+| `HitFlash` | How strongly a hit figure flashes. In a crowd, only some zombies flash (every Nth by id, so the crowd does not sparkle) and each flash is weaker. The soldier, elites and the boss always show their hits |
+| `FlashLimiter` | The one gate every full-screen flash goes through: at most one a second, which is well under the usual safety limit of three flashes a second, however many big events land at once |
+| `Budget` | A token bucket. Tokens refill at a steady rate, and an event with no token left is skipped in one comparison, so thousands of hits a second stay cheap |
+| `FrameWatch` | Decides when a device is really too slow for the extras (see below) |
+
+**Settings.** The four effect settings are saved and apply at once, even in the middle of a fight (`effects::applySettings`). Screen shake scales the shake. Flash intensity scales the hit, screen and explosion flashes. Damage numbers turns the numbers on or off. Reduced motion removes the shake and the hit pause, uses fewer particles, makes warnings steady instead of blinking, caps the hit flash to a gentle tint, and (in the world renderer) stops lamp and fire flicker. Reduced motion starts from the system preference when nothing is saved.
+
+**Quality and the slow-device check.** `effects::setQuality(0)` turns off the glow and the ground stains and halves the particles. `FrameWatch` (called each frame through `effects::watchFrameTime`) switches to it on its own when a device stays too slow during a real fight. One long frame is not enough: a 30 Hz screen or a phone in a low-power mode gives long frames with the graphics chip idle, and cutting effects would lose the look for nothing. So it first learns the fastest steady frame time the device has shown (the menus are light, so they show it), and only frames well past that count as slow, for four seconds in a row. Frames longer than 0.25 s (a hidden tab, a stall) are ignored. Once it drops to low quality it stays there, because bouncing between looks would be worse. The world renderer has a separate quality level of its own (half-size ground chunks, no lamp light pools, no flicker, no dark corners). Only the `?debug` command sets that one: the automatic check changes the effects only, and it has not been tested on a real slow phone.
 
 ---
 
@@ -347,7 +393,9 @@ struct GameState {
 | Simulation modules (`Player`, `Waves`, `Enemies`, `Weapons`, `Pickups`, `Upgrades`) | yes | **yes** | Only through `sim::step`, once per step |
 | `core/App.cpp` | yes | a little | Starts runs (`sim::newRun`), clears the event list, and feeds `InputFrame` to `sim::step`. It also writes state directly in two cases: the title-screen demo (loops the clock, tops up ammo) and the debug commands, which only work with `?debug` |
 | `WorldView` (renderer) | yes, `const` | no | It keeps its own private data outside the game state: the sprite atlas, the ground chunks, the soldier's walk cycle and muzzle flash timers, and small pools of corpses and smoke puffs. The time of day is a pure function of `run.tick` |
-| `Maps` | no (it gets the seed as an argument) | no | `renderChunk` is a pure function of the seed and the chunk position. It uses no global state |
+| `Maps` painters | no (they get the seed as an argument) | no | `renderChunk` is a pure function of the map, the seed and the chunk position. It uses no global state |
+| `Maps/Layout` | no | no | `obstaclesInTile` is a pure function of the map, the seed and a tile. The simulation reads its answers through `Obstacles` |
+| `Effects` | yes, `const`, plus the events | no | It keeps its own fixed pools (particles, stains, numbers) and its own random generator. It is built so that nothing it does can reach back into a run |
 | `Ui` (HUD, screens) | yes, `const` | no | It returns choices (a card number, "reroll", "resume"), and `App` turns those into input or screen changes |
 | `Audio` | events only | no | It never sees the game state, only `SimEvent` values |
 | `Save` | no | no | It has its own `SaveData`, separate from the run |
@@ -360,10 +408,11 @@ struct InputFrame {
     float moveY = 0.0f;
     int8_t chooseCard = -1;  // Card index picked on the level-up screen, or -1.
     bool reroll = false;
+    bool dash = false;       // A dash was asked for this step. Ignored during cooldown.
 };
 ```
 
-A seed plus a list of `InputFrame`s is everything needed to replay a run.
+A seed, a difficulty, a map and a list of `InputFrame`s is everything needed to replay a run. The dash is part of `InputFrame` for exactly this reason: it is one more recorded input, so a replay with dashes comes out the same.
 
 ### Events flow one way
 
@@ -383,9 +432,9 @@ The game uses **PCG32**, a small random number generator ([`Rng.h`](../src/core/
 2. The simulation never reads the clock, graphics or audio.
 3. Anything random for looks alone uses something else: the renderer derives variation from a zombie's id or position (`scramble` and `hashPosition` in [`Draw.h`](../src/components/WorldView/Draw.h)), the audio has its own generator (`synth::Noise`), and the bots used in testing have their own.
 
-The ground follows the same idea. The city is painted from `state.run.seed` with hash functions of the tile position ([`TileRandom` in `Paint.h`](../src/components/Maps/City/Paint/Paint.h)), never from `state.rng`. A hash function turns a few numbers (the seed and the tile's position) into one scrambled number, and the same inputs always give the same result. So the same seed always shows the same city, and any chunk can be painted again later, in any order, and come out identical. A browser test checks this by walking away, coming back and comparing screenshots.
+The ground follows the same idea. Both maps are painted from `state.run.seed` with hash functions of the tile position ([`TileRandom`](../src/components/Maps/Layout/TileRandom/TileRandom.h)), never from `state.rng`. A hash function turns a few numbers (the seed and the tile's position) into one scrambled number, and the same inputs always give the same result. So the same seed always shows the same map, and any chunk can be painted again later, in any order, and come out identical. A browser test checks this by walking away, coming back and comparing screenshots. The solid cars use the same hashes, which is why the simulation can know where they are without storing anything (see [solid cars](#solid-cars)).
 
-One honest limit: the determinism test compares two runs inside the same program build. Floating-point maths such as `sin` and `cos` may differ in the last digit between compilers, so a run recorded on Windows is not guaranteed to match one in the browser. That has not been tested. The same goes for the city: the screenshot test compares pictures inside one browser build, and the city has not been compared between Windows and the browser.
+One honest limit: the determinism test compares two runs inside the same program build. Floating-point maths such as `sin` and `cos` may differ in the last digit between compilers, so a run recorded on Windows is not guaranteed to match one in the browser. That has not been tested. The same goes for the maps: the screenshot test compares pictures inside one browser build, and a map has not been compared between Windows and the browser.
 
 ---
 
@@ -595,8 +644,13 @@ A test checks that every sprite fits in the atlas, and the debug log reports how
 - Every chunk on screen must be ready now. A missing one is painted at once, replacing the chunk that was used longest ago and is not on screen. This only paints several in one frame on the first frame, after a jump, or when a run starts with a new seed.
 - Then **at most one more chunk per frame** is painted, from a ring 200 world units beyond the view. By the time the camera gets there, the chunk is ready, so walking does not cause a hitch.
 - Drawing is one textured quad per visible chunk, a handful in all.
+- Each chunk also keeps the list of solid cars in its tile (up to `kMaxObstaclesPerTile`, 32), asked from [`Maps/Layout`](../src/components/Maps/Layout/Layout.h) when the chunk is painted. The renderer uses it to write the cars into the depth buffer (see [solid cars](#how-cars-are-drawn-in-front-of-and-behind-characters)). The simulation has its own, separate cache of the same lists, a fixed 5 by 5 window of tiles inside `GameState`, so it also uses no heap memory.
 
 **The city.** [`Maps/City`](../src/components/Maps/City/City.cpp) paints a grid of blocks. Roads run along chunk edges, and each chunk holds one block. About 12% of road segments are missing, which gives broken roads. The inside of each block is filled with one kind of lot: a brick or plaster ruin, a parking lot, a camp, a dead park or a bare foundation. The roads get furniture such as cars, barrels, signs and street lamps. All coordinates are global texels and every chunk clips to itself, so a car that crosses a chunk edge is simply drawn by both chunks, and the seam is invisible. A chunk also reports up to 12 lights (street lamps and fires) for the renderer to draw as pools of light.
+
+**The wasteland.** [`Maps/Wasteland`](../src/components/Maps/Wasteland/Wasteland.cpp) paints a desert highway map the same way, in chunks, from a hash of the seed and the position. It splits the work into folders: `Terrain` (broad kinds of land that blend into each other, such as dunes, sand, dry pans, gravel, scrub and red earth, plus sand drifts), `Roads` (broken highways, with tire tracks), `Sites` (places worth finding on a long walk: gas stops, shack clusters, rock outcrops, dead groves, bone fields, wreck yards, old foundations and camps) and `Props` (rusted cars, buses and tankers, dead trees, rocks, road signs, wire fences, guard rails, telephone poles, skeletons). Where the land kinds, highways and wrecks are is decided in [`Layout/WastelandLayout`](../src/components/Maps/Layout/WastelandLayout/WastelandLayout.h), which holds no pixels, because the simulation reads it too. Props that suit both maps (barrels, contact shadows, the lights list) are in `Maps/SharedProps`. The wasteland uses the same day cycle as the city. Its ground colors are in `Theme.h`.
+
+**Adding a map.** [`Maps.h`](../src/components/Maps/Maps.h) says it in one line: add a value to `MapId` in [`Layout.h`](../src/components/Maps/Layout/Layout.h), add one case to each `switch` in [`Maps.cpp`](../src/components/Maps/Maps.cpp) (the name, the chunk painter, the fallback ground color and the fire timings), and write the map's layout in the `Layout` folder, so that `obstaclesInTile` can say where its cars stand. The picker on the title screen reads `kMapCount` and `maps::name`, and the chosen map is saved, so a new map shows up there with no UI change except a color for its button in `Theme.h` (`kMapColors`). The renderer takes the map from `run.map`.
 
 ---
 
@@ -715,7 +769,7 @@ Waves are a table, not code. Each row of `kWaves` in `Balance.h` spawns one type
 {75, 170, EnemyType::Runner, 0.3f, 0.9f, 5},
 ```
 
-This reads: from 1:15 to 2:50, spawn Runners in groups of 5, at a rate that climbs linearly from 0.3 to 0.9 groups per second. `waves::update` keeps one fractional **accumulator** per row ([`Waves.cpp`](../src/components/Enemies/Waves/Waves.cpp)). Each step it adds `rate × dt`. When an accumulator passes 1, a group spawns at a random point on a circle around the player, just outside the view, and the accumulator drops by 1. A fractional rate such as 0.3 groups per second therefore works.
+This reads: from 1:15 to 2:50, spawn Runners in groups of 5, at a rate that climbs linearly from 0.3 to 0.9 groups per second. `waves::update` keeps one fractional **accumulator** per row ([`Waves.cpp`](../src/components/Enemies/Waves/Waves.cpp)). Each step it adds `rate × dt`. When an accumulator passes 1, a group spawns at a random point on a circle around the player, just outside the view, and the accumulator drops by 1. A fractional rate such as 0.3 groups per second therefore works. The rate is multiplied by the chosen difficulty's spawn rate (see [difficulty](#difficulty)).
 
 The gaps between rows are the calmer moments (the comments in the table mark three breathers). Separate `kEliteEvents` rows spawn elites at fixed times. At 10:00 (`kRunSeconds`), the boss arrives.
 
@@ -736,7 +790,7 @@ The power `kBossHpScalePower` is 0.75, below 1. So if a build deals twice the da
 Three rules stop the player from avoiding the fight:
 
 - The boss **ignores crowd separation**, so zombies cannot hold it back.
-- If the player is more than `kBossLeashDistance` (560 units) away, the boss moves at `kBossCatchUpSpeed` (340), faster than the fastest player (230 base, 299 with the best move-speed passive).
+- If the player is more than `kBossLeashDistance` (560 units) away, the boss moves at `kBossCatchUpSpeed` (430). That has to beat the fastest player by a lot, because the boss stands still during its warnings: a player with the best move-speed passive, dashing whenever allowed, averages 327 units a second, and over a 9 second attack cycle the boss still covers more ground.
 - A bomb pickup can take at most 1.5% of its HP.
 
 **Phases.** The phase follows the boss's HP: phase 0 above 66%, phase 1 from 66%, phase 2 from 33%. `updatePhase` only moves forward, one step at a time, so a big hit that skips a phase still sends every phase event. Each phase shortens the time between attacks (2.8, 2.2, 1.6 s) and makes the attacks bigger.
@@ -753,6 +807,79 @@ Three rules stop the player from avoiding the fight:
 ### Pickups
 
 Gems carry XP and fly to the player when close (or when a magnet pickup makes every gem fly in). Above 500 gems on the map, `mergeGems` combines gems in the same 96-unit cell into one, keeping the total XP the same, using a small hash table on the stack. Heal restores 25% of max HP, bomb damages zombies in a large radius, and ammo adds to reserves as described above.
+
+### Difficulty
+
+There are three levels: Easy, Normal and Hard. A level is three numbers in one small table, `kDifficulties` in [`Balance.h`](../src/data/Balance.h), and needs no logic of its own:
+
+```cpp
+inline constexpr DifficultyTuning kDifficulties[static_cast<int>(Difficulty::Count)] = {
+    /* Easy   */ {0.4f, 0.25f, 0.5f},
+    /* Normal */ {1.0f, 1.0f, 1.0f},
+    /* Hard   */ {1.3f, 1.25f, 1.2f},
+};
+```
+
+The three numbers multiply zombie health (the boss included, through `bossHpForBuild`), the damage of every hit on the player (before armor), and the spawn rates in the wave table. The level is stored in `run.difficulty` when `sim::newRun` starts the run, and it is part of the state hash. The title screen has a selector for it, next to the map selector, under the Play button. Both are saved and start from the last choice, so Play is still one press. The best-run panel on the title screen shows the best run for the level that is selected.
+
+### The player's dash
+
+The soldier can dash (Space, a gamepad shoulder button, or the corner button on a touch screen). The numbers are in `Balance.h`: 0.2 seconds long, 170 world units far (about 3.7 times what walking covers in the same time), invulnerable for the first 0.15 seconds, and a 4 second cooldown. The code is in [`Player.cpp`](../src/components/Player/Player.cpp). The direction is where the player is moving, or the way he faces when standing still.
+
+- The dash is an input: `InputFrame::dash`. It is recorded like movement, so a replay stays exact. The balance bots dash too.
+- It moves through the same function as walking (`applyMovement`, which calls `obstacles::sweepCircle`), so a car stops or deflects a dash exactly as it does a step.
+- The simulation fires a `PlayerDashed` event, which drives the dash sound and the afterimage.
+- The afterimage is drawn along the way he really went. A car can stop him partway, so the start and the direction alone would draw ghosts in the wrong place. The renderer keeps a short list of his positions during the dash ([`DashPath.h`](../src/components/WorldView/DashPath.h), at most 16 points, a dash is 12 steps long). Nothing in the game reads that list, so it cannot change a replay. It uses no raylib, so a unit test checks it.
+- The HUD shows the cooldown: a big corner button on a touch screen (placed so the joystick ignores touches that start on it), and a small indicator under the weapon slots for every other device.
+
+### Solid cars
+
+Wrecked cars, buses and tankers are solid on both maps and on every difficulty. Everything else on the ground is decoration. A solid car is an axis-aligned box. The soldier and the zombies slide along its sides, and bullets, blasts and beams pass over it.
+
+#### The simulation must know where cars are, without storing them
+
+A map is never stored in the game state. Where a car stands is a pure function of the map, the seed and a **tile** (one tile is exactly one painted ground chunk, 640 world units wide): `maps::obstaclesInTile(map, seed, tileX, tileY, out, capacity)` in [`Layout.h`](../src/components/Maps/Layout/Layout.h). It is built from the same hash functions that paint the ground. The painters call the same layout to decide where to draw each car, so a car you see is a car you bump into, and a replay with the same seed, map and inputs meets the same cars.
+
+`Maps/Layout` uses no raylib and is linked into `ls_sim`. That is the one part of the maps the simulation can see. `RunState::map` holds which map the run is on, and it is part of the state hash.
+
+#### The obstacle cache
+
+Asking the layout for cars on every collision check would be far too slow, so [`Obstacles.cpp`](../src/components/Obstacles/Obstacles.cpp) keeps a cache in the state: a window of 5 by 5 tiles around the player (`kObstacleWindow`). That reaches past where zombies spawn. Each tile has one fixed slot, chosen by its position modulo the window size, so when the player crosses into a new tile, the tiles that stay in the window stay in their slots and nothing is copied. Only the slots whose tile changed are filled again. `obstacles::update` runs first in every step and does nothing at all until the player changes tile. A tile's list holds every car within `kObstacleReachWorld` (64 units) of the tile, so a circle up to that wide can be checked against the single tile that holds its center. A zombie outside the window simply walks on without cars, which is out of sight and is the same for any run. The cache is worked out from things that are already hashed, so it is left out of the state hash, and a unit test checks that after walking around, the cache equals a fresh computation.
+
+#### Resolving, sliding and sweeping
+
+- **`resolveCircle`** moves a circle out of any car it overlaps, by the shortest way. The corners are rounded (`kCarCornerRadius`, 8 units): the box is shrunk by the corner radius and the circle is grown by the same amount, which is the same test as a box with rounded corners. A circle sliding along a car does not catch on a corner.
+- **`sweepCircle`** moves a circle from one place to another in steps small enough that it cannot jump over a car, and slides along whatever it meets. The soldier uses it for walking and dashing.
+- **`steerAround`** gives a zombie a velocity that goes around a car instead of into it. If a car is close ahead, the zombie heads for the nearer corner of the car (a little wide of it, `kCarCornerClearance`), and a tie between the two ways around is broken by the zombie's id. It looks along the new heading once more, so going around one car does not lead straight into the next.
+
+#### No pathfinding, and the stuck rescue
+
+There is no pathfinding, on purpose (see [major decisions](#9-major-decisions)). Two zombies heading for opposite corners of a car, or a pocket between two wrecks, can pin a zombie. If a pinned zombie were left alone, standing behind a car would make the player safe, so a rescue exists. `watchProgress` in [`Enemies.cpp`](../src/components/Enemies/Enemies.cpp) counts how long a zombie has gone without getting closer to the player while a car is in the way:
+
+- Progress is judged only every 55 steps (`kZombieStuckCheckSteps`), which keeps 2,000 zombies cheap.
+- Getting at least 12 units closer to the player counts as progress. Shuffling along a car does not.
+- Waiting in a queue behind other zombies does not count as stuck, up to 12 checks (`kZombieQueueChecks`).
+- After 330 steps (5.5 seconds) with no progress (`kZombieStuckSteps`), the zombie is moved to `obstacles::rescueSpot`: a place clear of every car and closer to the player, from where it can walk up to touching distance. A `ZombieUnstuck` event is pushed, which only the balance tool counts.
+
+This rescue is based on **progress toward the player**, not on speed or position. A zombie that is hurt, slow, or knocked back is not "stuck", and a Brute that takes a long time to walk around a bus is not rescued while it is still getting closer.
+
+**Known gap.** A Brute is wider than the other zombies, so a player who stands in a slot between cars that is too narrow for a Brute cannot be reached by it. The rescue finds no spot, because there is none. A player in such a slot is safe from Brutes only. Other zombies fit.
+
+#### Special cases
+
+- **The Charger.** It only starts a charge when `lineBlocked` says the line to the player is clear of cars, otherwise a car between them would waste it. Once it is locked on and dashing, it does not steer around cars. If it hits one, it crashes: it bounces back (`kChargerCrashKnock`) and is stunned for 1.5 seconds (`kChargerCrashSeconds`), which is the player's reward for stepping behind a car.
+- **The boss ignores cars.** It is wider than a car is deep, and its telegraphed attacks and its catch-up speed would be unfair if a wreck could stop it. It is drawn over cars.
+- **Nothing appears inside a car.** A spawned zombie is pushed out with `resolveCircle`. The boss is the exception.
+- **`placeItem`.** A gem, a pickup or a mine that is dropped lands where the player can collect it: clear of every car, and somewhere the player can walk to, or at least reach into collecting range. This matters in a pile of overlapping wrecks, where a pocket can fit the item but be closed off on all sides.
+- **No car near the start.** `clearOfStart` drops any car close to where the player starts, so a run never opens against one. Both the painters and the simulation drop that car.
+
+#### How cars are drawn in front of and behind characters
+
+A car is a picture painted into the ground chunk, but a character standing behind it must be hidden by it, and one in front must be drawn over it. The ground cannot do that on its own, because it is flat and drawn first.
+
+The solution uses the **depth buffer**, the graphics card's per-pixel record of "how near is what is drawn here". The painters mark which pixels of a chunk are car by writing a spare value into the pixel's **alpha channel**: [`CarMark`](../src/components/Maps/Paint/Paint.h) sets the alpha to `kCarBody` (0) while a car is painted, and everything else stays at 255. The ground never shows its alpha, so the spare channel costs nothing. Then, right after the ground is drawn, `drawCarDepth` in [`Ground.cpp`](../src/components/WorldView/Ground.cpp) draws each car's rectangle with a tiny shader that throws away every pixel whose alpha is not 0 and writes only depth, no color. The depth of a car is that of its near edge on the ground (`carFeetRow`). Sprites are drawn with the depth test on, each at the depth of its feet (`depthOfRow`), so a character whose feet are behind a car's near edge fails the test where the car is and is hidden, and a character in front is drawn over it. Only the cars write depth, and sprites only test against it, so everything else keeps its normal drawing order.
+
+Hiding a zombie completely would hide a threat. So a zombie standing behind a car also gets a see-through **silhouette** (`drawZombieSilhouette`, alpha 130), drawn at a depth just nearer than the car so it passes the test over the car's pixels. The boss is always drawn over cars.
 
 ### How to add a new weapon
 
@@ -817,6 +944,8 @@ stateDiagram-v2
 
 The screens are `Title`, `Playing`, `Paused`, `Settings`, `HowToPlay` and `Over`. **Level-up is not a screen.** It is a phase of the run (`RunPhase::LevelUp`) inside `Playing`, because the simulation itself pauses for it. The four run phases are `Playing`, `LevelUp`, `Won` and `Dead`. The simulation owns the phase, and the loop owns the screen.
 
+The title screen has the Play button, a row with the **difficulty** and **map** selectors under it, then Settings and How to Play, and the best run for the selected difficulty. The two selectors are saved, and they start from the last choice, so Play is always one press. The map decides the ground and where the cars stand. See [difficulty](#difficulty).
+
 The title screen runs the **real simulation** as a demo behind the menu: a fixed seed, a scripted bot that walks in circles, 36 zombies kept alive, and a clock that loops. It makes no sound and is never saved.
 
 The screens are in [`src/components/Ui`](../src/components/Ui): `TitleScreen`, `HowToPlay`, `Hud`, `LevelUpCards`, `PauseMenu`, `SettingsScreen`, `GameOverScreen`, and `VirtualJoystick`. `BuildStrip`, `Icons`, `Names` and `Font` are shared pieces.
@@ -855,7 +984,9 @@ The rest of the game never asks which device is in use. The gameplay reads `move
 Details:
 
 - **Movement.** Keyboard (WASD and arrows) sets a direction. A gamepad stick, if moved past a dead zone, replaces it. A touch joystick replaces that. The simulation clamps the length so diagonals are not faster.
-- **Touch joystick.** The first touch starts a floating joystick anywhere on the screen. If the thumb slides past the edge, the joystick's center follows, so changing direction needs no long drag back. A touch that begins on the pause button or in a menu does not start the joystick.
+- **Touch joystick.** The first touch starts a floating joystick anywhere on the screen. If the thumb slides past the edge, the joystick's center follows, so changing direction needs no long drag back. A touch that begins on the pause button, the dash button or in a menu does not start the joystick.
+- **The joystick finger is followed by its touch id.** raylib's list of touches is not stable: it shifts when a finger lifts, so index 0 is not always the same finger. `readTouch` in [`Input.cpp`](../src/components/Input/Input.cpp) remembers the id of the finger that is steering (`g_stickId`) and looks that finger up each frame. If it lifts, the joystick ends and never jumps to another finger. A second finger resting on a button therefore does not take over the steering. A touch the browser cancelled (an edge swipe, a call) is dropped by checking the browser's own finger count, so the joystick can never get stuck.
+- **Dash.** Space or Shift, or the gamepad's right shoulder button, or the on-screen dash button. Space is also the confirm key in menus, so the game only treats it as a dash while a run is being played. The HUD and the how-to-play text show Space as the dash key.
 - **Gamepad menus.** The D-pad and the left stick navigate. Stick movement past a threshold counts as one press, remembered so a held stick moves one step.
 - **Mouse.** Used for menus and hover only. It never moves the player.
 - **Ghost mouse events.** After a tap, browsers send a made-up mouse click. The page code drops it (in `Platform.cpp`) and the input code also ignores mouse activity for a second after a touch.
@@ -864,7 +995,7 @@ Details:
 
 The game checks input once per frame, but a key tap or a click can start and end entirely between two frames. This happens on a slow device. A check of "is the key down right now?" would miss it. The fix is to **latch** input events:
 
-- **Keyboard:** read `GetKeyPressed()`, a queue of keys pressed since the last call, instead of testing key state.
+- **Keyboard:** read `GetKeyPressed()`, a **press queue** of keys pressed since the last call, instead of testing key state. Two quick presses in one frame both count (`stepX` and `stepY` are net counts).
 - **Mouse:** a browser `mousedown` callback sets a flag and the position. `platform::consumeMouseDown` returns it once.
 - **Touch:** a JavaScript `touchstart` listener (installed by `ls_js_install` in [`Platform.cpp`](../src/core/Platform.cpp)) stores the position. `platform::consumeTouchStart` returns it once.
 - **Menu choices:** held in `g_pendingChoice` until a simulation step runs (see [section 2](#fixed-timestep-the-accumulator)).
@@ -873,7 +1004,7 @@ The positions are in **drawing buffer pixels**, the canvas's own pixel grid, whi
 
 ### Saves
 
-[`Save.cpp`](../src/core/Save.cpp) saves two things: the settings (music and effects volume, screen shake, flash intensity, damage numbers, reduced motion) and the best-run numbers (best time, most kills, highest level, wins, runs). It has no raylib and no browser code, so the unit tests can run it without a window.
+[`Save.cpp`](../src/core/Save.cpp) saves three things: the settings (music and effects volume, screen shake, flash intensity, damage numbers, reduced motion), the title screen's last choices (difficulty and map), and the best-run numbers (best time, most kills, highest level, wins, runs), one set for each difficulty. It has no raylib and no browser code, so the unit tests can run it without a window.
 
 The format is plain text, one `key=value` per line:
 
@@ -882,8 +1013,13 @@ version=1
 music=0.700
 effects=0.800
 ...
+difficulty=1
+map=0
 bestTime=412.50
+easy.bestTime=600.00
 ```
+
+(Normal's best run has no prefix, so a file saved before difficulties existed still loads as Normal's record. Easy and Hard use an `easy.` and a `hard.` prefix.)
 
 The rules make loading safe:
 
@@ -891,11 +1027,15 @@ The rules make loading safe:
 - **Numbers are checked.** NaN, infinity, trailing junk and overlong values are rejected (`parseNumber`).
 - **Size cap.** Text over 4096 bytes is treated as corrupt.
 - **Unknown keys are ignored**, so a save from a newer version still loads what it understands.
-- **Versioned.** The file starts with `version=1`. At present nothing branches on the version, because every version so far uses the same keys. The line is there so a future format change can detect old files.
+- **Versioned.** The file starts with `version=1`. At present nothing branches on the version, because every change so far only added keys, and a missing key keeps its default. The line is there so a future format change can detect old files.
 
-Where the text goes is the platform's job: the browser's `localStorage` under the key `laststand.save`, or a file next to the program on Windows. Both fail quietly if storage is blocked. Settings are saved after a change finishes (not on every frame of a slider drag), and a finished run saves the best-run numbers. There are no accounts, no server and no analytics. If nothing is saved yet, the "reduced motion" setting starts from the system's `prefers-reduced-motion` preference.
+Where the text goes is the platform's job: the browser's `localStorage` under the key `laststand.save`, or a file on Windows. Both fail quietly if storage is blocked. Settings are saved after a change finishes (not on every frame of a slider drag), and a finished run saves the best-run numbers. There are no accounts, no server and no analytics. If nothing is saved yet, the "reduced motion" setting starts from the system's `prefers-reduced-motion` preference.
 
-At present, the stored **screen shake** and **damage numbers** settings are shown on the settings screen but nothing in the game reads them. The **flash intensity** setting changes only the low-health warning on the HUD. **Reduced motion** changes that warning too, and it also stops the flicker of lamps and fires in the world (`worldview::setReducedMotion`).
+**Writing safely.** On Windows, [`SaveFile.cpp`](../src/core/SaveFile.cpp) writes to a temporary file next to the save and then moves it into place, so the old file stays whole until the new one is complete, and a crash in the middle of a write cannot leave half a save. Reading returns one of three answers: **Found** (the file was read, though it may hold nothing useful), **Missing** (there is no file, so it is safe to create one), or **Unreadable** (the file may exist but could not be read, for example because it is locked). The difference between the last two matters. `persist()` in [`App.cpp`](../src/core/App.cpp) never writes over an unreadable save, because the good data may still be in it. The change is kept in memory and goes out with the next save. The browser does the same with `localStorage`: blocked storage counts as Unreadable.
+
+**Merging best runs.** Before writing, `persist()` reads the stored save again and calls `save::mergeBestRuns`, which raises each best run to the stored value when the stored one is higher (the best of each field, separately). Another tab or the installed app may have saved a better run since this copy loaded, and without this the new save would take that record back. Settings are not merged: the settings in memory are the player's latest choice.
+
+The screen shake, flash intensity, damage numbers and reduced motion settings all apply to the effects, and not only to the low-health warning (see [effects](#effects-particles-numbers-shake-and-glow)).
 
 ### The embedded font
 
@@ -912,6 +1052,10 @@ The game uses the open-license font Pixelify Sans ([`OFL.txt`](../src/components
 | GameCanvas | [`GameCanvas.js`](../web/components/GameCanvas/GameCanvas.js), [`.css`](../web/components/GameCanvas/GameCanvas.css) | Full-screen canvas. Blocks scrolling, pinch zoom, double-tap zoom, the context menu, Ctrl-wheel zoom, and the page-scrolling action of the arrow, space and Tab keys. Creates the Emscripten `Module` object |
 | LoadingScreen | [`LoadingScreen.js`](../web/components/LoadingScreen/LoadingScreen.js), [`.css`](../web/components/LoadingScreen/LoadingScreen.css) | Real download progress bar |
 | WebGlError | [`WebGlError.js`](../web/components/WebGlError/WebGlError.js), [`.css`](../web/components/WebGlError/WebGlError.css) | A plain message if the browser has no WebGL 2 |
+| InstallApp | [`InstallApp.js`](../web/components/InstallApp/InstallApp.js), [`.css`](../web/components/InstallApp/InstallApp.css) | A small "Install app" button on the title screen, for browsers that offer to install the game. It can be dismissed, and never takes keyboard focus from the game |
+| OfflineCache | [`OfflineCache.js`](../web/components/OfflineCache/OfflineCache.js) | Registers the offline worker once the game is running |
+
+The shell also has [`manifest.webmanifest`](../web/manifest.webmanifest) (name, colors, icons) and [`sw.js`](../web/sw.js), the offline worker. See [installing and offline play](#installing-and-offline-play).
 
 #### Loading, with real progress
 
@@ -921,9 +1065,31 @@ The game uses the open-license font Pixelify Sans ([`OFL.txt`](../src/components
 4. To know the total, a build step ([`FinishWebBuild.cmake`](../web/FinishWebBuild.cmake)) reads the real `.wasm` size and writes it into the page, replacing `__LS_WASM_BYTES__`. The code compares **decoded** bytes to that size, so the bar is right even when the host serves the file compressed.
 5. When the WebAssembly runtime is ready, `onRuntimeInitialized` fades the loading screen out.
 
+#### When something goes wrong
+
+The loading screen is also the one place that shows a fatal message, so a player is never left with a blank page. The page shows a plain message for each of these:
+
+- The download failed: "Download failed. Please check your connection and reload the page."
+- The game script itself could not be loaded (caught in `GameCanvas.js` on the way down, because a failed script load does not bubble).
+- The browser refused to compile or start the WebAssembly: "The game could not start. Please reload the page, or try a newer browser."
+- The game crashed while playing (an Emscripten `onAbort`, or a WebAssembly runtime error): "The game stopped unexpectedly. Please reload the page."
+- The WebGL context was lost, which can happen when a device runs low on memory. A lost context cannot be brought back, because raylib would have to upload every texture and shader again.
+
+The first message stays. Later ones do not replace it.
+
 #### Canvas size and safe areas
 
 Every frame, `platform::syncCanvasSize` reads the canvas's CSS size and multiplies by the device pixel ratio (capped at 2, since a higher ratio costs a lot of fill rate for almost no visible gain), and resizes the drawing buffer to match. When the buffer changes shape, the world renderer notices and builds a new render target of the right size and scale (see [section 2](#inside-the-world-pass)). Phone notches are read by creating a hidden element padded with `env(safe-area-inset-*)` and reading its computed padding, about twice a second.
+
+### Installing and offline play
+
+The browser link stays the main way to play. Two extras exist for people who want more.
+
+**Installing as an app.** [`manifest.webmanifest`](../web/manifest.webmanifest) lets a browser offer "Install" or "Add to Home Screen", and the game then opens in its own window with an icon. The icons are not image files in the repo: [`tools/generate-icons.mjs`](../tools/generate-icons.mjs) draws them in code (the zombie head from the title screen) and writes PNGs into the build folder, so nothing is committed.
+
+**Offline play.** [`sw.js`](../web/sw.js) is a **service worker**, a script the browser keeps running next to the page, which can answer requests from a cache. After one visit the game starts with no network. The build fills in two things: a list of every file with its SHA-256 hash, and a build id that is itself a hash of that list ([`FinishWebBuild.cmake`](../web/FinishWebBuild.cmake)), so each build gets its own cache name. On install, the worker downloads each file, **checks it against the hash the build recorded**, and only then stores it. This guards against a host that is halfway through an update and serves the new worker with some old files: without the check, that mixture would be cached for good. If any file fails the check, the half-filled cache is deleted and the install fails, so the old version keeps working. Every file of one version comes from one cache, so the page, the script and the wasm file can never disagree. Old caches are deleted when a new version takes over. Any failure falls through to the network as if the worker did not exist, and the game never depends on it.
+
+**The PC download.** [`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the native Windows Release program and packs `LastStand.exe`, a short readme, the game's license and the licenses of the font and the libraries into a `.zip`, which it attaches to a GitHub Release. It runs when a version tag such as `v1.0.0` is pushed, or by hand. No program is ever committed to the repo. The exe is not code signed, so Windows may warn about it.
 
 ### The build: CMake and Emscripten
 
@@ -931,9 +1097,9 @@ Every frame, `platform::syncCanvasSize` reads the canvas's CSS size and multipli
 
 | Target | What it is |
 |---|---|
-| `ls_sim` | The simulation as a static library. No raylib. |
+| `ls_sim` | The simulation as a static library. No raylib. It includes `components/Obstacles` and `components/Maps/Layout`, so the simulation can know where cars stand |
 | `ls_audio` | The sound synthesis, router and mixer logic. No raylib |
-| `laststand` | The game: app, UI, world renderer, maps, input, platform, and the raylib-using audio file |
+| `laststand` | The game: app, UI, world renderer, effects, map painters, input, platform, and the raylib-using audio file. It links `ls_sim` |
 | `ls_tests` | Unit tests (native only) |
 | `ls_balance` | The balance tool (native only) |
 
@@ -962,9 +1128,10 @@ Opening the page with `?debug` in the address turns on the debug tools. `platfor
 - `drawDebugOverlay` draws one text block in the corner: frames per second, frame time, **simulation time per step**, draw time, and the live counts of zombies, shots, bullets, gems and events. The numbers are smoothed so they are readable.
 - `debugCommand` accepts commands from JavaScript (stress test with N zombies and shots, set the seed, jump to a screen, grant XP, force death or victory, give a full build, and so on). Without `?debug` it returns immediately. The browser tests use these to reach screens quickly.
 - Four commands, numbers 17 to 20, are for checking the pixel world. **17** is the showcase: it fills the pools with one of every world object (and an optional extra crowd), holds the simulation still and keeps the animation going, so every sprite can be seen. With the value -1 it leaves the world empty and stops the clock, to look at the ground alone. It can also show pages of the sprite atlas. **18** and **19** move the player to an x or y position, to walk the city fast. **20** sets the quality level (0 paints half-size ground chunks and turns off the pools of lamp light, the flicker and the dark corners). Command 12 sets the run time, which moves the day cycle.
+- Other debug commands set the map, show the cars' collision boxes, turn the cars' depth cover off and on, and set the screen shake, flash, damage numbers and reduced motion settings, so the browser tests can check each one.
 - With `?debug`, the world renderer also prints two lines to the browser console: how long startup took and how many atlas rows were used, and the size and scale of the render target each time it changes.
 
-`ls_query_state` and `ls_query_ui` return JSON about the current state and the on-screen button rectangles. They are read-only and are always exported. On Windows, the debug overlay is always on.
+`ls_query_state` and `ls_query_ui` return JSON about the current state and the on-screen button rectangles, and `ls_query_effects` returns counters from the effects (particles, numbers, shake and so on). They are read-only and are always exported. On Windows, `platform::nativeDebugWanted` ([`DebugSwitch.h`](../src/core/DebugSwitch.h)) decides whether the overlay shows: in a **Release** build (the one players get, and the one in the PC zip) it stays hidden unless the program is started with `--debug`, and any other build, such as a developer's own, shows it. It is a plain function with no window code, so a unit test checks it.
 
 ---
 
@@ -975,7 +1142,7 @@ Everything you hear is generated by code at startup. There are no sound files. T
 | Piece | File | Job |
 |---|---|---|
 | Synth | [`Synth.cpp`](../src/components/Audio/Synth/Synth.cpp) | Building blocks: noise, oscillators (saw, square, sine, triangle, with anti-aliasing), filters, echo, a limiter. All run at 22,050 samples per second, which keeps startup fast |
-| Sfx | [`Sfx.cpp`](../src/components/Audio/Sfx/Sfx.cpp) | 45 sound effects, each rendered once into a buffer |
+| Sfx | [`Sfx.cpp`](../src/components/Audio/Sfx/Sfx.cpp) | 46 sound effects (including the dash), each rendered once into a buffer |
 | Music | [`Music.cpp`](../src/components/Audio/Music/Music.cpp) | Dark synthwave in A minor at 120 BPM, as 10 separate loops called **stems** |
 | Layers | [`Layers.cpp`](../src/components/Audio/Layers/Layers.cpp) | Chooses how loud each stem is, and mixes them |
 | Router | [`Router.cpp`](../src/components/Audio/Router/Router.cpp) | Turns simulation events into sounds, with rate limits |
@@ -993,7 +1160,7 @@ Everything you hear is generated by code at startup. There are no sound files. T
 
 **Output safety.** A `Limiter` runs on the final mix. When many sounds overlap, it turns the volume down just enough to stop clipping, and recovers slowly.
 
-**Browser rules.** Browsers block audio until the user presses something. The audio device is therefore not even opened until the first press (`audio::unlock`), and sounds are turned into playable voices a few per frame after that, so no single frame freezes. If a frame gap is longer than 0.35 s (a hidden tab), the music stream is restarted and faded in. Music ducks (drops to 25%) in menus and pause.
+**Browser rules.** Browsers block audio until the user presses something. The audio device opens during loading, because opening it froze the page for up to a second, and it stays silent until the first press calls `audio::unlock`. Sounds are turned into playable voices a few per frame after that, so no single frame freezes. Unlocking can fail, so it **retries**: if there is no device yet (no output, or the browser refused), the next press tries again, but not more than once every 2 seconds, and a failed try prints one warning and not one per frame. Opening the device is not enough in a browser either, because the audio context starts suspended and a press that does not count as user activation (Esc, a gamepad button) leaves it that way. So the code asks it to start on every press and checks it every frame until it runs. If a frame gap is longer than 0.35 s (a hidden tab), the music stream is restarted and faded in. Music ducks (drops to 25%) in menus and pause.
 
 Audio never touches the simulation. It has its own random generator, and the title-screen demo sends no events to it.
 
@@ -1001,28 +1168,32 @@ Audio never touches the simulation. It has its own random generator, and the tit
 
 ## 8. Testing and performance
 
-Where a number was measured is stated with it. Counts of test cases come from reading the test files. Pass results and performance numbers come from runs the project owner reported, and were not repeated while writing this document.
+Where a number was measured is stated with it. Counts of test cases come from reading the test files. Pass results and performance numbers come from runs the project owner reported, and were not repeated while writing this document. The performance numbers were measured on an Intel UHD integrated-graphics laptop in desktop Chrome, and **not on a real phone**.
 
-### Unit tests: 116 test cases
+### Unit tests
 
-The tests use [doctest](https://github.com/doctest/doctest) and run natively, with no window, in `ls_tests`. They live in [`tests/unit`](../tests/unit):
+The tests use [doctest](https://github.com/doctest/doctest) and run natively, with no window, in `ls_tests`. They live in [`tests/unit`](../tests/unit). The files hold 230 test cases (counted by reading them). The table below is grouped by topic.
 
 | File | Cases | What it covers |
 |---|---|---|
-| [`SimTests.cpp`](../tests/unit/SimTests.cpp) | 17 | Spatial hash, pools, movement, contact damage, armor, shots, kills and gems, level-up, rerolls, evolutions, gem merging, wave table, **determinism** |
+| [`SimTests.cpp`](../tests/unit/SimTests.cpp) | 20 | Spatial hash, pools, movement, contact damage, armor, shots, kills and gems, level-up, rerolls, evolutions, gem merging, wave table, **determinism** |
 | [`WeaponTests.cpp`](../tests/unit/WeaponTests.cpp) | 25 | Every weapon, ammo, reload, the dry Rifle, crates, boss zones, determinism with every weapon in use |
-| [`EnemyTests.cpp`](../tests/unit/EnemyTests.cpp) | 29 | Each zombie type, drops, waves, boss phases and attacks, pickups, gem merging |
-| [`BossFightTests.cpp`](../tests/unit/BossFightTests.cpp) | 5 | Horde clear, boss appears with a full pool, the boss can't be outrun, adds and crates |
-| [`BossHpTests.cpp`](../tests/unit/BossHpTests.cpp) | 3 | Boss HP from the build: stronger build, tougher boss, still a faster kill; HP limits; HP at spawn |
-| [`AmmoCrateTests.cpp`](../tests/unit/AmmoCrateTests.cpp) | 2 | The timed ammo crate and how far from the player it lands |
-| [`BladeRingTests.cpp`](../tests/unit/BladeRingTests.cpp) | 2 | Blades reach adjacent zombies, and the two orbit radii |
-| [`ExplosionEventTests.cpp`](../tests/unit/ExplosionEventTests.cpp) | 1 | A blast that hits nothing still sends its `Explosion` event |
-| [`BotRunTests.cpp`](../tests/unit/BotRunTests.cpp) | 3 | Full 10-minute-plus runs with a simple bot |
-| [`SaveTests.cpp`](../tests/unit/SaveTests.cpp) | 12 | Round trip, corrupt text, NaN, clamping, newer versions, large text |
-| [`AudioTests.cpp`](../tests/unit/AudioTests.cpp) | 15 | Every sound is clean and ends in silence, music loops join without a click, layers, router limits |
+| [`EnemyTests.cpp`](../tests/unit/EnemyTests.cpp) | 30 | Each zombie type, drops, waves, boss phases and attacks, pickups, gem merging |
+| [`SimFixesTests.cpp`](../tests/unit/SimFixesTests.cpp) | 20 | Rules for the same step (a heal cannot undo a lethal hit, death beats a boss kill, a card beats a reroll), the pickup pool, event tiers, crowd push, the boss cannot be outrun |
+| [`BossFightTests.cpp`](../tests/unit/BossFightTests.cpp), [`BossHpTests.cpp`](../tests/unit/BossHpTests.cpp) | 5 and 3 | Horde clear, boss appears with a full pool, adds and crates; boss HP from the build |
+| [`AmmoCrateTests.cpp`](../tests/unit/AmmoCrateTests.cpp), [`BladeRingTests.cpp`](../tests/unit/BladeRingTests.cpp), [`ExplosionEventTests.cpp`](../tests/unit/ExplosionEventTests.cpp) | 2, 2 and 1 | The timed ammo crate; blades reach adjacent zombies; a blast that hits nothing still sends its event |
+| [`DashTests.cpp`](../tests/unit/DashTests.cpp) | 19 | Dash distance and direction, cooldown, invulnerability window, no chaining, no dash on the level-up screen, a new run resets it, determinism with dash inputs |
+| [`DifficultyTests.cpp`](../tests/unit/DifficultyTests.cpp) | 6 | Normal changes nothing, harder levels give more health, damage and spawns, boss health follows the level |
+| [`ObstacleTests.cpp`](../tests/unit/ObstacleTests.cpp) | 26 | Solid cars: layout depends only on map, seed and tile; the cache equals a fresh computation; resolving and sliding; the dash against a car; nothing spawns inside a car; the boss walks through; the Charger crash; zombies reach a player among cars; the stuck rescue; item placement; determinism over cars on both maps; the dash afterimage path |
+| [`EffectsTests.cpp`](../tests/unit/EffectsTests.cpp) | 11 | The flash limiter (never above three flashes in any second), hit pause, screen shake in whole pixels, crowd flash strength, the token budget, damage number merging and the hard cap |
+| [`StateHashTests.cpp`](../tests/unit/StateHashTests.cpp), [`RunResetTests.cpp`](../tests/unit/RunResetTests.cpp) | 5 and 2 | The state hash covers every field that matters (and none that are drawing only); a new run on a used state equals one on a fresh state |
+| [`BotRunTests.cpp`](../tests/unit/BotRunTests.cpp) | 8 | Full runs with a simple bot, including the desert, valid state at every step, determinism through the boss fight |
+| [`SaveTests.cpp`](../tests/unit/SaveTests.cpp) | 18 | Round trip, corrupt text, NaN, clamping, newer versions, large text, difficulty, map |
+| [`UiFixesTests.cpp`](../tests/unit/UiFixesTests.cpp) | 9 | The debug overlay switch, merging best runs, a missing save versus an unreadable one, the safe write |
+| [`AudioTests.cpp`](../tests/unit/AudioTests.cpp) | 16 | Every sound is clean and ends in silence, music loops join without a click, layers, router limits |
 | [`TestMain.cpp`](../tests/unit/TestMain.cpp) | 2 | Random number generator |
 
-Measured result: the test files hold 116 cases (counted by reading them), reported as passing by the project owner (not repeated while writing this document).
+**Measured result.** The last full run passed **230 of 230** unit test cases, with 385,007 assertions.
 
 ### The determinism test
 
@@ -1049,66 +1220,90 @@ Two runs with the same seed and the same scripted input play 90 seconds of game 
 
 ### The balance tool
 
-[`tests/balance`](../tests/balance) builds `ls_balance`, a development tool that plays many seeded games using bots and prints tuning tables. It uses several threads and gives the same numbers for any thread count, because each game writes only to its own result slot ([`Parallel.h`](../tests/balance/Parallel.h)).
+[`tests/balance`](../tests/balance) builds `ls_balance`, a development tool that plays many seeded games using bots and prints tuning tables. It uses several threads and gives the same numbers for any thread count, because each game writes only to its own result slot ([`Parallel.h`](../tests/balance/Parallel.h)). It can play any difficulty (`--difficulty`) on either map (`--map`). It also reports how much of the play time a bot spends within 60 units of a car, and how many zombies were rescued from a car pile per game.
 
-It has three **bot profiles**, Novice, Average and Skilled ([`Bot.h`](../tests/balance/Bot.h)). They differ in reaction time, how far they look for danger, whether they predict movement, how often they notice boss warnings, how much they wander, whether they collect loot and ammo, and how they pick cards. They are documented in the code as approximations of people, not measurements of them. The report shows win rates, death times, weapon use, ammo and zombie counts per five seconds, wave pressure and calm moments. Other modes run Skilled bots built around each weapon in turn, and a "solo" test of each weapon alone at each level against a standing crowd.
+It has three **bot profiles**, Novice, Average and Skilled ([`Bot.h`](../tests/balance/Bot.h)). They differ in reaction time, how far they look for danger, whether they predict movement, how often they notice boss warnings, how much they wander, whether they collect loot and ammo, how they pick cards, and whether they dash. They are documented in the code as approximations of people, not measurements of them. The report shows win rates, death times, weapon use, ammo and zombie counts per five seconds, wave pressure and calm moments. Other modes run Skilled bots built around each weapon in turn, and a "solo" test of each weapon alone at each level against a standing crowd.
 
-**Measured results.** Bot games, 100 seeds per profile, seeds 500000 to 500099, with the native `ls_balance` tool (no browser involved). The first balance pass never used these seeds, but the later boss health and crate tuning did, so treat them as only partly independent. The final balance pass will check again on new seeds:
+**Measured results.** The final balance table, with the native `ls_balance` tool (no browser involved), on fresh seeds starting at 7,000,000, 100 games per profile per setting. "Wins" means the bot killed the boss. "Boss" means it reached the boss fight. The median death time is taken over the games that ended in a death.
 
-| Profile | Result |
-|---|---|
-| Novice | Median death at 3:55, 0% wins, 8.5 ammo crates collected per run |
-| Average | 32% wins |
-| Skilled | 62% wins. Median boss kill about 71 to 72 s after the boss arrives, with the middle 80% of kills (10th to 90th percentile) between 49 and 147 s |
+| Setting | Novice | Average | Skilled |
+|---|---|---|---|
+| Easy, city | wins 56%, boss 56%, median death 9:03 | wins 100% | wins 100% |
+| Easy, desert | wins 52%, boss 52%, median death 8:55 | wins 95% | wins 100% |
+| Normal, city | wins 0%, median death 3:51 | wins 30%, boss 32% | wins 62%, boss 65% |
+| Normal, desert | wins 0%, median death 3:58 | wins 32%, boss 35% | wins 59%, boss 65% |
+| Hard, city | wins 0%, median death 3:40 | wins 3% | wins 29% |
+| Hard, desert | wins 0%, median death 3:40 | wins 5% | wins 30% |
+
+The goals were: a Novice lasts about 3 to 5 minutes on Normal, a Skilled bot wins about 60% on Normal, Easy lets a beginner reach the boss, and Hard is for skilled players. The table matches them. Across these games, between 0.5 and 2.8 zombies per game had to be rescued from car piles, and the bots were near a car for 1 to 11 percent of their play time, so cars shape the fight without taking it over.
 
 These numbers tune the game, but a bot is not a person. A human playtest decides the final tuning.
 
-### Browser tests: 67
+### Browser tests
 
-[`tests/e2e`](../tests/e2e) uses Playwright (the `playwright-core` package) to drive the installed Chrome. A small server ([`harness.mjs`](../tests/e2e/harness.mjs)) serves the web build with gzip, like a real host. Tests use the game's own JSON queries (`ls_query_state`, `ls_query_ui`) and debug commands. The 67 tests come from 54 test definitions, with some repeated over several window sizes or pixel ratios. They cover:
+[`tests/e2e`](../tests/e2e) uses Playwright (the `playwright-core` package) to drive the installed Chrome. A small server ([`harness.mjs`](../tests/e2e/harness.mjs)) serves the web build with gzip, like a real host. Tests use the game's own JSON queries (`ls_query_state`, `ls_query_ui`, `ls_query_effects`) and debug commands. Some definitions are repeated over several window sizes or pixel ratios, so the number of results is larger than the number of definitions. They cover:
 
-- The page loads with no console errors, fits the window, and shows a clear message without WebGL 2.
+- The page loads with no console errors, fits the window, and shows a clear message without WebGL 2. Failed loads and crashes show their messages ([`failure.test.mjs`](../tests/e2e/failure.test.mjs)).
 - The page blocks scrolling, zoom gestures and the context menu.
 - Keyboard, mouse, touch and (emulated) gamepad: starting a run, level-up choices, rerolls, pause, focus loss, restart and quit.
 - A tap that starts and ends between two frames still works. A click inside the input delay is ignored.
+- **Multi-touch** ([`multitouch.test.mjs`](../tests/e2e/multitouch.test.mjs)): a second finger resting on a button does not take over the steering, and the joystick follows its own finger.
 - Settings by mouse drag, keyboard and touch, persisted across a reload. A corrupt save is ignored, and blocked storage does not break the game.
 - Every screen fits on desktop, portrait phone, landscape phone and five extreme sizes, with nothing overlapping and safe-area insets respected.
 - Mouse clicks hit the card at pixel ratios 1, 1.25 and 2.
-- The pixel world ([`world.test.mjs`](../tests/e2e/world.test.mjs), 9 definitions): the same seed paints the same ground at the same place after walking away and back, and another seed differs; nearby places differ, so the city does not visibly repeat; the picture is darker at night than in the afternoon; walking very far in every direction (up to 140,000 units) keeps drawing ground with no errors; walking with the keyboard across chunk edges raises no errors; at a whole-number scale every art pixel is an even, unblurred block; every sprite fits in the atlas; resizing works and spawns stay out of view at nine window shapes; and the low quality level still draws the world.
+- The pixel world ([`world.test.mjs`](../tests/e2e/world.test.mjs)): the same seed paints the same ground after walking away and back, and another seed differs; the picture is darker at night than in the afternoon; walking very far in every direction keeps drawing ground; at a whole-number scale every art pixel is an even block; every sprite fits in the atlas; resizing works and spawns stay out of view at nine window shapes; and the low quality level still draws the world.
+- The wasteland map, the map picker and the difficulty selector ([`wasteland.test.mjs`](../tests/e2e/wasteland.test.mjs), [`mappicker.test.mjs`](../tests/e2e/mappicker.test.mjs), [`difficulty.test.mjs`](../tests/e2e/difficulty.test.mjs)).
+- The dash ([`dash.test.mjs`](../tests/e2e/dash.test.mjs)) and the effects ([`effects.test.mjs`](../tests/e2e/effects.test.mjs)).
+- Solid cars ([`solidcars.test.mjs`](../tests/e2e/solidcars.test.mjs)).
+- Installing and offline play ([`install.test.mjs`](../tests/e2e/install.test.mjs)).
 
 The tests also take a **real pixel check** ([`countColorNearCenter`](../tests/e2e/harness.mjs) counts screen pixels of a color). This exists because a state query can pass while nothing is visible on screen (see [bugs](#bugs-worth-knowing-about)).
 
 The functional tests run Chrome with a software renderer, so they check behavior, not speed. [`perf.mjs`](../tests/e2e/perf.mjs) is run by hand and uses the machine's real GPU.
 
-Measured result: all 67 tests pass on the current build. The 54 definitions were counted by reading the test files. **Gamepad, phone touch and phone notches have only been emulated**, not tried on real devices. **Motion is not covered:** the world tests compare still screenshots, so how the camera scroll, flicker and animation look in motion has not been checked by a test.
+**Measured result.** The last full browser run passed **220 of 220** tests, with none skipped.
 
 ### Performance
 
-Measured by [`perf.mjs`](../tests/e2e/perf.mjs) on the project owner's Windows PC, at 1920 by 1080, on an **Intel UHD integrated GPU**, in **headless Chrome**, with a stress test of about **2,000 zombies and 2,900 shots** on screen:
+Measured by [`perf.mjs`](../tests/e2e/perf.mjs) and [`perfscenes.mjs`](../tests/e2e/perfscenes.mjs) on the project owner's Windows laptop (i5-13420H), in desktop Chrome, on an **Intel UHD integrated GPU**. These are not numbers from a real phone.
 
-| Measure | Pixel world (current build) | Earlier outline renderer |
-|---|---|---|
-| Frames per second, average | about 434 | about 205 |
-| Frame time, average | 2.3 ms | 4.9 ms |
-| Frame time, 99th percentile | 17.6 ms | 7.3 ms |
-| Simulation time per step | about 1.1 ms | about 1.5 ms |
-| Draw time on the CPU | about 2.0 ms | not recorded |
+**Desktop stress test, 2,000 zombies and 3,000 shots at 1920 by 1080.** Locked to the 144 Hz display, with a 99th percentile frame gap of 7.3 ms. The CPU work per frame is 3.6 to 4.8 ms at the 99th percentile. For scale, 60 frames per second allows 16.7 ms per frame. The simulation step alone, measured natively, takes about **0.76 ms in the city** and **0.72 ms in the desert**.
 
-For scale, 60 frames per second allows 16.7 ms per frame, and the simulation uses about 1.1 ms of each step.
+An earlier reading of over 400 frames per second, with a 14 ms 99th percentile, came from a flag that switched Chrome's frame limit off. The slow frames were an artifact of that flag, so the tool no longer sets it.
 
-Two things stand out. First, the average is much faster than the earlier renderer. One likely reason is that the world is now drawn into a picture of about 640 by 360 texels instead of 1920 by 1080, so the graphics card fills far fewer pixels, but that was not measured on its own. Second, the 99th percentile is *higher* than before and above the 16.7 ms frame budget: the slowest 1% of frames were slower. The cause has not been looked into. Painting a new ground chunk is one candidate, but that is a guess.
+**Phone shapes with the processor slowed down.** Chrome can slow the page's main thread, which stands in for a phone's processor. It does not slow the graphics chip, so these numbers cover CPU cost only. Treating 4 times slower as a mid-range phone and 6 times slower as a weak one is an assumption. Walking across chunk borders at 390 by 844 and 844 by 390, on both maps:
 
-Caveats: the run is headless (no real display), so it shows how fast the work runs, not what a screen would show. It was taken without the planned effects (particles, glow, damage numbers, screen shake, hit pause; see [section 11](#11-planned-work-not-in-the-code-yet)), so it will be measured again once they exist. The stress scene is one scenario, in one place.
+| Slowdown, zombies | Frame gap, average | 95th percentile | 99th percentile |
+|---|---|---|---|
+| 4x, 500 | 6.94 ms | 7.5 ms | 8.9 ms |
+| 4x, 1,000 | 7.16 ms | 9.9 ms | 14.6 ms |
+| 4x, 2,000 | 8.59 ms | 15.5 ms | 21.5 ms |
+| 6x, 1,000 | about 8 to 9 ms | 14.5 to 18 ms | 20 to 25 ms |
+| 6x, 2,000, city | about 18 to 20 ms | 36 to 45 ms | 44 to 62 ms |
+
+The 6x rows are repeats at 390 by 844 on a quiet machine, because the first runs were disturbed by other work. Noise here can easily be twice the difference being measured. At 6x with 2,000 zombies the average stays above 30 frames per second, but individual frames drop below it.
+
+**The hitches found and fixed.**
+
+- Opening the audio device froze the page for 405 to 1008 ms on the first press, right on the Play button. It now opens during loading, and the worst frame after the press is about 12 ms. It stays silent until a press.
+- Painting a whole ground chunk at once cost about one dropped frame a second on slowed settings. Chunks ahead of the camera now paint in pieces, one piece per frame: three bands of ground rows, then details and upload. A browser test checks that this gives exactly the same pixels as painting whole, on both maps. At 6x the worst single piece fell from 41.7 ms to 14.1 ms.
+- The map painters are built with `-O2` rather than `-Oz`. This costs about 31 KB of download for paints about 40 percent faster.
+
+**Memory at phone size.** About 38 MB of WebAssembly heap in use, of 64 MB reserved, with no growth seen. Textures come to about 19 MB, and the estimated total for the graphics chip is about 36 MB.
+
+**Automatic quality.** The frame watcher lowers effects quality only. It deliberately leaves ground resolution alone: measurements showed no frame time gain from halving it, a visible hitch when it changes, and a saving of only 5.9 MB.
 
 **Startup art painting.** Building the shaders, the sprite atlas and the palette took about 65 to 180 ms in the browser (the range over the project owner's runs; the debug log prints the time for each run).
 
-**Download size.** About 277 KB of gzip-compressed transfer in total (measured through the test server's gzip, on localhost), well under the 3 MB goal. A real network will be slower.
+**Download size.** About **384 KB** gzip-compressed on a first visit, of which the WebAssembly and JavaScript are 368 KB, well under the 3 MB goal. A cached host answers the offline worker's second fetch of each file with a short "not modified" reply.
+
+**Startup.** From a cold start on a simulated 10 Mbps connection with 40 ms latency, the game is playable in 854 to 1409 ms at normal speed and 1552 to 2007 ms at 4x, against a goal of 3 seconds. These come from only 1 to 3 runs each.
 
 **Spawn visibility.** How much ground the camera shows is computed for each window shape so that the edge of the view stays inside the spawn circle. A browser test checks this at nine window shapes.
 
 **Real phone: not measured.**
 
-The performance work behind these numbers is the design in [section 4](#4-object-pools-the-spatial-hash-and-memory-layout): pools, the spatial hash, no per-frame allocation. The renderer also draws every sprite as one quad from the atlas, skips anything off-screen, sorts figures by depth with a counting sort, draws the ground as a handful of cached chunk quads, and gives the long sun shadow to at most the 500 figures nearest the soldier when the crowd is big (60 in "fast mode"). A fast mode switch and a quality level exist in the renderer, but nothing turns them on yet except the debug command for quality (see [section 11](#11-planned-work-not-in-the-code-yet)).
+The performance work behind these numbers is the design in [section 4](#4-object-pools-the-spatial-hash-and-memory-layout): pools, the spatial hash, no per-frame allocation. The renderer also draws every sprite as one quad from the atlas, skips anything off-screen, sorts figures by depth with a counting sort, draws the ground as a handful of cached chunk quads, and gives the long sun shadow to at most the 500 figures nearest the soldier when the crowd is big (60 in "fast mode"). The effects have fixed pools and token budgets, and drop to a low quality level by themselves on a device that stays too slow (see [effects](#effects-particles-numbers-shake-and-glow)). The obstacle cache means a car check is an array lookup, and the stuck check only runs every 55 steps for each zombie. The world renderer's own quality level and "fast mode" switch exist, but only the `?debug` command turns the quality level on, and nothing yet turns on fast mode by itself.
 
 ---
 
@@ -1177,7 +1372,7 @@ Each entry lists what was chosen, what was rejected, and why.
 **Sprites are palette positions in one code-painted atlas, colored by a shader.**
 - Chosen: all sprites are painted by code at startup into one 2048 × 2048 atlas that stores palette positions. The palette shader looks each one up in a palette texture (128 columns, 64 rows). A sprite picks its palette row when it is drawn.
 - Rejected: image file assets.
-- Why: no image files to download, license or keep in step; one texture, so all sprites share one batch of drawing; and variety costs no extra memory. 32 zombie outfits, the gold elites, the boss phases, the hit flash, shadows and fire or smoke all come from different palette rows over the same sprites. The download stays small (about 277 KB gzip).
+- Why: no image files to download, license or keep in step; one texture, so all sprites share one batch of drawing; and variety costs no extra memory. 32 zombie outfits, the gold elites, the boss phases, the hit flash, shadows and fire or smoke all come from different palette rows over the same sprites. The download stays small (about 323 KB gzip for the wasm and JavaScript).
 - Trade-off: the look depends on the painting code (`Canvas`, `SoldierArt`, `ZombieArt`, `ItemArt`), which is slower to tune than drawing in an art program, and about 65 to 180 ms of startup goes to painting.
 
 **The ground is cached in chunks, painted a little at a time.**
@@ -1190,11 +1385,31 @@ Each entry lists what was chosen, what was rejected, and why.
 - Rejected: following his exact position and shifting the picture by a fraction of an art pixel. Sprites sit on whole pixels while the ground would slide by fractions, so the soldier would jitter against the ground.
 - Result: nothing shimmers against anything else while the view scrolls. The cost is that scrolling moves in steps of one art pixel.
 
-**Maps sit behind one interface, with one map today.**
-- Chosen: [`Maps.h`](../src/components/Maps/Maps.h) has a `MapId` enum and one function, `renderChunk(map, seed, chunkX, chunkY, pixels, lights)`. Adding a map means adding an enum value and one `case` in `Maps.cpp`. Only the ruined city exists.
-- Why: a later map should not need a rewrite of the renderer. Honest limit: the renderer still passes `MapId::City` directly (in `paintChunk` in `Ground.cpp` and in `draw` in `WorldView.cpp`), so choosing a map before a run would need a small change in those two places.
-- Map data stays out of the simulation. A map is only a picture: nothing in the game rules reads it, so it cannot change a replay.
-- A desert map and solid obstacles are possibilities, not commitments. Solid obstacles would need the simulation to know about the map, and that would be a real change.
+**Maps sit behind one interface, with two maps.**
+- Chosen: [`Maps.h`](../src/components/Maps/Maps.h) has one function, `renderChunk(map, seed, chunkX, chunkY, pixels, lights)`, and [`Layout.h`](../src/components/Maps/Layout/Layout.h) has the `MapId` enum. Adding a map means adding an enum value, one `case` in each `switch` in `Maps.cpp`, and its layout. The ruined city and the desert highway wasteland both exist. The renderer takes the map from `run.map`, and the title screen's picker chooses it.
+- Why: a later map should not need a rewrite of the renderer, and the second map (the wasteland) was added through exactly that interface.
+- The painters stay out of the simulation. Props are only pictures. The one shared part is the layout of the solid cars (see below).
+
+**Solid cars: the simulation asks the map's layout, and the layout uses no graphics.**
+- Chosen: `Maps/Layout` decides where cars stand from the map, the seed and a tile, with no raylib, and is linked into `ls_sim`. Painters and the simulation read the same answer. The simulation keeps only a small cache around the player, which is left out of the state hash because it is worked out from hashed values.
+- Rejected: storing the cars in the game state (it would grow with every tile walked, and would have to be saved and hashed), and having the simulation read the painted pixels (that needs graphics code in the simulation and breaks replays).
+- Why: a car you see is a car you bump into, the same seed always gives the same cars, and the simulation still runs with no window.
+
+**Cars are drawn in front of and behind characters with the depth buffer, not an overlay texture.**
+- Chosen: the painters mark car pixels in the ground chunk's spare alpha channel. A small shader writes those pixels, and only those, into the depth buffer, at the depth of the car's near edge. Sprites test against it. A zombie hidden by a car also gets a see-through silhouette.
+- Rejected: painting a second copy of every car into an overlay texture and drawing it over the characters. That needs a second copy of every car, kept in step with the first, and its own sorting against the characters.
+- Why: the car is painted once, in one place, with no second copy. The graphics card does the sorting, and a seam between two chunks stays invisible because each chunk writes only its own part.
+
+**No pathfinding for zombies.**
+- Chosen: a zombie walks toward the player and, when a car is close ahead, steers to the nearer corner of it (`steerAround`). Crowds slide along cars.
+- Rejected: a path search over the map. It needs a grid or graph of the whole endless map, work for every zombie, and an answer that updates as cars and the player move. With 2,000 zombies that is a lot of time, and the map is made from a seed in endless chunks, so no whole-map graph exists.
+- Why: steering to a corner is a few comparisons, costs almost nothing with a crowd, and gives crowds that bunch up at a car in a believable way. The price is that a zombie can get pinned among wrecks, which the rescue below handles.
+
+**The stuck rescue is based on progress toward the player.**
+- Chosen: every 55 steps a zombie's distance to the player is compared with where it stood when it last got closer. If it has not got closer by a margin for 330 steps, while a car is in the way, it is moved to a clear spot nearer the player. Waiting in a queue and chasing a player who is running away do not count.
+- Rejected: a rescue based on speed or on a zombie not having moved. A zombie sliding along a car is moving, but making no progress. And a slow Brute can be walking around a bus on purpose. A timer on "no movement" would either miss the first or move the second for no reason.
+- Why: what matters is whether the zombie is getting to the player. Without a rescue, standing behind a car would make the player safe, so the rescue has to be fair enough that it never fires on a zombie that is still coming.
+- Known gap: a Brute cannot reach a player standing in a slot between cars that is too narrow for it, because no clear spot exists. There the player is safe from Brutes only.
 
 **The time of day comes from the run clock.**
 - Chosen: the day cycle is a function of `run.tick`, blended between key moments in `Theme.h`. The ground is graded strongly and sprites only gently.
@@ -1243,6 +1458,12 @@ Each entry lists what was chosen, what was rejected, and why.
 
 ### Other design choices found in the code
 
+- **Difficulty is a three-number table.** Zombie health, damage to the player and spawn rate are multiplied by `kDifficulties`, and no code branches on the level.
+- **Hit pause takes time away from the simulation and does not freeze the frame.** The steps still run in the same order with the same inputs, only later, so a run stays deterministic.
+- **Every full-screen flash goes through one limiter** that allows at most one a second, so no mix of big events can pass the usual safety limit of three a second.
+- **The offline worker checks each file's hash** against the one the build recorded, before it caches anything. Rejected: trusting whatever the host serves, which can cache a mix of old and new files for good while an update is half way out.
+- **A save that cannot be read is never written over.** Missing and Unreadable are different answers on purpose. Best runs are merged before writing, so an older copy of the game cannot take a record back.
+- **The dash is an input in `InputFrame`,** so it is recorded and replayed like movement, and the afterimage follows the path the soldier really took, because a car can stop a dash.
 - **Gems merge** above 500, and a full gem pool gives XP directly. No reward is lost, and the pool never overflows.
 - **Visual randomness never uses the simulation's generator.** Looks cannot change a replay. Zombie outfits come from a hash of the zombie's id, and the city from a hash of the seed and the tile position.
 - **Zombie sprites are painted at startup** into the atlas, so drawing 2,000 animated zombies costs a rectangle lookup and one quad each.
@@ -1296,16 +1517,29 @@ Links are relative to this document.
 | 4 | Sprite atlas and palette | [`Atlas.cpp`](../src/components/WorldView/Atlas.cpp), [`Sprites.h`](../src/components/WorldView/Sprites.h) |
 | 4 | Sprite art | [`SoldierArt.cpp`](../src/components/WorldView/SoldierArt.cpp), [`ZombieArt.cpp`](../src/components/WorldView/ZombieArt.cpp), [`ItemArt.cpp`](../src/components/WorldView/ItemArt.cpp) |
 | 4 | Ground chunk cache and light pools | [`Ground.cpp`](../src/components/WorldView/Ground.cpp) |
-| 4, 9 | Map interface | [`src/components/Maps/Maps.h`](../src/components/Maps/Maps.h), [`Maps.cpp`](../src/components/Maps/Maps.cpp) |
-| 4 | The ruined city | [`src/components/Maps/City`](../src/components/Maps/City) (roads in [`City.cpp`](../src/components/Maps/City/City.cpp), lots, props, painting tools in its subfolders) |
+| 4, 9 | Map interface (painting) | [`src/components/Maps/Maps.h`](../src/components/Maps/Maps.h), [`Maps.cpp`](../src/components/Maps/Maps.cpp) |
+| 4, 5, 9 | Map layout: where cars stand, from the seed (no raylib, in `ls_sim`) | [`src/components/Maps/Layout`](../src/components/Maps/Layout) ([`Layout.h`](../src/components/Maps/Layout/Layout.h), [`CityLayout`](../src/components/Maps/Layout/CityLayout/CityLayout.h), [`WastelandLayout`](../src/components/Maps/Layout/WastelandLayout/WastelandLayout.h), [`TileRandom.h`](../src/components/Maps/Layout/TileRandom/TileRandom.h)) |
+| 4 | The ruined city | [`src/components/Maps/City`](../src/components/Maps/City) (roads in [`City.cpp`](../src/components/Maps/City/City.cpp), lots and props in its subfolders) |
+| 4 | The desert wasteland | [`src/components/Maps/Wasteland`](../src/components/Maps/Wasteland) (terrain, roads, sites, props in its subfolders) |
+| 4 | Painting tools shared by the maps, and the car mark | [`Paint.h`](../src/components/Maps/Paint/Paint.h), [`SharedProps`](../src/components/Maps/SharedProps) |
+| 5 | Solid cars: cache, sliding, steering, rescue, item placement | [`src/components/Obstacles`](../src/components/Obstacles) |
+| 5 | Stuck zombie rescue, Charger crash | `watchProgress` and `settleAgainstCars` in [`Enemies.cpp`](../src/components/Enemies/Enemies.cpp) |
+| 5 | The dash | [`src/components/Player`](../src/components/Player), `kDash...` numbers in [`Balance.h`](../src/data/Balance.h) |
+| 5 | Difficulty table | `kDifficulties` in [`Balance.h`](../src/data/Balance.h) |
+| 2, 5 | Cars drawn with the depth buffer, the dash afterimage | `drawCarDepth` in [`Ground.cpp`](../src/components/WorldView/Ground.cpp), [`DashPath.h`](../src/components/WorldView/DashPath.h) |
+| 2 | Effects: particles, numbers, shake, hit pause, glow, flash limiter, frame watch | [`src/components/Effects`](../src/components/Effects) ([`Effects.h`](../src/components/Effects/Effects.h) is the public header) |
 | 6 | Debug showcase | [`Showcase.cpp`](../src/components/WorldView/Showcase.cpp), `setupShowcase` in [`WorldView.h`](../src/components/WorldView/WorldView.h) |
 | 6 | Screens | [`src/components/Ui`](../src/components/Ui) |
 | 6 | Shared widgets, layout | [`src/components/Ui/Widgets`](../src/components/Ui/Widgets) |
 | 6 | Embedded font | [`src/components/Ui/Font`](../src/components/Ui/Font) |
 | 6 | Input | [`src/components/Input`](../src/components/Input) |
 | 6 | Saves | [`src/core/Save.cpp`](../src/core/Save.cpp), [`Save.h`](../src/core/Save.h) |
+| 6 | Safe save file writing (Windows) | [`src/core/SaveFile.cpp`](../src/core/SaveFile.cpp), [`SaveFile.h`](../src/core/SaveFile.h) |
 | 6 | Browser glue | [`src/core/Platform.cpp`](../src/core/Platform.cpp), [`Platform.h`](../src/core/Platform.h) |
+| 6 | Debug overlay switch (Release builds hide it) | [`src/core/DebugSwitch.h`](../src/core/DebugSwitch.h) |
 | 6 | Page shell | [`web/index.html`](../web/index.html), [`web/components`](../web/components), [`web/FinishWebBuild.cmake`](../web/FinishWebBuild.cmake) |
+| 6 | Install as an app, offline worker | [`web/manifest.webmanifest`](../web/manifest.webmanifest), [`web/sw.js`](../web/sw.js), [`web/components/InstallApp`](../web/components/InstallApp), [`web/components/OfflineCache`](../web/components/OfflineCache), [`tools/generate-icons.mjs`](../tools/generate-icons.mjs) |
+| 6 | PC zip on GitHub Releases | [`.github/workflows/release.yml`](../.github/workflows/release.yml) |
 | 6 | Build | [`CMakeLists.txt`](../CMakeLists.txt), [`CMakePresets.json`](../CMakePresets.json) |
 | 6 | Debug overlay and commands | `drawDebugOverlay` and `debugCommand` in [`App.cpp`](../src/core/App.cpp), `debugEnabled` in [`Platform.cpp`](../src/core/Platform.cpp) |
 | 7 | Audio | [`src/components/Audio`](../src/components/Audio) |
@@ -1313,24 +1547,21 @@ Links are relative to this document.
 | 8 | Balance tool | [`tests/balance`](../tests/balance) |
 | 8 | Browser tests, performance script | [`tests/e2e`](../tests/e2e) |
 | 9 | Look prototypes (shapes, outlines, pixel city): screenshots | [`docs/prototypes`](prototypes) |
-| 11 | Deploy workflow (written, not yet run) | [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) |
+| 11 | Deploy workflow | [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) |
 
 ---
 
 ## 11. Planned work, not in the code yet
 
-Everything marked **Planned** here is not in the code now, and details may change. One item is different: the deploy workflow is written, but it has never been run.
+Everything marked **Planned** here is not in the code now, and details may change.
 
 **Planned:**
 
-- **Effects:** particles, damage numbers, screen shake, hit pause, and a glow on shots and explosions. Work on these is in progress, but none of it is in the code at the time of writing. What the renderer has today is small: a pool of 180 smoke puffs (behind rockets and after blasts), burning rings and fire sprites for blasts, and one soft warm glow disc under each explosion. When screen shake and damage numbers exist, the saved "screen shake" and "damage numbers" settings will have something to control.
-- **Automatic quality reduction on weak devices.** Hooks exist (the renderer's fast mode switch, the quality level that paints half-size ground chunks and drops lamp light pools, flicker and the vignette, and the extra scale argument in `syncCanvasSize`). Nothing calls them except the `?debug` command that sets the quality level.
-- **An installable web app.** A way to add the game to a phone's home screen or a computer's app list from the browser, so it opens like an app.
-- **A PC download.** A `.zip` of the Windows build, published on GitHub Releases.
-- **A second map,** a desert highway wasteland, chosen with a small map picker on the title screen.
-- **Solid obstacles,** starting with cars. The simulation does not know about maps today, so this is a real change: obstacle positions must come from the seed in the simulation, and zombies and the player slide around them.
-- **Real phone measurements** of speed, touch, the gamepad and notches.
+- **Automatic fast mode and automatic world quality on weak devices.** The effects already drop to a low quality level by themselves (see [effects](#effects-particles-numbers-shake-and-glow)). The world renderer's own hooks exist (its fast mode switch, and its quality level that paints half-size ground chunks and drops lamp light pools, flicker and the vignette), but nothing calls them except the `?debug` command that sets the quality level.
+- **Real phone measurements** of speed, touch, the gamepad and notches. The numbers in [section 8](#performance) come from a laptop. A measurement under CPU throttling is in progress.
+- **More solid obstacles.** Only cars are solid. Other props (barrels, rubble, low walls, rocks, trees, shacks) are still decoration. Long walls would be the riskiest to add, because there is no pathfinding.
 
-**Written, not yet run:**
+**Written:**
 
-- **Deployment to GitHub Pages.** The workflow is [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml). It builds the browser version with Emscripten and publishes it, when started by hand from the Actions tab or when a version tag such as `v1.0.0` is pushed. It has not been run yet, so nothing about it is confirmed to work. It builds and publishes only. It does not run the tests.
+- **Deployment to GitHub Pages.** The workflow is [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml). It builds the browser version with Emscripten and publishes it, when started by hand from the Actions tab on the main branch. There is no tag trigger on purpose: the default Pages environment only lets the default branch deploy, so a tag push would build and then be refused. It builds and publishes only. It does not run the tests. This document does not record a run of it.
+- **The PC download.** [`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the Windows zip and attaches it to a GitHub Release, when a version tag is pushed or when started by hand.
