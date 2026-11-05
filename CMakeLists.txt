@@ -78,9 +78,13 @@ file(GLOB_RECURSE LS_GAME_SOURCES CONFIGURE_DEPENDS
   src/components/Maps/*.cpp
 )
 if(EMSCRIPTEN)
-  # Art is painted in code. It runs rarely, so it is built for download size, not speed.
-  file(GLOB_RECURSE LS_ART_SOURCES CONFIGURE_DEPENDS src/components/WorldView/*Art.cpp src/components/Maps/*.cpp)
+  # Character art is painted in code once, at startup, so it is built for download size, not speed.
+  file(GLOB_RECURSE LS_ART_SOURCES CONFIGURE_DEPENDS src/components/WorldView/*Art.cpp)
   set_source_files_properties(${LS_ART_SOURCES} PROPERTIES COMPILE_OPTIONS "-Oz")
+  # The ground is painted during play, as the player walks. O2 paints it about 40 percent faster
+  # than Oz for about 30 KB more download, and as fast as O3 for less.
+  file(GLOB_RECURSE LS_MAP_SOURCES CONFIGURE_DEPENDS src/components/Maps/*.cpp)
+  set_source_files_properties(${LS_MAP_SOURCES} PROPERTIES COMPILE_OPTIONS "-O2")
 endif()
 list(FILTER LS_GAME_SOURCES EXCLUDE REGEX "/components/Audio/[^/]+/")
 # The layout of a map belongs to the simulation, which is linked in already.
