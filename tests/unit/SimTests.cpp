@@ -282,7 +282,7 @@ TEST_CASE("wave table rows are valid and fit the spawn accumulator array") {
     CHECK(waves::rowRate(0, balance::kWaves[0].endSec) == 0.0f);
 }
 
-TEST_CASE("same seed and inputs give the same state at every second, not only at the end") {
+TEST_CASE("same seed and inputs give the same state at every step, not only at the end") {
     auto first = makeRun(777);
     auto second = makeRun(777);
     int firstMismatch = -1;
@@ -291,12 +291,28 @@ TEST_CASE("same seed and inputs give the same state at every second, not only at
         sim::step(*second, botInput(*second));
         first->events.clear();
         second->events.clear();
-        // A divergence that later cancels out would still show in an earlier second.
-        if (i % 60 == 59 && firstMismatch < 0 && sim::stateHash(*first) != sim::stateHash(*second)) firstMismatch = i;
+        // Every step is compared. Sampling once a second would miss a difference that is
+        // gone again before the next sample, such as a few steps of a wrong value.
+        if (firstMismatch < 0 && sim::stateHash(*first) != sim::stateHash(*second)) firstMismatch = i;
     }
     CHECK(first->run.kills > 0);
-    CHECK(firstMismatch == -1);
+    CHECK_MESSAGE(firstMismatch == -1, "the two runs parted at step " << firstMismatch);
     CHECK(sim::stateHash(*first) == sim::stateHash(*second));
+}
+
+TEST_CASE("the hash changes as the run goes on, so equal hashes mean something") {
+    // If the hash were stuck on one value, every determinism check would pass for any run.
+    auto state = makeRun(777);
+    uint64_t previous = sim::stateHash(*state);
+    int unchanged = 0;
+    for (int i = 0; i < 600; ++i) {
+        sim::step(*state, botInput(*state));
+        state->events.clear();
+        const uint64_t now = sim::stateHash(*state);
+        if (now == previous) ++unchanged;
+        previous = now;
+    }
+    CHECK(unchanged == 0);
 }
 
 TEST_CASE("the state hash sees every kind of state that a later step reads") {

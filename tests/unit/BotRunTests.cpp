@@ -1,6 +1,7 @@
 #include "doctest.h"
 
 #include "components/Enemies/Enemies.h"
+#include "StateFields.h"
 #include "components/Weapons/Weapons.h"
 #include "core/Sim.h"
 #include "data/Balance.h"
@@ -9,7 +10,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 using namespace ls;
@@ -135,40 +138,54 @@ struct BotResult {
     uint64_t finalHash = 0;
 };
 
-bool finite(Vec2 v) { return std::isfinite(v.x) && std::isfinite(v.y); }
+// Says what is wrong with the state, or returns an empty string when all is well. A NaN
+// position would not crash anything and would not trip a count limit, but it would quietly
+// break collisions. So every real number in every struct is checked to be finite, using the
+// field lists in StateFields.h, and then the counts and ranges that must hold.
+std::string stateProblem(const GameState& s) {
+    std::string problem;
+    testing::visitStructs(s, true, [&](const testing::StructInfo& info, const unsigned char* base, const char* name, int index) {
+        if (!problem.empty()) return;
+        for (const size_t offset : info.floatOffsets()) {
+            float value = 0.0f;
+            std::memcpy(&value, base + offset, sizeof(float));
+            if (std::isfinite(value)) continue;
+            // Only now, on a failure, work out which field it was, for the message.
+            std::string which = "a float";
+            for (const testing::Field& field : info.fields) {
+                if (field.floating && offset >= field.offset && offset < field.offset + field.size) which = field.name;
+            }
+            problem = testing::labelOf(name, index) + "." + which + " is not a finite number";
+            return;
+        }
+    });
+    if (!problem.empty()) return problem;
 
-// Values that must hold after every step. A NaN position would not crash anything and
-// would not trip a count limit, but it would quietly break collisions, so every
-// position and health value is checked to be a real number.
-bool stateIsSane(const GameState& s) {
     const Player& p = s.player;
-    if (!finite(p.pos) || !std::isfinite(p.hp) || p.hp > p.maxHp + 1e-3f) return false;
-    if (p.level < 1 || p.xp < 0 || p.weaponCount < 1 || p.weaponCount > kMaxHeldWeapons) return false;
-    if (s.run.kills < 0 || s.run.rerollsLeft < 0 || s.run.pendingLevels < 0) return false;
+    if (p.hp > p.maxHp + 1e-3f) return "player hp is above max hp";
+    if (p.level < 1 || p.xp < 0) return "player level or xp is out of range";
+    if (p.weaponCount < 1 || p.weaponCount > kMaxHeldWeapons) return "weapon count is out of range";
+    if (p.passiveCount < 0 || p.passiveCount > kMaxHeldPassives) return "passive count is out of range";
+    if (s.run.kills < 0 || s.run.rerollsLeft < 0 || s.run.pendingLevels < 0) return "a run counter is negative";
     for (int i = 0; i < p.weaponCount; ++i) {
         const WeaponSlot& w = p.weapons[i];
-        if (w.magazine < 0 || w.reserve < 0 || !std::isfinite(w.cooldown) || !std::isfinite(w.reloadLeft)) return false;
+        if (w.magazine < 0 || w.reserve < 0) return "a weapon has negative ammo";
+        if (static_cast<int>(w.id) >= static_cast<int>(WeaponId::Count)) return "a held weapon has a bad id";
     }
     for (const Enemy& e : s.enemies) {
-        if (!finite(e.pos) || !std::isfinite(e.hp) || e.radius <= 0.0f || e.id == 0 || e.id >= s.run.nextId) return false;
-    }
-    for (const Projectile& shot : s.projectiles) {
-        if (!finite(shot.pos) || !finite(shot.vel) || !std::isfinite(shot.damage)) return false;
-    }
-    for (const EnemyBullet& b : s.enemyBullets) {
-        if (!finite(b.pos) || !finite(b.vel)) return false;
-    }
-    for (const Zone& z : s.zones) {
-        if (!finite(z.a) || !finite(z.b) || !std::isfinite(z.radius) || !std::isfinite(z.life)) return false;
+        if (e.radius <= 0.0f || e.id == 0 || e.id >= s.run.nextId) return "an enemy has a bad radius or id";
+        if (static_cast<int>(e.type) >= static_cast<int>(EnemyType::Count)) return "an enemy has a bad type";
     }
     for (const Gem& g : s.gems) {
-        if (!finite(g.pos) || g.xp < 1) return false;
+        if (g.xp < 1) return "a gem is worth no xp";
     }
     for (const Pickup& pickup : s.pickups) {
-        if (!finite(pickup.pos)) return false;
+        if (static_cast<int>(pickup.type) >= static_cast<int>(PickupType::Count)) return "a pickup has a bad type";
     }
-    return true;
+    return "";
 }
+
+bool stateIsSane(const GameState& s) { return stateProblem(s).empty(); }
 
 // Plays one run to its end, or to the step limit. The state is checked after every step.
 // stopAfterBoss, when above 0, ends the run that many seconds after the boss appears.
@@ -282,6 +299,37 @@ TEST_CASE("the state check catches a broken number") {
     CHECK_FALSE(stateIsSane(*state));
 }
 
+TEST_CASE("the state check refuses NaN and infinity in every real number of the state") {
+    // Writes a NaN, then an infinity, into each float of each struct in turn, and requires
+    // the check to fail. This is what shows that no field is left out of it.
+    auto state = testing::makeBusyState();
+    REQUIRE(stateIsSane(*state));
+    int tried = 0;
+    std::vector<std::string> missed;
+    testing::visitStructs(*state, false, [&](const testing::StructInfo& info, unsigned char* base, const char* name, int index) {
+        const std::string label = testing::labelOf(name, index);
+        for (const testing::Field& field : info.fields) {
+            if (!field.floating) continue;
+            for (size_t at = 0; at + sizeof(float) <= field.size; at += sizeof(float)) {
+                unsigned char* where = base + field.offset + at;
+                float saved = 0.0f;
+                std::memcpy(&saved, where, sizeof(float));
+                for (const float bad : {std::nanf(""), HUGE_VALF, -HUGE_VALF}) {
+                    std::memcpy(where, &bad, sizeof(float));
+                    ++tried;
+                    if (stateIsSane(*state)) missed.push_back(label + "." + field.name + " accepts " + std::to_string(bad));
+                }
+                std::memcpy(where, &saved, sizeof(float));
+            }
+        }
+    });
+    CHECK(tried > 200);
+    std::string list;
+    for (const std::string& line : missed) list += "\n  " + line;
+    CHECK_MESSAGE(missed.empty(), "the state check lets these through:" << list);
+    CHECK(stateIsSane(*state));  // Every write was undone.
+}
+
 // Compares two runs of one seed on everything the bot records, including a fingerprint of
 // the whole state every 5 seconds, so a difference that later cancels out still shows.
 static void checkSameRun(const BotResult& first, const BotResult& second) {
@@ -319,8 +367,10 @@ TEST_CASE("bot run: the same seed gives the same state through the late game and
 
 TEST_CASE("every weapon deals damage to a crowd, which the boss fight below relies on") {
     for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) {
-        CAPTURE(kWeaponNames[i]);
-        CHECK(damageInCrowdFight(static_cast<WeaponId>(i)) > 0.0f);
+        const float dealt = damageInCrowdFight(static_cast<WeaponId>(i));
+        // The name is part of the message, so a failure says which weapon it was.
+        const std::string what = std::string("weapon ") + kWeaponNames[i] + " dealt " + std::to_string(dealt) + " damage in 8 seconds against 40 walkers";
+        CHECK_MESSAGE(dealt > 0.0f, what);
     }
 }
 

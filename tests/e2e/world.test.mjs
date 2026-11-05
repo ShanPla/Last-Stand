@@ -2,7 +2,10 @@
 // any window shape and any amount of walking.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, launchChrome, openGame as openPage, startGame, watchProblems } from './harness.mjs';
+import { readFileSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { startServer, launchChrome, openGame as openPage, startGame, watchProblems, debug, CMD } from './harness.mjs';
 
 // Debug command numbers. Edit these here if the app's numbering changes.
 const kSetSeed = 3;
@@ -134,37 +137,87 @@ test('walking far in every direction keeps drawing ground and raises no errors',
   await context.close();
 });
 
+// The ground is painted in square chunks, and the game keeps their size in one place. The
+// test reads it from there, so it cannot drift from the game by keeping its own copy. If
+// the line is reworded the test fails loudly rather than guessing.
+function readChunkSize() {
+  const header = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/components/Maps/Maps.h');
+  const match = /kChunkWorldSize\s*=\s*([\d.]+)f?\s*;/.exec(readFileSync(header, 'utf8'));
+  assert.ok(match, 'could not find kChunkWorldSize in Maps.h');
+  return { size: Number(match[1]), header };
+}
+
 test('real walking with the keyboard crosses chunk borders with no errors', async () => {
-  const { context, page, problems } = await openGame(browser, web.url, { viewport: { width: 640, height: 360 } });
-  const chunkOf = (value) => Math.floor(value / 640);
+  const { size: chunkSize, header } = readChunkSize();
+  assert.ok(chunkSize >= 64 && chunkSize <= 4096, `chunk size ${chunkSize} looks wrong`);
+  // The built game is only as new as its last build. A chunk size changed since then would
+  // make the test walk to borders that the old build does not have.
+  const built = statSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../build/web/index.wasm')).mtimeMs;
+  assert.ok(built >= statSync(header).mtimeMs, 'Maps.h is newer than the web build: rebuild the game before running this test');
+
+  // ?debug is only used to cause a level-up on demand. All movement below is real keys.
+  const { context, page, problems } = await openGame(browser, `${web.url}?debug`, { viewport: { width: 640, height: 360 } });
+  const chunkOf = (value) => Math.floor(value / chunkSize);
   const start = await readState(page);
   assert.equal(chunkOf(start.x), 0);
   assert.equal(chunkOf(start.y), 0);
 
-  // Holds a key until the player has gone as far as asked. A level-up would pause the
-  // walk, so it is answered the way a player would.
-  const walk = async (key, reached) => {
+  // Waits, by polling the game's own state, until the level-up cards are showing (true) or
+  // gone (false).
+  const waitCards = (showing, timeout) => page.waitForFunction(
+    (wanted) => (JSON.parse(Module.ccall('ls_query_state', 'string', [], [])).phase === 1) === wanted, showing, { timeout });
+
+  // Answers the level-up cards with the keyboard, as a player would. The cards ignore input
+  // for a moment after they open, so Enter is pressed again until one is taken. A screen
+  // that never accepts a choice fails here at once, not after the walk's long timeout.
+  let levelUpsAnswered = 0;
+  const answerCards = async () => {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await page.keyboard.press('Enter');
+      try {
+        await waitCards(false, 400);
+        levelUpsAnswered++;
+        return;
+      } catch { /* Still showing the cards: press again. */ }
+    }
+    assert.fail('the level-up cards never accepted a choice');
+  };
+
+  // Holds a key until the player is past a limit on one axis. Straight after the key goes
+  // down, a level-up is forced open and answered, and the walk must carry on afterwards.
+  // Any level-up that comes by itself on the way is answered the same way.
+  const walk = async (key, axis, past) => {
     await page.keyboard.down(key);
     try {
-      const deadline = Date.now() + 20000;
+      await debug(page, CMD.levelUp);
+      await waitCards(true, 5000);
+      await answerCards();
       for (;;) {
+        // Returns when the limit is passed, or when the cards open again.
+        await page.waitForFunction(([name, limit, greater]) => {
+          const state = JSON.parse(Module.ccall('ls_query_state', 'string', [], []));
+          return state.phase === 1 || (greater ? state[name] > limit : state[name] < limit);
+        }, [axis, past.limit, past.greater], { timeout: 20000 });
         const state = await readState(page);
-        if (reached(state)) return state;
-        assert.ok(Date.now() < deadline, `holding ${key} never got there: x ${state.x}, y ${state.y}, phase ${state.phase}`);
-        if (state.phase === 1) await page.keyboard.press('Enter');
-        await page.waitForTimeout(100);
+        if (state.phase === 1) {
+          await answerCards();
+          continue;
+        }
+        return state;
       }
     } finally {
       await page.keyboard.up(key);
     }
   };
 
-  const east = await walk('d', (s) => s.x > 700);
+  const east = await walk('d', 'x', { limit: chunkSize + 60, greater: true });
   assert.equal(chunkOf(east.x), 1, 'walking right must enter the next chunk');
-  const south = await walk('s', (s) => s.y > 700);
+  const south = await walk('s', 'y', { limit: chunkSize + 60, greater: true });
   assert.equal(chunkOf(south.y), 1, 'walking down must enter the next chunk');
-  const west = await walk('a', (s) => s.x < -50);
+  const west = await walk('a', 'x', { limit: -50, greater: false });
   assert.equal(chunkOf(west.x), -1, 'walking left must cross back, into a chunk with a negative index');
+  assert.ok(levelUpsAnswered >= 3, `a level-up was forced in each of the 3 walks, but only ${levelUpsAnswered} were answered`);
+  assert.equal((await readState(page)).phase, 0, 'the game must be playing again at the end');
   assert.deepEqual(problems, []);
   await context.close();
 });

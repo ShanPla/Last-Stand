@@ -362,12 +362,28 @@ TEST_CASE("the router limits rates and picks the right sound") {
         for (int b = a + 1; b < 4; ++b) CHECK(seen[a] != seen[b]);
     CHECK_FALSE(r3.route(makeEvent(EventType::PickupCollected, 99), 20.0f, req));
 
-    // Every event type with a bad detail value must not crash and not return a bad id.
-    // Explosion is the last event type. A new type added after it must move this bound.
+    // Every event type with every detail value from 0 to 255 must not crash and not return a
+    // bad id. Event types go up to 255 too, so a type added later is covered without
+    // changing this loop, and a type that does not exist must be refused. Each call is 10
+    // seconds after the last, so the rate limit never hides a bad answer.
     router::Router r4;
-    for (int type = 0; type <= static_cast<int>(EventType::Explosion); ++type) {
-        for (int detail : {0, 3, 9, 10, 11, 255}) {
-            if (r4.route(makeEvent(static_cast<EventType>(type), static_cast<uint8_t>(detail)), 100.0f + static_cast<float>(type * 10 + detail), req)) {
+    float clock = 100.0f;
+    int answered = 0;
+    for (int type = 0; type < 256; ++type) {
+        for (int detail = 0; detail < 256; ++detail) {
+            const EventType eventType = static_cast<EventType>(type);
+            clock += 10.0f;
+            req = router::PlayRequest{};
+            const bool accepted = r4.route(makeEvent(eventType, static_cast<uint8_t>(detail)), clock, req);
+            CAPTURE(type);
+            CAPTURE(detail);
+            if (type > static_cast<int>(EventType::PlayerDashed)) CHECK_FALSE(accepted);
+            // These three look the sound up in a table by detail, so a detail past the table is refused.
+            if (eventType == EventType::WeaponFired && detail >= static_cast<int>(WeaponId::Count)) CHECK_FALSE(accepted);
+            if (eventType == EventType::EnemyHit && detail >= static_cast<int>(WeaponId::Count)) CHECK_FALSE(accepted);
+            if (eventType == EventType::PickupCollected && detail >= static_cast<int>(PickupType::Count)) CHECK_FALSE(accepted);
+            if (accepted) {
+                ++answered;
                 CHECK(static_cast<int>(req.id) >= 0);
                 CHECK(static_cast<int>(req.id) < sfx::kSfxCount);
                 CHECK(req.volume >= 0.0f);
@@ -377,6 +393,7 @@ TEST_CASE("the router limits rates and picks the right sound") {
             }
         }
     }
+    CHECK(answered > 1000);  // The loop really got sounds back to check.
 
     // Every ui sound works.
     router::Router r5;
@@ -432,29 +449,111 @@ TEST_CASE("the router has its own random numbers, and routing sounds does not ch
     CHECK(first == pitches(77));
     CHECK(first != pitches(78));
 
-    // Two games with the same seed. One of them sends every event to a router, as the
-    // real game does. If routing touched the game's state or random numbers, they would part.
+    // Two games with the same seed and a player with huge health, so neither dies and no
+    // health has to be topped up (a top-up would hide a router that lowers health). One
+    // game sends every event to a router, as the real game does. If routing touched the
+    // game's state or random numbers, they would part. The played game is also compared
+    // before and after its own routing, so the change shows at once.
     auto played = std::make_unique<GameState>();
     auto silent = std::make_unique<GameState>();
-    sim::newRun(*played, 77);
-    sim::newRun(*silent, 77);
+    for (GameState* game : {played.get(), silent.get()}) {
+        sim::newRun(*game, 77);
+        game->player.maxHp = 5000.0f;
+        game->player.hp = 5000.0f;
+    }
     router::Router r;
     router::PlayRequest req;
     int routed = 0;
+    int changedByRouting = -1;
+    int partedAt = -1;
     for (int i = 0; i < 60 * 30; ++i) {
-        played->player.hp = played->player.maxHp;
-        silent->player.hp = silent->player.maxHp;
         sim::step(*played, InputFrame{});
         sim::step(*silent, InputFrame{});
+        const uint64_t hashBefore = sim::stateHash(*played);
+        const uint64_t rngBefore = played->rng.state;
         for (const SimEvent& event : played->events) {
             if (r.route(event, static_cast<float>(i) / 60.0f, req)) ++routed;
         }
+        if (changedByRouting < 0 && (sim::stateHash(*played) != hashBefore || played->rng.state != rngBefore)) changedByRouting = i;
+        if (partedAt < 0 && sim::stateHash(*played) != sim::stateHash(*silent)) partedAt = i;
         played->events.clear();
         silent->events.clear();
     }
     CHECK(routed > 20);
+    CHECK_MESSAGE(changedByRouting == -1, "routing changed the game at step " << changedByRouting);
+    CHECK_MESSAGE(partedAt == -1, "the routed game parted from the silent one at step " << partedAt);
     CHECK(played->rng.state == silent->rng.state);
+    CHECK(played->player.hp == silent->player.hp);
     CHECK(sim::stateHash(*played) == sim::stateHash(*silent));
+}
+
+TEST_CASE("the router's answers depend only on its own seed and the events, never on the game") {
+    // Record the events of one game. Then play them through three routers with the same
+    // seed: one with no game around it, and two while other games run, with other seeds.
+    // A router that read the game's random numbers or state to pick a pitch would answer
+    // differently when the game around it is different.
+    struct Recorded {
+        int step;
+        SimEvent event;
+    };
+    std::vector<Recorded> recorded;
+    {
+        auto game = std::make_unique<GameState>();
+        sim::newRun(*game, 77);
+        game->player.maxHp = 5000.0f;
+        game->player.hp = 5000.0f;
+        for (int i = 0; i < 60 * 30; ++i) {
+            sim::step(*game, InputFrame{});
+            for (const SimEvent& event : game->events) recorded.push_back(Recorded{i, event});
+            game->events.clear();
+        }
+    }
+    REQUIRE(recorded.size() > 50);
+
+    struct Answer {
+        bool played;
+        int id;
+        float volume;
+        float pitch;
+    };
+    const auto replay = [&](uint64_t gameSeed) {
+        std::unique_ptr<GameState> game;
+        if (gameSeed != 0) {
+            game = std::make_unique<GameState>();
+            sim::newRun(*game, gameSeed);
+            game->player.maxHp = 5000.0f;
+            game->player.hp = 5000.0f;
+        }
+        router::Router r(4242);
+        router::PlayRequest req;
+        std::vector<Answer> answers;
+        size_t next = 0;
+        for (int i = 0; i < 60 * 30; ++i) {
+            if (game) {
+                sim::step(*game, InputFrame{});
+                game->events.clear();
+            }
+            for (; next < recorded.size() && recorded[next].step == i; ++next) {
+                req = router::PlayRequest{};
+                const bool played = r.route(recorded[next].event, static_cast<float>(i) / 60.0f, req);
+                answers.push_back(Answer{played, static_cast<int>(req.id), req.volume, req.pitch});
+            }
+        }
+        return answers;
+    };
+    const std::vector<Answer> alone = replay(0);
+    for (const uint64_t gameSeed : {1ull, 2ull}) {
+        const std::vector<Answer> beside = replay(gameSeed);
+        REQUIRE(beside.size() == alone.size());
+        int different = 0;
+        for (size_t k = 0; k < alone.size(); ++k) {
+            if (alone[k].played != beside[k].played || alone[k].id != beside[k].id || alone[k].volume != beside[k].volume ||
+                alone[k].pitch != beside[k].pitch) {
+                ++different;
+            }
+        }
+        CHECK_MESSAGE(different == 0, "answers that changed: " << different << ", while a game with seed " << gameSeed << " was running");
+    }
 }
 
 // Writes the sounds as .wav files for listening, and prints a level table.

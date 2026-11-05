@@ -30,6 +30,14 @@ async function openBroken(setup) {
   return { context, page };
 }
 
+// Waits until the loading screen has faded out and been hidden, which is where a crash in
+// the middle of play starts from. The page hides it 250 ms after the fade begins. A crash
+// before that would leave the hidden flag untouched, so a message that forgot to show the
+// screen again would still pass.
+async function waitForLoadingScreenGone(page) {
+  await page.waitForFunction(() => document.getElementById('loading-screen').hidden === true, null, { timeout: 15000 });
+}
+
 // Waits for the fatal message and returns what the player can see.
 async function waitForMessage(page, pattern) {
   await page.waitForFunction((source) => {
@@ -91,6 +99,7 @@ test('a game file that downloads whole but will not compile does not claim a fai
 test('a crash while playing covers the frozen canvas with a message', async () => {
   const { context, page } = await openGame(browser, `${web.url}?debug`, { viewport });
   await waitScreen(page, 'title');
+  await waitForLoadingScreenGone(page);
   // Emscripten calls Module.onAbort from its abort(), for example when memory cannot grow.
   assert.equal(await page.evaluate(() => typeof Module.onAbort), 'function');
   await page.evaluate(() => Module.onAbort('test abort'));
@@ -104,6 +113,7 @@ test('a crash while playing covers the frozen canvas with a message', async () =
 test('a WebAssembly trap in the frame loop also shows the message', async () => {
   const { context, page } = await openGame(browser, `${web.url}?debug`, { viewport });
   await waitScreen(page, 'title');
+  await waitForLoadingScreenGone(page);
   // The smallest module that traps: one function that runs "unreachable". Thrown from a
   // timer, so it reaches the page as an uncaught error, as a trap in the game's own loop does.
   await page.evaluate(() => {
@@ -119,6 +129,7 @@ test('a WebAssembly trap in the frame loop also shows the message', async () => 
 test('a lost WebGL context shows a message instead of a blank canvas', async () => {
   const { context, page } = await openGame(browser, `${web.url}?debug`, { viewport });
   await waitScreen(page, 'title');
+  await waitForLoadingScreenGone(page);
   const lost = await page.evaluate(() => {
     const gl = document.getElementById('canvas').getContext('webgl2');
     const extension = gl.getExtension('WEBGL_lose_context');

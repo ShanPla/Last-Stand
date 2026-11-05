@@ -13,6 +13,7 @@
 #include <cmath>
 #include <iterator>
 #include <memory>
+#include <vector>
 
 using namespace ls;
 
@@ -311,6 +312,34 @@ TEST_CASE("a full pickup pool drops the oldest pickup to make room for a new one
     }
     CHECK(oldestX == doctest::Approx(5001.0f));  // The pickup at x = 5000 was dropped.
     CHECK(newestX >= 9000.0f);                    // The new drop is there.
+}
+
+TEST_CASE("a full pickup pool always loses the oldest pickup, however many drops follow") {
+    // One eviction can look right even when the pool is wrong. Removing slot 0 moves the
+    // last pickup into it, so after a few more drops the pool throws away recent pickups
+    // and keeps old ones. So this follows many drops and, after each one, requires that the
+    // pool holds exactly the newest kMaxPickups pickups that were ever dropped.
+    auto state = makeRun();
+    std::vector<float> dropped;  // The x of every pickup, in the order dropped.
+    const auto drop = [&](PickupType type) {
+        const float x = 5000.0f + static_cast<float>(dropped.size());
+        dropped.push_back(x);
+        pickups::spawnPickup(*state, Vec2{x, 5000.0f}, type);
+    };
+    for (int i = 0; i < kMaxPickups; ++i) drop(PickupType::Heal);
+    REQUIRE(state->pickups.count == kMaxPickups);
+
+    int wrongAfter = -1;
+    for (int extra = 1; extra <= 3 * kMaxPickups; ++extra) {
+        // The type is varied so a pickup cannot be told from another by position alone.
+        drop(static_cast<PickupType>(extra % static_cast<int>(PickupType::Count)));
+        std::vector<float> held;
+        for (const Pickup& pickup : state->pickups) held.push_back(pickup.pos.x);
+        std::sort(held.begin(), held.end());
+        const std::vector<float> newest(dropped.end() - kMaxPickups, dropped.end());  // Already in order.
+        if (wrongAfter < 0 && (state->pickups.count != kMaxPickups || held != newest)) wrongAfter = extra;
+    }
+    CHECK_MESSAGE(wrongAfter == -1, "after " << wrongAfter << " extra drops the pool no longer holds the newest " << kMaxPickups);
 }
 
 // ---------------------------------------------------------------------------
