@@ -284,11 +284,13 @@ struct SoldierState {
     Vec2 lastFeet;
     bool moving = false;
     float sinceFired = 10.0f;  // Seconds. Starts high, so no flash shows at first.
+    bool firedThisFrame = false;  // A shot's first drawn frame must show it, however slow.
     WeaponId gun = WeaponId::Rifle;
     bool seenAny = false;
 };
 
 SoldierState g_soldierState;
+int g_muzzleFrames = 0;  // Only read by the browser tests.
 
 constexpr float kStrideLength = 62.0f;   // World units for one full walk cycle.
 constexpr float kAimHoldSeconds = 0.8f;  // He faces his target this long after a shot.
@@ -349,12 +351,18 @@ int bodyPose(uint32_t tick) {
 }  // namespace
 
 void noteWeaponFired(WeaponId weapon) {
+    // Mines are dropped and blades circle by themselves, so neither moves the gun in his
+    // hands. Treating them as shots would flash and kick a gun that never fired.
+    if (!isHeldGun(weapon)) return;
     g_soldierState.sinceFired = 0.0f;
-    if (isHeldGun(weapon)) {
-        g_soldierState.gun = weapon;
-        g_soldierState.seenAny = true;
-    }
+    g_soldierState.firedThisFrame = true;
+    g_soldierState.gun = weapon;
+    g_soldierState.seenAny = true;
 }
+
+void resetSoldierAnimation() { g_soldierState = SoldierState{}; }
+
+SoldierDebug soldierDebug(const GameState& state) { return {static_cast<int>(heldGun(state)), g_muzzleFrames}; }
 
 void updateSoldierAnimation(Vec2 feetWorld, float realDt) {
     SoldierState& s = g_soldierState;
@@ -363,7 +371,10 @@ void updateSoldierAnimation(Vec2 feetWorld, float realDt) {
     // A big jump means a new run or a debug move, not walking.
     if (moved < 40.0f) s.stride += moved;
     s.moving = moved > 0.05f;
-    s.sinceFired += realDt;
+    // A shot's clock starts after its first drawn frame. On a slow device one frame can be
+    // longer than the whole flash, and counting it first would mean no flash is ever seen.
+    if (s.firedThisFrame) s.firedThisFrame = false;
+    else s.sinceFired += realDt;
 }
 
 void drawSoldierRing(const View& view, Vec2 worldFeet) {
@@ -471,6 +482,7 @@ void drawMuzzleFlash(const GameState& state, const ScreenPoint& feet) {
     const int y = roundToInt(feet.y - kShoulderHeight + aimY / aimLength * length);
     const bool big = gun == WeaponId::Shotgun || gun == WeaponId::Sniper || gun == WeaponId::Rockets || gun == WeaponId::GrenadeLauncher;
     const bool evolved = gunEvolved(state, gun);
+    g_muzzleFrames++;
     spriteQuad(itemSprite(big ? Item::MuzzleBig : Item::MuzzleSmall), x, y, false, evolved ? kRowEvolved : kRowBase, 0, static_cast<uint8_t>(255.0f * light));
     effects::queueGlowSpot(static_cast<float>(x), static_cast<float>(y), big ? 34.0f : 22.0f, evolved ? theme::kFxGlowEvolved : theme::kFxGlowMuzzle, (big ? 0.8f : 0.6f) * light);
 }

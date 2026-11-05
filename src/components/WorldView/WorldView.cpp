@@ -53,6 +53,9 @@ constexpr uint8_t kSoldierSeeThrough = 130;
 
 constexpr int kPlayerSlot = kMaxEnemies;  // The player takes one extra slot in the sort.
 
+// A clock that jumps back to under this many ticks means a run has just begun.
+constexpr uint32_t kFreshRunTicks = 30;
+
 struct VisibleFigure {
     ScreenPoint feet;
     uint16_t enemyIndex;
@@ -303,6 +306,14 @@ void setQuality(int quality) {
 }
 
 void consumeEvents(const GameState& state) {
+    // Before this frame's events, so a first shot in the new run still counts. A seed change
+    // is a new run. So is the clock going back to the very start, which catches a restart on
+    // the same seed, and the title demo's own loop (which only goes back part way) doesn't.
+    const uint32_t tick = state.run.tick;
+    if (state.run.seed != g_seenSeed || (tick < g_seenTick && tick < kFreshRunTicks)) resetSoldierAnimation();
+    g_seenSeed = state.run.seed;
+    g_seenTick = tick;
+
     for (const SimEvent& event : state.events) {
         switch (event.type) {
             case EventType::WeaponFired: noteWeaponFired(static_cast<WeaponId>(event.detail)); break;

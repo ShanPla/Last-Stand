@@ -43,6 +43,16 @@ void drawDashTrail(const View& view, const GameState& state, Vec2 playerWorld);
 // not in the simulation, because they only change how things look.
 void updateSoldierAnimation(Vec2 feetWorld, float realDt);
 void noteWeaponFired(WeaponId weapon);
+// Forgets the last gun and every timer, so a new run doesn't start with the old run's gun.
+void resetSoldierAnimation();
+
+// For the browser tests: what the soldier looks like right now, and how many frames have
+// shown a muzzle flash.
+struct SoldierDebug {
+    int heldGun;
+    int muzzleFrames;
+};
+SoldierDebug soldierDebug(const GameState& state);
 
 // Fallen zombies live in a small pool owned by the renderer.
 void addCorpse(EnemyType type, Vec2 pos, uint32_t tick);
