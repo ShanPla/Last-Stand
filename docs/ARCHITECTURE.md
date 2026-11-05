@@ -1271,7 +1271,7 @@ The tests also take a **real pixel check** ([`countColorNearCenter`](../tests/e2
 
 The functional tests run Chrome with a software renderer, so they check behavior, not speed. [`perf.mjs`](../tests/e2e/perf.mjs) is run by hand and uses the machine's real GPU.
 
-**Measured result.** The last full browser run passed **250 of 250** tests, with none skipped.
+**Measured result.** The last full browser run passed **252 of 252** tests, with none skipped.
 
 ### Performance
 
