@@ -12,6 +12,10 @@ enum class Align { Left, Center, Right };
 void init();
 void shutdown();
 
+// Bytes of glyph texture held right now. Big sizes are baked when first used, so this
+// grows with the window size. Shown to the browser tests, which check it stays small.
+int memoryBytes();
+
 // y is the top of the text line. tracking adds space between letters, in pixels.
 void draw(const char* text, float x, float y, float size, Color color, Align align = Align::Left, float tracking = 0.0f);
 

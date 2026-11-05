@@ -20,13 +20,16 @@ namespace {
 // The font is baked at a short list of whole pixel sizes, and text is always drawn
 // at one of them, never scaled. Scaling a pixel font blurs its edges or makes its
 // pixels uneven, so a requested size snaps to the nearest baked size instead.
-// The biggest sizes only hold plain ASCII, because they are used for the logo.
+// The biggest sizes only hold plain ASCII. They are only needed on big windows (the
+// logo and headings scale with the window), and each one is a texture of up to 4 MB, so
+// they are baked the first time text of that size is drawn. A phone never pays for them.
 constexpr int kBakedSizes[] = {16, 24, 32, 40, 48, 56, 64, 80, 96, 128, 160};
 constexpr int kSizeCount = static_cast<int>(sizeof(kBakedSizes) / sizeof(kBakedSizes[0]));
 constexpr int kFullSetMaxSize = 64;
 constexpr int kMaxGlyphs = 128;
 
 Font g_fonts[kSizeCount];
+bool g_loaded[kSizeCount];
 bool g_ready = false;
 
 // ASCII plus the few extra marks the UI text uses.
@@ -88,12 +91,30 @@ Font loadFont(int bakedSize, const int* codepoints, int count) {
     redrawFive(font.glyphs, font.glyphCount);
     Image atlas = GenImageFontAtlas(font.glyphs, &font.recs, font.glyphCount, bakedSize, kGlyphPadding, 0);
     font.texture = LoadTextureFromImage(atlas);
+    // Drawing only needs the texture, the rectangles and the glyph offsets. The per-glyph
+    // pictures are never read again, so they are freed now instead of kept in memory.
+    // UnloadFont skips an image with no data, so this is safe.
     for (int i = 0; i < font.glyphCount; ++i) {
         UnloadImage(font.glyphs[i].image);
-        font.glyphs[i].image = ImageFromImage(atlas, font.recs[i]);
+        font.glyphs[i].image = Image{};
     }
     UnloadImage(atlas);
     return font;
+}
+
+// Bakes one size, and gives its texture hard pixel edges.
+void bake(int index) {
+    int codepoints[kMaxGlyphs];
+    const int count = buildCodepoints(codepoints, kBakedSizes[index] <= kFullSetMaxSize);
+    g_fonts[index] = loadFont(kBakedSizes[index], codepoints, count);
+    // Nearest-neighbor filtering: letters stay hard-edged at any window size.
+    SetTextureFilter(g_fonts[index].texture, TEXTURE_FILTER_POINT);
+    g_loaded[index] = true;
+}
+
+const Font& fontAt(int index) {
+    if (!g_loaded[index]) bake(index);
+    return g_fonts[index];
 }
 
 // The smallest baked size that is at least 88 percent of the request. Leaning up
@@ -118,20 +139,29 @@ Vector2 snap(float x, float y) { return Vector2{std::floor(x + 0.5f), std::floor
 
 void init() {
     if (g_ready) return;
-    int codepoints[kMaxGlyphs];
     for (int i = 0; i < kSizeCount; ++i) {
-        const int count = buildCodepoints(codepoints, kBakedSizes[i] <= kFullSetMaxSize);
-        g_fonts[i] = loadFont(kBakedSizes[i], codepoints, count);
-        // Nearest-neighbor filtering: letters stay hard-edged at any window size.
-        SetTextureFilter(g_fonts[i].texture, TEXTURE_FILTER_POINT);
+        if (kBakedSizes[i] <= kFullSetMaxSize) bake(i);
     }
     g_ready = true;
 }
 
 void shutdown() {
     if (!g_ready) return;
-    for (int i = 0; i < kSizeCount; ++i) UnloadFont(g_fonts[i]);
+    for (int i = 0; i < kSizeCount; ++i) {
+        if (!g_loaded[i]) continue;
+        UnloadFont(g_fonts[i]);
+        g_loaded[i] = false;
+    }
     g_ready = false;
+}
+
+int memoryBytes() {
+    long long total = 0;
+    for (int i = 0; i < kSizeCount; ++i) {
+        // The atlas is two bytes a pixel: gray and alpha.
+        if (g_loaded[i]) total += static_cast<long long>(g_fonts[i].texture.width) * g_fonts[i].texture.height * 2;
+    }
+    return static_cast<int>(total);
 }
 
 float snapSize(float size) { return static_cast<float>(kBakedSizes[nearestIndex(size)]); }
@@ -139,7 +169,7 @@ float snapSize(float size) { return static_cast<float>(kBakedSizes[nearestIndex(
 float measure(const char* text, float size, float tracking) {
     if (!g_ready || !text[0]) return 0.0f;
     const int index = nearestIndex(size);
-    return MeasureTextEx(g_fonts[index], text, static_cast<float>(kBakedSizes[index]), std::floor(tracking)).x;
+    return MeasureTextEx(fontAt(index), text, static_cast<float>(kBakedSizes[index]), std::floor(tracking)).x;
 }
 
 float fitSize(const char* text, float size, float maxWidth, float tracking) {
@@ -152,7 +182,7 @@ void draw(const char* text, float x, float y, float size, Color color, Align ali
     if (!g_ready || !text[0] || color.a == 0) return;
     const int index = nearestIndex(size);
     const float baked = static_cast<float>(kBakedSizes[index]);
-    DrawTextEx(g_fonts[index], text, snap(alignedX(text, x, baked, align, tracking), y), baked, std::floor(tracking), color);
+    DrawTextEx(fontAt(index), text, snap(alignedX(text, x, baked, align, tracking), y), baked, std::floor(tracking), color);
 }
 
 void drawShadowed(const char* text, float x, float y, float size, Color color, Align align, float tracking) {
