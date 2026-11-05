@@ -17,8 +17,12 @@ constexpr int kGamepad = 0;
 constexpr int kMaxBlockers = 8;
 constexpr double kMouseAfterTouchSeconds = 1.0;  // Mouse movement this soon after a touch is the touch itself.
 
+constexpr int kMaxFingers = 8;  // raylib keeps at most this many touch points.
+
 bool g_touching = false;
-bool g_touchBlocked = false;  // This touch started on a button, so it is not a joystick.
+int g_stickId = -1;  // Touch id of the finger steering the joystick, or -1 for none.
+int g_knownIds[kMaxFingers];  // Fingers seen last frame, to spot the ones that just landed.
+int g_knownCount = 0;
 Vec2 g_touchOrigin;
 int g_stickMenuX = 0;  // Remembers stick direction, so a held stick moves one step.
 int g_stickMenuY = 0;
@@ -36,6 +40,13 @@ bool insideBlocker(Vec2 p) {
         if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) return true;
     }
     return false;
+}
+
+int indexOfId(const int* ids, int count, int id) {
+    for (int i = 0; i < count; ++i) {
+        if (ids[i] == id) return i;
+    }
+    return -1;
 }
 
 void readKeyboard(Snapshot& s) {
@@ -121,7 +132,7 @@ void readTouch(Snapshot& s) {
     // raylib keeps counting a finger whose touch the browser cancelled (an edge swipe, a
     // call), because it only removes fingers on touchend. The browser's own count says the
     // screen is empty, and that wins, so a cancelled touch can't leave the joystick stuck.
-    const int points = platform::noFingerDown() ? 0 : GetTouchPointCount();
+    const int points = platform::noFingerDown() ? 0 : std::min(GetTouchPointCount(), kMaxFingers);
     if (latched) {
         s.pointerPressed = true;
         s.pointerIsTouch = true;
@@ -132,45 +143,79 @@ void readTouch(Snapshot& s) {
         g_lastTouchTime = GetTime();
     }
 
-    if (points > 0) {
-        const Vector2 touch = GetTouchPosition(0);
-        const Vec2 pos{touch.x, touch.y};
-        g_lastTouchTime = GetTime();
-        if (!g_touching) {
-            g_touching = true;
-            const Vec2 start = latched ? Vec2{latchedX, latchedY} : pos;
-            g_touchOrigin = start;
-            g_touchBlocked = !g_joystickEnabled || insideBlocker(start);
-            if (!latched) {
-                // Native builds have no browser event, so raylib's list is the source.
-                s.pointerPressed = true;
-                s.pointerIsTouch = true;
-                s.pointer = pos;
-                s.anyPress = true;
-            }
-        }
-        s.pointerDown = true;
-        s.pointerPos = pos;
-        s.lastDevice = Device::Touch;
-        if (!g_touchBlocked && g_joystickEnabled) {
-            // The joystick floats: its center follows the thumb if the thumb goes past
-            // the edge, so changing direction never needs a long drag back.
-            const float radius = joystickRadius();
-            Vec2 delta = pos - g_touchOrigin;
-            const float len = length(delta);
-            if (len > radius) {
-                g_touchOrigin += delta * ((len - radius) / len);
-                delta = pos - g_touchOrigin;
-            }
-            s.moveX = delta.x / radius;
-            s.moveY = delta.y / radius;
-            s.joystickActive = true;
-            s.joystickOrigin = g_touchOrigin;
-            s.joystickKnob = pos;
-        }
-    } else {
+    if (points <= 0) {
         g_touching = false;
-        g_touchBlocked = false;
+        g_knownCount = 0;
+        g_stickId = -1;
+        return;
+    }
+    g_touching = true;
+    g_lastTouchTime = GetTime();
+
+    // raylib's list is not stable: it shifts when a finger lifts, so index 0 is not always
+    // the same finger. The touch ids are stable, so fingers are followed by id.
+    int ids[kMaxFingers];
+    Vec2 positions[kMaxFingers];
+    for (int i = 0; i < points; ++i) {
+        ids[i] = GetTouchPointId(i);
+        const Vector2 touch = GetTouchPosition(i);
+        positions[i] = Vec2{touch.x, touch.y};
+    }
+
+    // If the joystick finger lifted, the joystick ends. It never moves to another finger.
+    if (g_stickId != -1 && indexOfId(ids, points, g_stickId) < 0) g_stickId = -1;
+
+    // Fingers we did not see last frame just landed. Only a finger that lands away from the
+    // buttons, while the joystick is free, can become the joystick.
+    int landed[kMaxFingers];
+    int landedCount = 0;
+    for (int i = 0; i < points; ++i) {
+        bool known = false;
+        for (int k = 0; k < g_knownCount; ++k) known = known || g_knownIds[k] == ids[i];
+        if (!known) landed[landedCount++] = i;
+    }
+    for (int n = 0; n < landedCount; ++n) {
+        const int i = landed[n];
+        // The browser event has the exact start. It has no id though, so it is only trusted
+        // when one finger landed this frame. With several, the current position stands in.
+        const bool exact = latched && landedCount == 1;
+        const Vec2 start = exact ? Vec2{latchedX, latchedY} : positions[i];
+        if (n == 0 && !latched) {
+            // Native builds have no browser event, so raylib's list is the source.
+            s.pointerPressed = true;
+            s.pointerIsTouch = true;
+            s.pointer = positions[i];
+            s.anyPress = true;
+        }
+        if (g_stickId == -1 && g_joystickEnabled && !insideBlocker(start)) {
+            g_stickId = ids[i];
+            g_touchOrigin = start;
+        }
+    }
+    g_knownCount = points;
+    for (int i = 0; i < points; ++i) g_knownIds[i] = ids[i];
+
+    s.pointerDown = true;
+    s.pointerPos = positions[0];
+    s.lastDevice = Device::Touch;
+
+    const int stick = g_stickId == -1 ? -1 : indexOfId(ids, points, g_stickId);
+    if (stick >= 0 && g_joystickEnabled) {
+        // The joystick floats: its center follows the thumb if the thumb goes past
+        // the edge, so changing direction never needs a long drag back.
+        const Vec2 pos = positions[stick];
+        const float radius = joystickRadius();
+        Vec2 delta = pos - g_touchOrigin;
+        const float len = length(delta);
+        if (len > radius) {
+            g_touchOrigin += delta * ((len - radius) / len);
+            delta = pos - g_touchOrigin;
+        }
+        s.moveX = delta.x / radius;
+        s.moveY = delta.y / radius;
+        s.joystickActive = true;
+        s.joystickOrigin = g_touchOrigin;
+        s.joystickKnob = pos;
     }
 }
 
