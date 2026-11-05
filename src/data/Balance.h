@@ -179,7 +179,7 @@ struct DifficultyTuning {
 };
 
 inline constexpr DifficultyTuning kDifficulties[static_cast<int>(Difficulty::Count)] = {
-    /* Easy   */ {0.5f, 0.45f, 0.6f},
+    /* Easy   */ {0.4f, 0.25f, 0.5f},
     /* Normal */ {1.0f, 1.0f, 1.0f},
     /* Hard   */ {1.3f, 1.25f, 1.2f},
 };
