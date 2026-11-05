@@ -23,7 +23,8 @@ Survive 10 minutes against a growing horde, then fight the final boss. You only 
 - **8 zombie types and elites,** plus a 3-phase boss with telegraphed attacks. Its health scales with your build.
 - **Two endless maps,** a ruined city and a desert highway wasteland, generated from the run's seed, with a day cycle that moves from dusk into night.
 - **Solid wrecked cars.** You and the zombies slide around them, Chargers crash into them, and the boss flattens every one it steps on.
-- **A dash with a cooldown,** and **Easy, Normal and Hard** on the title screen. Play stays one press away.
+- **A dash with a cooldown,** and **Easy, Normal, Hard and Hell** on the title screen. Play stays one press away.
+- **A boss with a move set per level.** Harder levels add new attacks and give shorter warnings.
 
 ### Controls
 
@@ -59,15 +60,16 @@ Measured on a laptop with an Intel UHD integrated GPU, in headless Chrome. Real 
 | Stress test: 2,000 zombies and 3,000 shots at 1920x1080 | Locked at the 144 Hz display, with a 99th percentile frame gap of 7.3 ms |
 | 2,000 zombies at phone size, with the processor slowed 6 times as a stand-in for a weak phone | Average above 30 fps, though single frames drop below it. This does not slow the graphics chip |
 | Compressed download | About 391 KB on a first visit |
-| Tests | 249 unit test cases and 252 browser tests, all passing |
+| Tests | 265 unit test cases and 264 browser tests, all passing |
 
 Balance is checked by bots that play 100 games per setting on seeds not used for tuning:
 
 | Difficulty | Novice bot | Average bot | Skilled bot |
 |---|---|---|---|
-| Easy | Reaches the boss in 52 to 56% of games | Wins 95 to 100% | Wins 100% |
-| Normal | Survives a median of about 3:55 | Wins 30 to 32% | Wins 59 to 62% |
-| Hard | Survives a median of about 3:40 | Wins 3 to 5% | Wins 29 to 30% |
+| Easy | Reaches the boss in 55 to 60% of games | Wins 98 to 100% | Wins 99 to 100% |
+| Normal | Survives a median of about 3:56 | Wins 26% | Wins 61 to 70% |
+| Hard | Survives a median of about 3:40 | Wins 2 to 3% | Wins 26 to 30% |
+| Hell | Survives a median of about 2:20 | Never wins | Wins 7 to 13% |
 
 Bots can measure balance, but not whether the game is fun. That needs people playing it.
 

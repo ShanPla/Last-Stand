@@ -795,6 +795,8 @@ Three rules stop the player from avoiding the fight:
 
 **Phases.** The phase follows the boss's HP: phase 0 above 66%, phase 1 from 66%, phase 2 from 33%. `updatePhase` only moves forward, one step at a time, so a big hit that skips a phase still sends every phase event. Each phase shortens the time between attacks (2.8, 2.2, 1.6 s) and makes the attacks bigger.
 
+**Move sets per level.** Each difficulty has its own row in `kBossMoves` in [`Balance.h`](../src/data/Balance.h): which attacks make up each phase's cycle, how many circles, lines and bullets, their speed and damage, how many dashes in a row, and the warning time. Normal keeps the original set exactly. Easy uses the same attacks with fewer bullets and circles and a 1.3 s warning. Hard adds a **cross** of four lines through the player, repeated dashes and a 0.8 s warning. Hell adds a **trail** of circles dropped where the player has been and a **spiral** of turning bullet volleys, with a 0.6 s warning. A check at compile time (`bossMovesAreFair`) refuses a row whose warning is under 0.5 s, whose circles can't be walked out of in time, or whose spiral is denser than that phase's ring. The boss's place in its cycle is kept in `run.bossStep` and `run.bossRepeat`, which are part of the state hash. Adding a level needs one table row, and a new attack needs one enum value and one function in [`Boss.cpp`](../src/components/Enemies/Boss/Boss.cpp).
+
 **Attack cycle.** `enemy.state` holds which attack comes next, while the boss walks. When the timer runs out the boss attacks, then moves to the next one in the cycle:
 
 1. **Circles:** 2, 4 or 6 circle zones (radius 165). The first lands on the player's position, so standing still is punished. The rest land randomly nearby.
@@ -810,15 +812,18 @@ Gems carry XP and fly to the player when close (or when a magnet pickup makes ev
 
 ### Difficulty
 
-There are three levels: Easy, Normal and Hard. A level is three numbers in one small table, `kDifficulties` in [`Balance.h`](../src/data/Balance.h), and needs no logic of its own:
+There are four levels: Easy, Normal, Hard and Hell. A level is three numbers in one small table, `kDifficulties` in [`Balance.h`](../src/data/Balance.h), and needs no logic of its own:
 
 ```cpp
 inline constexpr DifficultyTuning kDifficulties[static_cast<int>(Difficulty::Count)] = {
     /* Easy   */ {0.4f, 0.25f, 0.5f},
     /* Normal */ {1.0f, 1.0f, 1.0f},
     /* Hard   */ {1.3f, 1.25f, 1.2f},
+    /* Hell   */ {1.6f, 1.5f, 2.1f},
 };
 ```
+
+Hell spawns about twice as many zombies, so its crowds often reach the pool's limit of 2,400. When the pool is full, new spawns are simply skipped. That holds frame time steady, but it also means a scheduled elite can be lost then. With the processor slowed 4x at phone size, a full crowd averages 6.6 ms per frame, but about 5 percent of frames take longer than 16.7 ms.
 
 The three numbers multiply zombie health (the boss included, through `bossHpForBuild`), the damage of every hit on the player (before armor), and the spawn rates in the wave table. The level is stored in `run.difficulty` when `sim::newRun` starts the run, and it is part of the state hash. The title screen has a selector for it, next to the map selector, under the Play button. Both are saved and start from the last choice, so Play is still one press. The best-run panel on the title screen shows the best run for the level that is selected.
 
@@ -1202,7 +1207,7 @@ The tests use [doctest](https://github.com/doctest/doctest) and run natively, wi
 | [`AudioTests.cpp`](../tests/unit/AudioTests.cpp) | 16 | Every sound is clean and ends in silence, music loops join without a click, layers, router limits |
 | [`TestMain.cpp`](../tests/unit/TestMain.cpp) | 2 | Random number generator |
 
-**Measured result.** The last full run passed **249 of 249** unit test cases.
+**Measured result.** The last full run passed **265 of 265** unit test cases.
 
 ### The determinism test
 
@@ -1271,7 +1276,7 @@ The tests also take a **real pixel check** ([`countColorNearCenter`](../tests/e2
 
 The functional tests run Chrome with a software renderer, so they check behavior, not speed. [`perf.mjs`](../tests/e2e/perf.mjs) is run by hand and uses the machine's real GPU.
 
-**Measured result.** The last full browser run passed **252 of 252** tests, with none skipped.
+**Measured result.** The last full browser run passed **264 of 264** tests, with none skipped.
 
 ### Performance
 
@@ -1468,7 +1473,7 @@ Each entry lists what was chosen, what was rejected, and why.
 
 ### Other design choices found in the code
 
-- **Difficulty is a three-number table.** Zombie health, damage to the player and spawn rate are multiplied by `kDifficulties`, and no code branches on the level.
+- **Difficulty is a three-number table, and each level picks a boss move set.** Zombie health, damage to the player and spawn rate are multiplied by `kDifficulties`, and no code branches on the level.
 - **Hit pause takes time away from the simulation and does not freeze the frame.** The steps still run in the same order with the same inputs, only later, so a run stays deterministic.
 - **Every full-screen flash goes through one limiter** that allows at most one a second, so no mix of big events can pass the usual safety limit of three a second.
 - **The offline worker checks each file's hash** against the one the build recorded, before it caches anything. Rejected: trusting whatever the host serves, which can cache a mix of old and new files for good while an update is half way out.
