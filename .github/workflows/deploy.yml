@@ -1,17 +1,15 @@
 # Builds the browser version and publishes it to GitHub Pages.
-# Runs when run by hand from the Actions tab, or when a version tag such as v1.0.0 is pushed.
+# Runs only by hand from the Actions tab, on the main branch. There is no tag trigger on
+# purpose: the default github-pages environment only lets the default branch deploy, so a
+# tag push would build and then be refused. A push alone never deploys.
 name: Deploy to GitHub Pages
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
 
+# The build job only reads the code. The deploy job asks for the extra rights itself.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -27,9 +25,15 @@ jobs:
         with:
           node-version: 22
 
+      # The emsdk scripts run on this machine, so they are pinned to the exact commit of
+      # the 6.0.13 tag. A moving branch could change the build, or run new code, unnoticed.
       - name: Install Emscripten
         run: |
-          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$HOME/emsdk"
+          EMSDK_COMMIT=35659964bc2762fffec0d257997fb61475f765b7
+          git init "$HOME/emsdk"
+          git -C "$HOME/emsdk" fetch --depth 1 https://github.com/emscripten-core/emsdk.git "$EMSDK_COMMIT"
+          git -C "$HOME/emsdk" checkout --detach FETCH_HEAD
+          test "$(git -C "$HOME/emsdk" rev-parse HEAD)" = "$EMSDK_COMMIT"
           "$HOME/emsdk/emsdk" install 6.0.13
           "$HOME/emsdk/emsdk" activate 6.0.13
           echo "EMSDK=$HOME/emsdk" >> "$GITHUB_ENV"
@@ -60,6 +64,10 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    # Only this job may publish. The build job above holds no write rights.
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

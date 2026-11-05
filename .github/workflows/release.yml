@@ -27,6 +27,20 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A manual run starts on whatever branch it was dispatched from. If the tag
+      # already exists, build that tag, so a repair run can never replace the files of
+      # an old version with a build of newer code. A new tag is created later from
+      # this commit. (A tag made that way does not start the Pages deploy.)
+      - name: Build the commit the tag points at
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          case "$TAG" in v[0-9]*) ;; *) echo "Tag must look like v1.0.0, got: $TAG"; exit 1 ;; esac
+          if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
+            git checkout --detach "refs/tags/$TAG"
+          fi
 
       # Release build of the game only. No tests, and no Emscripten.
       - name: Build
@@ -60,8 +74,9 @@ jobs:
             "" \
             "You can also play in a browser with nothing to install: https://shanpla.github.io/Last-Stand/" \
             > release-notes.txt
+          # Replacing the asset is safe here: the build above is of this tag's own commit.
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" "$ZIP" --clobber
           else
-            gh release create "$TAG" "$ZIP" --title "Last Stand $TAG" --notes-file release-notes.txt --target "$GITHUB_SHA"
+            gh release create "$TAG" "$ZIP" --title "Last Stand $TAG" --notes-file release-notes.txt --target "$(git rev-parse HEAD)"
           fi
