@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, readFile, writeFile, copyFile, rm } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launchChrome, openGame, readUi, waitScreen, startGame } from './harness.mjs';
+import { launchChrome, openGame, readUi, waitScreen, startGame, watchProblems } from './harness.mjs';
 
 const buildDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../build/web');
 const BASE = '/Last-Stand/';
@@ -305,15 +305,16 @@ test('the game works when service workers are blocked or missing', async () => {
   const blocked = await openGame(browser, site.url, { ...desktop, serviceWorkers: 'block' });
   await waitScreen(blocked.page, 'title');
   await blocked.page.waitForTimeout(2500);
-  assert.deepEqual(blocked.problems, []);
+  // Blocking is done by Playwright, and it announces its own block as a warning. That one
+  // message is the test setup, not the game, so it is the only one allowed here. It may or
+  // may not arrive before the check, so it is filtered out rather than required.
+  assert.deepEqual(blocked.problems.filter((text) => text !== 'warning: Service Worker registration blocked by Playwright'), []);
   await blocked.context.close();
 
   // The API is missing altogether, as on plain http outside localhost.
   const context = await browser.newContext(desktop);
   const page = await context.newPage();
-  const problems = [];
-  page.on('console', (m) => { if (m.type() === 'error') problems.push(m.text()); });
-  page.on('pageerror', (e) => problems.push(String(e)));
+  const problems = watchProblems(page);
   await page.addInitScript(() => { Object.defineProperty(navigator, 'serviceWorker', { value: undefined }); });
   await page.goto(site.url);
   await waitScreen(page, 'title');

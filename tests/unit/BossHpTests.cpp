@@ -5,6 +5,7 @@
 #include "core/Sim.h"
 #include "data/Balance.h"
 
+#include <cmath>
 #include <memory>
 
 using namespace ls;
@@ -38,9 +39,18 @@ TEST_CASE("a stronger build gets a tougher boss, but still kills it faster") {
 }
 
 TEST_CASE("boss HP stays between its limits") {
+    // No weapons: the formula gives 0, so only the lower limit can hold it up.
     auto weak = newRun();
     weak->player.weaponCount = 0;
     CHECK(waves::bossHpForBuild(*weak) == doctest::Approx(balance::kBossHpMin));
+
+    // A huge damage bonus: the formula alone goes far past the top, so only the upper
+    // limit can hold it down.
+    auto strong = newRun();
+    strong->player.stats.damageMult = 1000.0f;
+    const float strength = weapons::estimatedBossDps(*strong) / balance::kBossReferenceDps;
+    REQUIRE(balance::kBossHpAtReferenceDps * std::pow(strength, balance::kBossHpScalePower) > balance::kBossHpMax);
+    CHECK(waves::bossHpForBuild(*strong) == doctest::Approx(balance::kBossHpMax));
 }
 
 TEST_CASE("the boss spawns with the HP for the build") {

@@ -47,6 +47,9 @@ test('level-up opens, ignores instant input, then accepts a choice', async () =>
   await debug(page, CMD.levelUp);
   await waitPhase(page, 1);
   await page.keyboard.press('Enter');
+  // The game reads keys while it draws, so let it draw a few frames before looking. Without
+  // this the phase is read before the game could have reacted, and the check proves nothing.
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => done())))));
   assert.equal(await phase(page), 1, 'a key press inside the input delay must not choose');
   await page.waitForTimeout(500);
   await page.keyboard.press('Enter');

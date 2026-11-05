@@ -34,6 +34,24 @@ test('page loads with no console errors, shows the title, and fits the desktop w
   await context.close();
 });
 
+test('the problem check sees warnings, and lets only the known ones through', async () => {
+  const { context, page, problems } = await openGame(browser, web.url, { viewport: { width: 640, height: 360 } });
+  assert.deepEqual(problems, [], 'a healthy start prints nothing unexpected');
+  await page.evaluate(() => {
+    console.warn('The ScriptProcessorNode is deprecated. Use AudioWorkletNode instead.');
+    console.warn('world renderer ready: shaders 1.0 ms');
+    console.warn('WARNING: SHADER: [ID 3] Failed to compile fragment shader');
+    console.error('a plain error');
+    // raylib writes its log to stdout. Only its warnings and errors may reach the console.
+    Module.print('INFO: DISPLAY: Device initialized successfully');
+    Module.print('ERROR: FILEIO: Failed to open file');
+  });
+  await page.waitForTimeout(100);
+  assert.deepEqual(problems, ['warning: WARNING: SHADER: [ID 3] Failed to compile fragment shader', 'a plain error',
+    'warning: ERROR: FILEIO: Failed to open file']);
+  await context.close();
+});
+
 test('phone viewport fills the canvas at device pixel ratio', async () => {
   const { context, page, problems } = await openGame(browser, web.url, {
     viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true,

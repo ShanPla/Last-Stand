@@ -9,6 +9,7 @@
 #include "data/Balance.h"
 
 #include <cstring>
+#include <type_traits>
 
 namespace ls::sim {
 
@@ -102,49 +103,159 @@ uint64_t stateHash(const GameState& state) {
             hash *= 1099511628211ULL;
         }
     };
-    const auto mixFloat = [&](float value) { mixBytes(&value, sizeof(value)); };
-    const auto mixInt = [&](int value) { mixBytes(&value, sizeof(value)); };
+    // One entry point for every number, flag and enum. Each is widened to a fixed
+    // size first, so the hash does not depend on how a struct is laid out.
+    const auto mix = [&](auto value) {
+        using T = decltype(value);
+        if constexpr (std::is_floating_point_v<T>) {
+            const float narrowed = static_cast<float>(value);
+            mixBytes(&narrowed, sizeof(narrowed));
+        } else {
+            const int64_t wide = static_cast<int64_t>(value);  // Integers, bools and enums.
+            mixBytes(&wide, sizeof(wide));
+        }
+    };
+    const auto mixVec = [&](Vec2 v) { mix(v.x); mix(v.y); };
 
+    // Everything below can change what a later step does. What is left out is only
+    // for drawing: previous positions (derived from the last step), hit flashes,
+    // the event list (cleared by its reader) and the enemy grid (rebuilt each step).
+    // A new field that a step reads must be added here, or the determinism tests
+    // cannot see it.
     mixBytes(&state.rng.state, sizeof(state.rng.state));
-    mixBytes(&state.run.tick, sizeof(state.run.tick));
-    mixInt(state.run.kills);
-    mixInt(static_cast<int>(state.run.phase));
-    mixInt(static_cast<int>(state.run.difficulty));
-    mixFloat(state.player.pos.x);
-    mixFloat(state.player.pos.y);
-    mixFloat(state.player.hp);
-    mixFloat(state.player.dashLeft);
-    mixFloat(state.player.dashCooldown);
-    mixFloat(state.player.dashInvulnerable);
-    mixFloat(state.player.dashDir.x);
-    mixFloat(state.player.dashDir.y);
-    mixInt(state.player.level);
-    mixInt(state.player.xp);
-    mixInt(state.enemies.count);
+    mixBytes(&state.rng.stream, sizeof(state.rng.stream));
+
+    const RunState& run = state.run;
+    mix(run.phase);
+    mix(run.difficulty);
+    mixBytes(&run.seed, sizeof(run.seed));
+    mix(run.tick);
+    mix(run.nextId);
+    mix(run.kills);
+    mix(run.rerollsLeft);
+    mix(run.pendingLevels);
+    mix(run.offerCount);
+    for (const Card& card : run.offers) {
+        mix(card.kind);
+        mix(card.weapon);
+        mix(card.passive);
+        mix(card.newLevel);
+    }
+    for (float damage : run.damageByWeapon) mix(damage);
+    for (float owed : run.waveAccumulators) mix(owed);
+    mix(run.nextEliteEvent);
+    mix(run.nextPickupDropKills);
+    mix(run.bladeAngle);
+    mix(run.bossSpawned);
+    mix(run.bossPhase);
+    mix(run.bossHpFraction);
+    mix(run.debugEnemyTarget);
+    mix(run.debugProjectileTarget);
+
+    const Player& player = state.player;
+    mixVec(player.pos);
+    mixVec(player.facing);
+    mixVec(player.aim);
+    mix(player.hp);
+    mix(player.maxHp);
+    mix(player.invulnerable);
+    mix(player.dashLeft);
+    mix(player.dashCooldown);
+    mix(player.dashInvulnerable);
+    mixVec(player.dashDir);
+    mix(player.level);
+    mix(player.xp);
+    mix(player.xpToNext);
+    mix(player.stats.damageMult);
+    mix(player.stats.cooldownMult);
+    mix(player.stats.areaMult);
+    mix(player.stats.moveSpeed);
+    mix(player.stats.pickupRange);
+    mix(player.stats.armor);
+    mix(player.weaponCount);
+    for (int i = 0; i < player.weaponCount; ++i) {
+        const WeaponSlot& slot = player.weapons[i];
+        mix(slot.id);
+        mix(slot.level);
+        mix(slot.evolved);
+        mix(slot.cooldown);
+        mix(slot.magazine);
+        mix(slot.reserve);
+        mix(slot.reloadLeft);
+        mix(slot.dryReported);
+    }
+    mix(player.passiveCount);
+    for (int i = 0; i < player.passiveCount; ++i) {
+        mix(player.passives[i].id);
+        mix(player.passives[i].level);
+    }
+
+    mix(state.enemies.count);
     for (const Enemy& enemy : state.enemies) {
-        mixFloat(enemy.pos.x);
-        mixFloat(enemy.pos.y);
-        mixFloat(enemy.hp);
-        mixBytes(&enemy.id, sizeof(enemy.id));
+        mixVec(enemy.pos);
+        mixVec(enemy.knock);
+        mixVec(enemy.dir);
+        mix(enemy.hp);
+        mix(enemy.maxHp);
+        mix(enemy.radius);
+        mix(enemy.speed);
+        mix(enemy.contactDamage);
+        mix(enemy.timer);
+        mix(enemy.bladeCooldown);
+        mix(enemy.id);
+        mix(enemy.type);
+        mix(enemy.state);
+        mix(enemy.elite);
     }
-    mixInt(state.projectiles.count);
+    mix(state.projectiles.count);
     for (const Projectile& shot : state.projectiles) {
-        mixFloat(shot.pos.x);
-        mixFloat(shot.pos.y);
+        mixVec(shot.pos);
+        mixVec(shot.vel);
+        mix(shot.damage);
+        mix(shot.radius);
+        mix(shot.life);
+        mix(shot.area);
+        mix(shot.lastHitId);
+        mix(shot.pierce);
+        mix(shot.kind);
+        mix(shot.source);
+        mix(shot.evolved);
     }
-    mixInt(state.enemyBullets.count);
+    mix(state.enemyBullets.count);
     for (const EnemyBullet& bullet : state.enemyBullets) {
-        mixFloat(bullet.pos.x);
-        mixFloat(bullet.pos.y);
+        mixVec(bullet.pos);
+        mixVec(bullet.vel);
+        mix(bullet.damage);
+        mix(bullet.radius);
+        mix(bullet.life);
     }
-    mixInt(state.zones.count);
-    mixInt(state.gems.count);
+    mix(state.zones.count);
+    for (const Zone& zone : state.zones) {
+        mixVec(zone.a);
+        mixVec(zone.b);
+        mix(zone.radius);
+        mix(zone.prevRadius);  // Read by ring zones to find who the ring just crossed.
+        mix(zone.maxRadius);
+        mix(zone.life);
+        mix(zone.maxLife);
+        mix(zone.damage);
+        mix(zone.kind);
+        mix(zone.source);
+        mix(zone.evolved);
+        mix(zone.hostile);
+        mix(zone.applied);
+    }
+    mix(state.gems.count);
     for (const Gem& gem : state.gems) {
-        mixFloat(gem.pos.x);
-        mixFloat(gem.pos.y);
-        mixInt(gem.xp);
+        mixVec(gem.pos);
+        mix(gem.xp);
+        mix(gem.attracted);
     }
-    mixInt(state.pickups.count);
+    mix(state.pickups.count);
+    for (const Pickup& pickup : state.pickups) {
+        mixVec(pickup.pos);
+        mix(pickup.type);
+    }
     return hash;
 }
 

@@ -3,7 +3,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  startServer, launchChrome, openGame, readState, readUi, debug, CMD, waitScreen, waitSelected, findButton, clickButton, tapButton, startGame,
+  startServer, launchChrome, openGame, readState, readUi, debug, CMD, waitScreen, waitSelected, findButton, clickButton, tapButton, startGame, watchProblems,
   installFakePad, padPress,
 } from './harness.mjs';
 
@@ -375,6 +375,30 @@ test('settings opened from pause return to pause', async () => {
 
 // ---- Settings and saves ---------------------------------------------------------
 
+test('two clicks that land between the same two frames both count', async () => {
+  const { context, page, problems } = await open();
+  await waitScreen(page, 'title');
+  await clickButton(page, 'Settings');
+  await waitScreen(page, 'settings');
+  const numbers = await findButton(page, 'Damage numbers');
+  const reduced = await findButton(page, 'Reduced motion');
+  const before = await readUi(page);
+  // Sent in one go, inside one browser task, so that no frame can run between them.
+  await page.evaluate(([a, b]) => {
+    const canvas = document.getElementById('canvas');
+    for (const point of [a, b]) {
+      canvas.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: point[0], clientY: point[1] }));
+      canvas.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0, clientX: point[0], clientY: point[1] }));
+    }
+  }, [[numbers.cx, numbers.cy], [reduced.cx, reduced.cy]]);
+  await page.waitForTimeout(300);
+  const after = await readUi(page);
+  assert.equal(after.damageNumbers, before.damageNumbers ? 0 : 1, 'the first click counts');
+  assert.equal(after.reducedMotion, before.reducedMotion ? 0 : 1, 'the second click counts');
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
 test('settings: sliders by mouse drag and keyboard, toggles, and they persist across a reload', async () => {
   const { context, page, problems } = await open();
   await waitScreen(page, 'title');
@@ -459,9 +483,7 @@ test('a corrupt save is ignored, and out of range values are clamped', async () 
   for (const text of ['\u0000\u0001garbage{{{ music=NaN', 'music=9000\neffects=-4\nshake=nan\nwins=1e99\nbestTime=abc\n', '', 'null']) {
     const context = await browser.newContext(desktop);
     const page = await context.newPage();
-    const problems = [];
-    page.on('console', (m) => { if (m.type() === 'error') problems.push(m.text()); });
-    page.on('pageerror', (e) => problems.push(String(e)));
+    const problems = watchProblems(page);
     await page.addInitScript((value) => { localStorage.setItem('laststand.save', value); }, text);
     await page.goto(web.url + '?debug');
     await waitScreen(page, 'title');
@@ -489,9 +511,7 @@ test('a corrupt save is ignored, and out of range values are clamped', async () 
 test('blocked browser storage does not break the game', async () => {
   const context = await browser.newContext(desktop);
   const page = await context.newPage();
-  const problems = [];
-  page.on('console', (m) => { if (m.type() === 'error') problems.push(m.text()); });
-  page.on('pageerror', (e) => problems.push(String(e)));
+  const problems = watchProblems(page);
   await page.addInitScript(() => {
     Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('blocked', 'SecurityError'); } });
   });

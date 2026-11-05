@@ -4,11 +4,13 @@
 #include "components/Enemies/Waves/Waves.h"
 #include "components/Pickups/Pickups.h"
 #include "components/Upgrades/Upgrades.h"
+#include "components/Weapons/Weapons.h"
 #include "core/Sim.h"
 #include "data/Balance.h"
 
 #include <iterator>
 #include <memory>
+#include <utility>
 #include <vector>
 
 using namespace ls;
@@ -111,7 +113,51 @@ TEST_CASE("armor reduces damage but never below the minimum") {
     CHECK(startHp - state->player.hp == doctest::Approx(balance::kMinDamageTaken));
 }
 
-TEST_CASE("a shot hits an enemy, damages it, credits the weapon, and is used up") {
+TEST_CASE("a shot is used up when its pierce runs out, and not before") {
+    // No weapons, so the only shot is the one placed by hand. Two walkers stand in its
+    // path, far enough apart that it cannot touch both at once.
+    const auto fire = [](int pierce, float& firstHp, float& secondHp, int& shotsLeft) {
+        auto state = makeRun();
+        state->player.weaponCount = 0;
+        state->player.maxHp = 1.0e6f;
+        state->player.hp = 1.0e6f;
+        state->player.xpToNext = 1 << 30;
+        Enemy* first = enemies::spawn(*state, EnemyType::Walker, Vec2{300.0f, 0.0f}, false);
+        Enemy* second = enemies::spawn(*state, EnemyType::Walker, Vec2{360.0f, 0.0f}, false);
+        REQUIRE(first != nullptr);
+        REQUIRE(second != nullptr);
+        const float startFirst = first->maxHp;
+        const float startSecond = second->maxHp;
+        Projectile* shot = state->projectiles.add();
+        REQUIRE(shot != nullptr);
+        shot->pos = Vec2{280.0f, 0.0f};
+        shot->prevPos = shot->pos;
+        shot->vel = Vec2{600.0f, 0.0f};
+        shot->damage = 1.0f;
+        shot->radius = balance::kBulletRadius;
+        shot->life = 2.0f;
+        shot->pierce = static_cast<int16_t>(pierce);
+        for (int i = 0; i < 30; ++i) sim::step(*state, InputFrame{});
+        firstHp = startFirst - state->enemies[0].hp;
+        secondHp = startSecond - state->enemies[1].hp;
+        shotsLeft = state->projectiles.count;
+    };
+
+    float firstLost = 0.0f;
+    float secondLost = 0.0f;
+    int shotsLeft = -1;
+    fire(0, firstLost, secondLost, shotsLeft);
+    CHECK(firstLost > 0.0f);
+    CHECK(secondLost == 0.0f);  // It stopped at the first zombie.
+    CHECK(shotsLeft == 0);
+
+    fire(1, firstLost, secondLost, shotsLeft);
+    CHECK(firstLost > 0.0f);
+    CHECK(secondLost > 0.0f);  // It went through the first and hit the second.
+    CHECK(shotsLeft == 0);     // And is gone after that second hit.
+}
+
+TEST_CASE("a shot hits an enemy, damages it, and credits the weapon") {
     auto state = makeRun();
     Enemy* enemy = enemies::spawn(*state, EnemyType::Brute, Vec2{200.0f, 0.0f}, false);
     REQUIRE(enemy != nullptr);
@@ -236,17 +282,91 @@ TEST_CASE("wave table rows are valid and fit the spawn accumulator array") {
     CHECK(waves::rowRate(0, balance::kWaves[0].endSec) == 0.0f);
 }
 
-TEST_CASE("same seed and inputs give the same final state") {
+TEST_CASE("same seed and inputs give the same state at every second, not only at the end") {
     auto first = makeRun(777);
     auto second = makeRun(777);
+    int firstMismatch = -1;
     for (int i = 0; i < 60 * 90; ++i) {
         sim::step(*first, botInput(*first));
         sim::step(*second, botInput(*second));
         first->events.clear();
         second->events.clear();
+        // A divergence that later cancels out would still show in an earlier second.
+        if (i % 60 == 59 && firstMismatch < 0 && sim::stateHash(*first) != sim::stateHash(*second)) firstMismatch = i;
     }
     CHECK(first->run.kills > 0);
+    CHECK(firstMismatch == -1);
     CHECK(sim::stateHash(*first) == sim::stateHash(*second));
+}
+
+TEST_CASE("the state hash sees every kind of state that a later step reads") {
+    // A run in progress, plus one of everything the pools can hold, so each field has a value.
+    auto base = makeRun(31);
+    for (int i = 0; i < 60 * 20; ++i) {
+        sim::step(*base, botInput(*base));
+        base->events.clear();
+    }
+    weapons::grant(*base, WeaponId::Shotgun);
+    base->player.passives[0] = PassiveSlot{PassiveId::Damage, 1};
+    base->player.passiveCount = 1;
+    Enemy* enemy = enemies::spawn(*base, EnemyType::Charger, Vec2{500.0f, 100.0f}, false);
+    REQUIRE(enemy != nullptr);
+    Projectile* shot = base->projectiles.add();
+    EnemyBullet* bullet = base->enemyBullets.add();
+    Zone* zone = base->zones.add();
+    Gem* gem = base->gems.add();
+    REQUIRE((shot && bullet && zone && gem));
+    pickups::spawnPickup(*base, Vec2{300.0f, 300.0f}, PickupType::Heal);
+    shot->life = 1.0f;
+    bullet->life = 1.0f;
+    zone->life = 1.0f;
+    gem->xp = 1;
+    const uint64_t original = sim::stateHash(*base);
+
+    // Each change alone must change the hash. None of these moves anything yet, which is
+    // exactly the kind of difference that is invisible until a later step.
+    const std::vector<std::pair<const char*, void (*)(GameState&)>> changes = {
+        {"magazine", [](GameState& s) { s.player.weapons[0].magazine += 1; }},
+        {"reserve", [](GameState& s) { s.player.weapons[0].reserve += 1; }},
+        {"weapon cooldown", [](GameState& s) { s.player.weapons[0].cooldown += 0.5f; }},
+        {"reload", [](GameState& s) { s.player.weapons[0].reloadLeft += 0.5f; }},
+        {"weapon level", [](GameState& s) { s.player.weapons[1].level += 1; }},
+        {"evolved", [](GameState& s) { s.player.weapons[1].evolved = !s.player.weapons[1].evolved; }},
+        {"passive level", [](GameState& s) { s.player.passives[0].level += 1; }},
+        {"player stats", [](GameState& s) { s.player.stats.armor += 1.0f; }},
+        {"player facing", [](GameState& s) { s.player.facing = Vec2{0.0f, 1.0f}; }},
+        {"offers", [](GameState& s) { s.run.offers[0].newLevel += 1; }},
+        {"rerolls", [](GameState& s) { s.run.rerollsLeft += 1; }},
+        {"damage credit", [](GameState& s) { s.run.damageByWeapon[3] += 1.0f; }},
+        {"wave accumulator", [](GameState& s) { s.run.waveAccumulators[5] += 0.25f; }},
+        {"blade angle", [](GameState& s) { s.run.bladeAngle += 0.1f; }},
+        {"next elite", [](GameState& s) { s.run.nextEliteEvent += 1; }},
+        {"next drop", [](GameState& s) { s.run.nextPickupDropKills += 1; }},
+        {"boss phase", [](GameState& s) { s.run.bossPhase += 1; }},
+        {"enemy timer", [](GameState& s) { s.enemies[s.enemies.count - 1].timer += 0.5f; }},
+        {"enemy state", [](GameState& s) { s.enemies[s.enemies.count - 1].state += 1; }},
+        {"enemy type", [](GameState& s) { s.enemies[s.enemies.count - 1].type = EnemyType::Runner; }},
+        {"enemy direction", [](GameState& s) { s.enemies[s.enemies.count - 1].dir = Vec2{0.0f, 1.0f}; }},
+        {"enemy knockback", [](GameState& s) { s.enemies[s.enemies.count - 1].knock = Vec2{3.0f, 0.0f}; }},
+        {"shot pierce", [](GameState& s) { s.projectiles[s.projectiles.count - 1].pierce += 1; }},
+        {"shot damage", [](GameState& s) { s.projectiles[s.projectiles.count - 1].damage += 1.0f; }},
+        {"shot velocity", [](GameState& s) { s.projectiles[s.projectiles.count - 1].vel = Vec2{1.0f, 1.0f}; }},
+        {"enemy bullet velocity", [](GameState& s) { s.enemyBullets[s.enemyBullets.count - 1].vel = Vec2{1.0f, 1.0f}; }},
+        {"zone position", [](GameState& s) { s.zones[s.zones.count - 1].a = Vec2{7.0f, 7.0f}; }},
+        {"zone life", [](GameState& s) { s.zones[s.zones.count - 1].life += 0.5f; }},
+        {"zone damage", [](GameState& s) { s.zones[s.zones.count - 1].damage += 1.0f; }},
+        {"zone applied", [](GameState& s) { s.zones[s.zones.count - 1].applied = !s.zones[s.zones.count - 1].applied; }},
+        {"gem attracted", [](GameState& s) { s.gems[s.gems.count - 1].attracted = !s.gems[s.gems.count - 1].attracted; }},
+        {"pickup position", [](GameState& s) { s.pickups[s.pickups.count - 1].pos = Vec2{9.0f, 9.0f}; }},
+        {"pickup type", [](GameState& s) { s.pickups[s.pickups.count - 1].type = PickupType::Bomb; }},
+    };
+    for (const auto& change : changes) {
+        CAPTURE(change.first);
+        auto changed = std::make_unique<GameState>(*base);
+        REQUIRE(sim::stateHash(*changed) == original);
+        change.second(*changed);
+        CHECK(sim::stateHash(*changed) != original);
+    }
 }
 
 TEST_CASE("different seeds give different runs") {

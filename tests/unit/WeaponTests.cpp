@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <vector>
 
 using namespace ls;
 
@@ -546,7 +547,7 @@ TEST_CASE("same seed gives the same run with every weapon in use") {
         {WeaponId::Rockets, WeaponId::Landmines, WeaponId::Tesla, WeaponId::Blades, WeaponId::Smg},
     };
     for (const auto& set : sets) {
-        uint64_t hashes[2] = {};
+        std::vector<uint64_t> hashes[2];  // One per second, so a divergence that later cancels out still shows.
         float credits[2] = {};
         int kills[2] = {};
         for (int run = 0; run < 2; ++run) {
@@ -567,13 +568,14 @@ TEST_CASE("same seed gives the same run with every weapon in use") {
                 if (state->run.phase == RunPhase::LevelUp) input.chooseCard = 0;
                 sim::step(*state, input);
                 state->events.clear();
+                if (s % 60 == 59) hashes[run].push_back(sim::stateHash(*state));
             }
-            hashes[run] = sim::stateHash(*state);
             kills[run] = state->run.kills;
             for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) credits[run] += state->run.damageByWeapon[i];
         }
         CHECK(kills[0] > 0);
         CHECK(credits[0] > 0.0f);
+        CHECK(hashes[0].size() == 45);
         CHECK(hashes[0] == hashes[1]);
         CHECK(credits[0] == credits[1]);
         CHECK(kills[0] == kills[1]);

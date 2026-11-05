@@ -2,7 +2,7 @@
 // any window shape and any amount of walking.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, launchChrome, openGame as openPage, startGame } from './harness.mjs';
+import { startServer, launchChrome, openGame as openPage, startGame, watchProblems } from './harness.mjs';
 
 // Debug command numbers. Edit these here if the app's numbering changes.
 const kSetSeed = 3;
@@ -134,13 +134,37 @@ test('walking far in every direction keeps drawing ground and raises no errors',
   await context.close();
 });
 
-test('real walking with the keyboard crosses chunks with no errors', async () => {
+test('real walking with the keyboard crosses chunk borders with no errors', async () => {
   const { context, page, problems } = await openGame(browser, web.url, { viewport: { width: 640, height: 360 } });
-  for (const key of ['d', 'w', 'a', 's']) {
+  const chunkOf = (value) => Math.floor(value / 640);
+  const start = await readState(page);
+  assert.equal(chunkOf(start.x), 0);
+  assert.equal(chunkOf(start.y), 0);
+
+  // Holds a key until the player has gone as far as asked. A level-up would pause the
+  // walk, so it is answered the way a player would.
+  const walk = async (key, reached) => {
     await page.keyboard.down(key);
-    await page.waitForTimeout(1500);
-    await page.keyboard.up(key);
-  }
+    try {
+      const deadline = Date.now() + 20000;
+      for (;;) {
+        const state = await readState(page);
+        if (reached(state)) return state;
+        assert.ok(Date.now() < deadline, `holding ${key} never got there: x ${state.x}, y ${state.y}, phase ${state.phase}`);
+        if (state.phase === 1) await page.keyboard.press('Enter');
+        await page.waitForTimeout(100);
+      }
+    } finally {
+      await page.keyboard.up(key);
+    }
+  };
+
+  const east = await walk('d', (s) => s.x > 700);
+  assert.equal(chunkOf(east.x), 1, 'walking right must enter the next chunk');
+  const south = await walk('s', (s) => s.y > 700);
+  assert.equal(chunkOf(south.y), 1, 'walking down must enter the next chunk');
+  const west = await walk('a', (s) => s.x < -50);
+  assert.equal(chunkOf(west.x), -1, 'walking left must cross back, into a chunk with a negative index');
   assert.deepEqual(problems, []);
   await context.close();
 });
@@ -187,13 +211,11 @@ test('resizing keeps working, and spawns stay out of view at every window shape'
   const views = [];
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
-  const problems = [];
+  const problems = watchProblems(page);
   page.on('console', (message) => {
-    if (message.type() === 'error') problems.push(message.text());
     const match = /world view: target (\d+)x(\d+), scale ([\d.]+), sees (\d+) of (\d+)/.exec(message.text());
     if (match) views.push({ width: +match[1], height: +match[2], scale: +match[3], sees: +match[4], spawn: +match[5] });
   });
-  page.on('pageerror', (error) => problems.push(String(error)));
   await page.goto(`${web.url}?debug`);
   await page.waitForFunction(() => document.getElementById('loading-screen').classList.contains('is-done'), null, { timeout: 30000 });
 

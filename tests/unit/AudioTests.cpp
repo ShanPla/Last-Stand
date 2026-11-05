@@ -6,12 +6,14 @@
 #include "components/Audio/Router/Router.h"
 #include "components/Audio/Sfx/Sfx.h"
 #include "components/Audio/Synth/Synth.h"
+#include "core/Sim.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -288,10 +290,29 @@ TEST_CASE("the mixer plays on across the end of the loop") {
     std::vector<int16_t> block(4096);
     mixer.mix(block.data(), 4096);
     CHECK(mixer.position() == 2048);
-    int joinStep = std::abs(static_cast<int>(block[2048]) - block[2047]);
+    // The biggest jump between neighbours anywhere except the join. A click at the join
+    // has to be bigger than the music's own jumps. (The join must be left out of this
+    // search, or its own jump would count as normal and the check could never fail.)
+    const int joinStep = std::abs(static_cast<int>(block[2048]) - block[2047]);
     int maxStep = 0;
-    for (size_t i = 1; i < block.size(); ++i) maxStep = std::max(maxStep, std::abs(static_cast<int>(block[i]) - block[i - 1]));
+    for (size_t i = 1; i < block.size(); ++i) {
+        if (i == 2048) continue;
+        maxStep = std::max(maxStep, std::abs(static_cast<int>(block[i]) - block[i - 1]));
+    }
     CHECK(joinStep <= std::max(maxStep, 600));
+
+    // After the wrap the sound must be what the loop sounds like from its start.
+    layers::StemMixer fresh;
+    fresh.setBank(&musicBank());
+    fresh.setTargets(layers::targetsFor(1.0f, false));
+    fresh.snapToTargets();
+    std::vector<int16_t> start(2048);
+    fresh.mix(start.data(), 2048);
+    int different = 0;
+    for (int i = 0; i < 2048; ++i) {
+        if (std::abs(static_cast<int>(block[2048 + i]) - start[i]) > 2) ++different;
+    }
+    CHECK(different == 0);
 }
 
 TEST_CASE("the router limits rates and picks the right sound") {
@@ -342,8 +363,9 @@ TEST_CASE("the router limits rates and picks the right sound") {
     CHECK_FALSE(r3.route(makeEvent(EventType::PickupCollected, 99), 20.0f, req));
 
     // Every event type with a bad detail value must not crash and not return a bad id.
+    // Explosion is the last event type. A new type added after it must move this bound.
     router::Router r4;
-    for (int type = 0; type <= static_cast<int>(EventType::PlayerDied); ++type) {
+    for (int type = 0; type <= static_cast<int>(EventType::Explosion); ++type) {
         for (int detail : {0, 3, 9, 10, 11, 255}) {
             if (r4.route(makeEvent(static_cast<EventType>(type), static_cast<uint8_t>(detail)), 100.0f + static_cast<float>(type * 10 + detail), req)) {
                 CHECK(static_cast<int>(req.id) >= 0);
@@ -393,16 +415,46 @@ TEST_CASE("gem pitch rises while gems come quickly and resets after a gap") {
     CHECK(req.id == sfx::SfxId::Gem1);
 }
 
-TEST_CASE("audio keeps its own random numbers") {
-    // Routing an event must not need or change the simulation generator.
-    GameState* state = new GameState();
-    state->rng.seed(77);
-    const uint64_t before = state->rng.state;
+TEST_CASE("the router has its own random numbers, and routing sounds does not change the game") {
+    // Its pitch variation comes from its own seed: the same seed gives the same sounds,
+    // and another seed gives different ones.
+    const auto pitches = [](uint32_t seed) {
+        router::Router r(seed);
+        router::PlayRequest req;
+        std::vector<float> out;
+        for (int i = 0; i < 40; ++i) {
+            if (r.route(makeEvent(EventType::EnemyHit, static_cast<uint8_t>(WeaponId::Smg)), static_cast<float>(i), req)) out.push_back(req.pitch);
+        }
+        return out;
+    };
+    const std::vector<float> first = pitches(77);
+    CHECK(first.size() == 40);
+    CHECK(first == pitches(77));
+    CHECK(first != pitches(78));
+
+    // Two games with the same seed. One of them sends every event to a router, as the
+    // real game does. If routing touched the game's state or random numbers, they would part.
+    auto played = std::make_unique<GameState>();
+    auto silent = std::make_unique<GameState>();
+    sim::newRun(*played, 77);
+    sim::newRun(*silent, 77);
     router::Router r;
     router::PlayRequest req;
-    for (int i = 0; i < 100; ++i) r.route(makeEvent(EventType::EnemyKilled), static_cast<float>(i), req);
-    CHECK(state->rng.state == before);
-    delete state;
+    int routed = 0;
+    for (int i = 0; i < 60 * 30; ++i) {
+        played->player.hp = played->player.maxHp;
+        silent->player.hp = silent->player.maxHp;
+        sim::step(*played, InputFrame{});
+        sim::step(*silent, InputFrame{});
+        for (const SimEvent& event : played->events) {
+            if (r.route(event, static_cast<float>(i) / 60.0f, req)) ++routed;
+        }
+        played->events.clear();
+        silent->events.clear();
+    }
+    CHECK(routed > 20);
+    CHECK(played->rng.state == silent->rng.state);
+    CHECK(sim::stateHash(*played) == sim::stateHash(*silent));
 }
 
 // Writes the sounds as .wav files for listening, and prints a level table.

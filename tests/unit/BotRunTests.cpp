@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <vector>
 
 using namespace ls;
 
@@ -130,7 +131,44 @@ struct BotResult {
     int bossPhaseReached = 0;
     float damage[static_cast<int>(WeaponId::Count)] = {};
     bool invariantsHeld = true;
+    std::vector<uint64_t> trace;  // The state hash every 5 seconds of game time.
+    uint64_t finalHash = 0;
 };
+
+bool finite(Vec2 v) { return std::isfinite(v.x) && std::isfinite(v.y); }
+
+// Values that must hold after every step. A NaN position would not crash anything and
+// would not trip a count limit, but it would quietly break collisions, so every
+// position and health value is checked to be a real number.
+bool stateIsSane(const GameState& s) {
+    const Player& p = s.player;
+    if (!finite(p.pos) || !std::isfinite(p.hp) || p.hp > p.maxHp + 1e-3f) return false;
+    if (p.level < 1 || p.xp < 0 || p.weaponCount < 1 || p.weaponCount > kMaxHeldWeapons) return false;
+    if (s.run.kills < 0 || s.run.rerollsLeft < 0 || s.run.pendingLevels < 0) return false;
+    for (int i = 0; i < p.weaponCount; ++i) {
+        const WeaponSlot& w = p.weapons[i];
+        if (w.magazine < 0 || w.reserve < 0 || !std::isfinite(w.cooldown) || !std::isfinite(w.reloadLeft)) return false;
+    }
+    for (const Enemy& e : s.enemies) {
+        if (!finite(e.pos) || !std::isfinite(e.hp) || e.radius <= 0.0f || e.id == 0 || e.id >= s.run.nextId) return false;
+    }
+    for (const Projectile& shot : s.projectiles) {
+        if (!finite(shot.pos) || !finite(shot.vel) || !std::isfinite(shot.damage)) return false;
+    }
+    for (const EnemyBullet& b : s.enemyBullets) {
+        if (!finite(b.pos) || !finite(b.vel)) return false;
+    }
+    for (const Zone& z : s.zones) {
+        if (!finite(z.a) || !finite(z.b) || !std::isfinite(z.radius) || !std::isfinite(z.life)) return false;
+    }
+    for (const Gem& g : s.gems) {
+        if (!finite(g.pos) || g.xp < 1) return false;
+    }
+    for (const Pickup& pickup : s.pickups) {
+        if (!finite(pickup.pos)) return false;
+    }
+    return true;
+}
 
 // Plays one run to its end, or to the step limit. The state is checked after every step.
 // stopAfterBoss, when above 0, ends the run that many seconds after the boss appears.
@@ -138,6 +176,7 @@ BotResult runBot(uint64_t seed, bool invulnerable, float stopAfterBoss = 0.0f) {
     auto state = std::make_unique<GameState>();
     sim::newRun(*state, seed);
     BotResult result;
+    uint32_t lastTraceTick = 0;
 
     while (state->run.phase != RunPhase::Won && state->run.phase != RunPhase::Dead &&
            static_cast<int>(state->run.tick) < kStepLimit &&
@@ -158,15 +197,19 @@ BotResult runBot(uint64_t seed, bool invulnerable, float stopAfterBoss = 0.0f) {
         }
         state->events.clear();
 
-        const GameState& s = *state;
-        const bool poolsOk = s.enemies.count >= 0 && s.enemies.count <= kMaxEnemies && s.projectiles.count <= kMaxProjectiles &&
-                             s.enemyBullets.count <= kMaxEnemyBullets && s.zones.count <= kMaxZones &&
-                             s.gems.count <= kMaxGems && s.pickups.count <= kMaxPickups;
-        const bool numbersOk = s.player.hp <= s.player.maxHp + 1e-3f && s.timeSeconds() >= 0.0f && s.run.kills >= 0;
-        if (!poolsOk || !numbersOk) result.invariantsHeld = false;
-        result.peakZombies = std::max(result.peakZombies, s.enemies.count);
+        if (result.invariantsHeld && !stateIsSane(*state)) {
+            result.invariantsHeld = false;
+            std::printf("[bot] seed %llu: state became invalid at tick %u\n", static_cast<unsigned long long>(seed), state->run.tick);
+        }
+        result.peakZombies = std::max(result.peakZombies, state->enemies.count);
+        // One fingerprint per 5 seconds. The tick stands still during level-up, so a tick is recorded once.
+        if (state->run.tick % 300 == 0 && state->run.tick != lastTraceTick) {
+            lastTraceTick = state->run.tick;
+            result.trace.push_back(sim::stateHash(*state));
+        }
     }
 
+    result.finalHash = sim::stateHash(*state);
     result.outcome = state->run.phase;
     result.endSeconds = state->timeSeconds();
     result.level = state->player.level;
@@ -187,28 +230,24 @@ void printResult(const char* label, uint64_t seed, const BotResult& result) {
     std::printf("\n");
 }
 
-// True when every weapon deals damage in a short fight. Until all the weapon
-// components exist, a boss kill cannot be expected, so the kill check waits for this.
-bool everyWeaponDealsDamage() {
-    for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) {
-        auto state = std::make_unique<GameState>();
-        sim::newRun(*state, 5);
-        state->player.weaponCount = 0;
-        state->player.xpToNext = 1 << 30;  // No level-up screen, which would pause the fight.
-        weapons::grant(*state, static_cast<WeaponId>(i));
-        for (int n = 0; n < 40; ++n) {
-            const float angle = static_cast<float>(n) * 0.7f;
-            const Vec2 pos = fromAngle(angle) * (150.0f + static_cast<float>(n % 5) * 40.0f);
-            if (!enemies::spawn(*state, EnemyType::Walker, pos, false)) break;
-        }
-        for (int step = 0; step < 60 * 8; ++step) {
-            state->player.hp = state->player.maxHp;
-            sim::step(*state, InputFrame{});
-            state->events.clear();
-        }
-        if (state->run.damageByWeapon[i] <= 0.0f) return false;
+// Damage one weapon deals in an 8 second standing fight against a crowd of 40 walkers.
+float damageInCrowdFight(WeaponId id) {
+    auto state = std::make_unique<GameState>();
+    sim::newRun(*state, 5);
+    state->player.weaponCount = 0;
+    state->player.xpToNext = 1 << 30;  // No level-up screen, which would pause the fight.
+    weapons::grant(*state, id);
+    for (int n = 0; n < 40; ++n) {
+        const float angle = static_cast<float>(n) * 0.7f;
+        const Vec2 pos = fromAngle(angle) * (150.0f + static_cast<float>(n % 5) * 40.0f);
+        if (!enemies::spawn(*state, EnemyType::Walker, pos, false)) break;
     }
-    return true;
+    for (int step = 0; step < 60 * 8; ++step) {
+        state->player.hp = state->player.maxHp;
+        sim::step(*state, InputFrame{});
+        state->events.clear();
+    }
+    return state->run.damageByWeapon[static_cast<int>(id)];
 }
 
 }  // namespace
@@ -220,36 +259,82 @@ TEST_CASE("bot run: each seed ends in a win or a death, and the state stays vali
         printResult("normal", seed, result);
         CHECK(result.invariantsHeld);
         CHECK((result.outcome == RunPhase::Won || result.outcome == RunPhase::Dead));
-        CHECK(result.endSeconds >= 0.0f);
-        CHECK(result.kills >= 0);
-        CHECK(result.peakZombies <= kMaxEnemies);
+        CHECK(result.endSeconds > 0.0f);
+        CHECK(result.kills > 0);
+        CHECK(result.peakZombies > 0);
         // Dying before 10:00 means the boss never came. Winning means it was killed.
         if (result.outcome == RunPhase::Won) CHECK(result.bossKilled);
         if (result.outcome == RunPhase::Dead && result.endSeconds < balance::kRunSeconds) CHECK_FALSE(result.bossSpawned);
     }
 }
 
+TEST_CASE("the state check catches a broken number") {
+    // Proves stateIsSane can fail: a NaN position and a negative magazine are each refused.
+    auto state = std::make_unique<GameState>();
+    sim::newRun(*state, 1);
+    REQUIRE(stateIsSane(*state));
+    enemies::spawn(*state, EnemyType::Walker, Vec2{200.0f, 0.0f}, false);
+    REQUIRE(stateIsSane(*state));
+    state->enemies[0].pos.x = std::nanf("");
+    CHECK_FALSE(stateIsSane(*state));
+    state->enemies[0].pos.x = 200.0f;
+    state->player.weapons[0].magazine = -1;
+    CHECK_FALSE(stateIsSane(*state));
+}
+
+// Compares two runs of one seed on everything the bot records, including a fingerprint of
+// the whole state every 5 seconds, so a difference that later cancels out still shows.
+static void checkSameRun(const BotResult& first, const BotResult& second) {
+    CHECK(first.outcome == second.outcome);
+    CHECK(first.endSeconds == second.endSeconds);
+    CHECK(first.level == second.level);
+    CHECK(first.kills == second.kills);
+    CHECK(first.peakZombies == second.peakZombies);
+    CHECK(first.bossSpawned == second.bossSpawned);
+    CHECK(first.bossKilled == second.bossKilled);
+    CHECK(first.bossPhaseReached == second.bossPhaseReached);
+    for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) CHECK(first.damage[i] == second.damage[i]);
+    CHECK(first.trace.size() == second.trace.size());
+    CHECK(first.trace == second.trace);
+    CHECK(first.finalHash == second.finalHash);
+}
+
 TEST_CASE("bot run: the same seed gives the same result") {
     const BotResult first = runBot(404, false);
     const BotResult second = runBot(404, false);
-    CHECK(first.outcome == second.outcome);
-    CHECK(first.endSeconds == second.endSeconds);
-    CHECK(first.kills == second.kills);
-    CHECK(first.peakZombies == second.peakZombies);
+    checkSameRun(first, second);
+    CHECK(first.trace.size() > 2);
 }
 
-TEST_CASE("invulnerable bot reaches the boss at 10:00, and kills it in time when every weapon works") {
-    const bool killExpected = everyWeaponDealsDamage();
-    if (!killExpected) {
-        std::printf("[bot invulnerable] some weapons deal no damage yet, so the boss kill is not asserted\n");
+TEST_CASE("bot run: the same seed gives the same state through the late game and the boss fight") {
+    // The invulnerable bot cannot die, so this always reaches 10:00 and the boss, plus a
+    // minute of the fight. Spitters, Bloaters, Chargers and the boss all run in it.
+    const BotResult first = runBot(404, true, 60.0f);
+    const BotResult second = runBot(404, true, 60.0f);
+    REQUIRE(first.bossSpawned);
+    CHECK(first.endSeconds > balance::kRunSeconds + 50.0f);
+    CHECK(first.trace.size() > static_cast<size_t>(balance::kRunSeconds / 5.0f));
+    checkSameRun(first, second);
+}
+
+TEST_CASE("every weapon deals damage to a crowd, which the boss fight below relies on") {
+    for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) {
+        CAPTURE(kWeaponNames[i]);
+        CHECK(damageInCrowdFight(static_cast<WeaponId>(i)) > 0.0f);
     }
+}
+
+TEST_CASE("invulnerable bot reaches the boss at 10:00, and kills it in time") {
     const uint64_t seeds[] = {101, 202, 303};
     for (const uint64_t seed : seeds) {
-        const BotResult result = runBot(seed, true, killExpected ? 0.0f : 90.0f);
+        const BotResult result = runBot(seed, true);
         printResult("invulnerable", seed, result);
         CHECK(result.invariantsHeld);
         CHECK(result.bossSpawned);
         CHECK(result.bossSpawnSeconds == doctest::Approx(balance::kRunSeconds).epsilon(0.001));
+        // The run has 20 minutes of game time in total, so the boss gets 10 minutes. A
+        // boss that is not killed fails here, whatever the cause.
+        CHECK(result.bossKilled);
         if (result.bossKilled) {
             std::printf("[bot invulnerable] seed %llu: boss killed %.1fs after it spawned\n",
                         static_cast<unsigned long long>(seed),
@@ -259,7 +344,5 @@ TEST_CASE("invulnerable bot reaches the boss at 10:00, and kills it in time when
             std::printf("[bot invulnerable] seed %llu: boss NOT killed, reached boss phase %d\n",
                         static_cast<unsigned long long>(seed), result.bossPhaseReached);
         }
-        // The run has 20 minutes of game time in total, so the boss gets 10 minutes.
-        if (killExpected) CHECK(result.bossKilled);
     }
 }

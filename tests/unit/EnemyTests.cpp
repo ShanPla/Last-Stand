@@ -294,12 +294,23 @@ TEST_CASE("ammo crates drop every N kills, and a pickup drops on its own counter
     CHECK(state->run.nextPickupDropKills == 2 * balance::kKillsPerPickupDrop);
 }
 
-TEST_CASE("a full pickup pool skips the drop without crashing") {
+TEST_CASE("a full pickup pool drops the oldest pickup to make room for a new one") {
     auto state = makeRun();
-    for (int i = 0; i < kMaxPickups; ++i) pickups::onEnemyKilled(*state, Vec2{}, true);
+    // Each pickup sits at its own x, far from the player, so they can be told apart.
+    for (int i = 0; i < kMaxPickups; ++i) {
+        pickups::spawnPickup(*state, Vec2{5000.0f + static_cast<float>(i), 5000.0f}, PickupType::Heal);
+    }
+    REQUIRE(state->pickups.count == kMaxPickups);
+    pickups::onEnemyKilled(*state, Vec2{9000.0f, 9000.0f}, true);
     CHECK(state->pickups.count == kMaxPickups);
-    pickups::onEnemyKilled(*state, Vec2{}, true);
-    CHECK(state->pickups.count == kMaxPickups);
+    float oldestX = 1.0e9f;
+    float newestX = -1.0e9f;
+    for (const Pickup& pickup : state->pickups) {
+        oldestX = std::min(oldestX, pickup.pos.x);
+        newestX = std::max(newestX, pickup.pos.x);
+    }
+    CHECK(oldestX == doctest::Approx(5001.0f));  // The pickup at x = 5000 was dropped.
+    CHECK(newestX >= 9000.0f);                    // The new drop is there.
 }
 
 // ---------------------------------------------------------------------------

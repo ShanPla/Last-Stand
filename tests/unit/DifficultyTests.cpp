@@ -33,6 +33,17 @@ int enemiesAfter(Difficulty difficulty, int steps) {
     return spawned;
 }
 
+// Stands still and takes the first card, with the player kept alive.
+void playSeconds(GameState& state, int seconds) {
+    for (int i = 0; i < 60 * seconds; ++i) {
+        state.player.hp = state.player.maxHp;
+        InputFrame input;
+        if (state.run.phase == RunPhase::LevelUp) input.chooseCard = 0;
+        sim::step(state, input);
+        state.events.clear();
+    }
+}
+
 }  // namespace
 
 TEST_CASE("a new run is Normal unless told otherwise, and Normal changes nothing") {
@@ -80,7 +91,20 @@ TEST_CASE("boss health follows difficulty") {
 }
 
 TEST_CASE("the same seed on different levels gives different runs") {
+    // Both runs play the same seed and the same input for 40 seconds. The level is then
+    // copied across, because the hash includes it and would differ even if the levels
+    // changed nothing. What is left to differ is what the levels did to the game.
     auto easy = newRun(Difficulty::Easy);
     auto hard = newRun(Difficulty::Hard);
+    playSeconds(*easy, 40);
+    playSeconds(*hard, 40);
+    hard->run.difficulty = easy->run.difficulty;
     CHECK(sim::stateHash(*easy) != sim::stateHash(*hard));
+
+    // The control: with the same level the two runs match exactly.
+    auto again = newRun(Difficulty::Easy);
+    auto twin = newRun(Difficulty::Easy);
+    playSeconds(*again, 40);
+    playSeconds(*twin, 40);
+    CHECK(sim::stateHash(*again) == sim::stateHash(*twin));
 }

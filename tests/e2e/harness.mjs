@@ -54,15 +54,34 @@ export async function launchChrome() {
   });
 }
 
-// Opens the game and records console errors and uncaught exceptions.
+// The only console warnings a healthy run prints. Native code writes its stderr and its
+// own warnings to the console as warnings, so any other one is a real fault, such as a
+// shader that failed to compile. Keep this list short and give each entry its reason.
+const KNOWN_WARNINGS = [
+  // Chrome's own note that the audio output uses a ScriptProcessorNode. It is not our error.
+  /^The ScriptProcessorNode is deprecated/,
+  // The renderer reports its view size and its start-up cost on purpose, once each.
+  /^world view: target \d+x\d+, scale [\d.]+, sees \d+ of \d+$/,
+  /^world renderer ready: /,
+];
+
+// Collects console errors, unexpected console warnings and uncaught exceptions on a page
+// into the array, and returns it. Tests assert that it stays empty.
+export function watchProblems(page, problems = []) {
+  page.on('console', (msg) => {
+    const text = msg.text();
+    if (msg.type() === 'error') problems.push(text);
+    else if (msg.type() === 'warning' && !KNOWN_WARNINGS.some((known) => known.test(text))) problems.push(`warning: ${text}`);
+  });
+  page.on('pageerror', (error) => problems.push(String(error)));
+  return problems;
+}
+
+// Opens the game and records console errors, unexpected warnings and uncaught exceptions.
 export async function openGame(browser, url, contextOptions = {}) {
   const context = await browser.newContext(contextOptions);
   const page = await context.newPage();
-  const problems = [];
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') problems.push(msg.text());
-  });
-  page.on('pageerror', (error) => problems.push(String(error)));
+  const problems = watchProblems(page);
   await page.goto(url);
   await page.waitForFunction(() => document.getElementById('loading-screen').classList.contains('is-done'), null, { timeout: 30000 });
   return { context, page, problems };
