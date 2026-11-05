@@ -33,7 +33,7 @@ jobs:
       # A manual run starts on whatever branch it was dispatched from. If the tag
       # already exists, build that tag, so a repair run can never replace the files of
       # an old version with a build of newer code. A new tag is created later from
-      # this commit. (A tag made that way does not start the Pages deploy.)
+      # this commit. Releases and the Pages deploy are separate: a tag never deploys.
       - name: Build the commit the tag points at
         if: github.event_name == 'workflow_dispatch'
         run: |

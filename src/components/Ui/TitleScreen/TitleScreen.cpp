@@ -97,8 +97,8 @@ TitleAction drawTitleScreen(SaveData& data) {
     }
 
     // Heights of everything below the logo, so the logo can take what is left. Each
-    // selector row (difficulty now, the map later) adds one row to the menu, and the
-    // logo and the best run give way, so a second row needs no other change.
+    // selector row (difficulty and map) adds one row to the menu, and the logo and the
+    // best run give way, so another row would need no other change.
     const float playHeight = tall(66.0f * u);
     const float smallHeight = tall(50.0f * u);
     const float rowGap = 10.0f * u;

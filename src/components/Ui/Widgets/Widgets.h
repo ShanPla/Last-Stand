@@ -109,8 +109,8 @@ bool slider(Nav& nav, int index, Rectangle rect, const char* label, float* value
 // An on or off row. Returns true when it changes.
 bool toggle(Nav& nav, int index, Rectangle rect, const char* label, bool* value);
 
-// A row of named choices with an arrow on each side, such as the difficulty or, later,
-// the map. Left and right (keys, D-pad, stick) change it while it has focus. A click or
+// A row of named choices with an arrow on each side, such as the difficulty or the
+// map. Left and right (keys, D-pad, stick) change it while it has focus. A click or
 // tap on an arrow steps that way, and on the middle steps forward. Enter and A step
 // forward too. It wraps at both ends. optionColors may be null. Returns true when the
 // value changes. The three parts are recorded for tests as "<label> <", "<label>" and
