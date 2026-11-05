@@ -194,7 +194,8 @@ void removeDead(GameState& state) {
         const balance::EnemyStats& stats = balance::kEnemyStats[static_cast<int>(dead.type)];
         pickups::dropGem(state, dead.pos, stats.xp * (dead.elite ? balance::kElite_XpMult : 1));
         if (dead.type == EnemyType::Boss) {
-            // Killing the boss wins the run. It drops no pickup, because the run is over.
+            // Killing the boss wins the run, unless the player also died in this step
+            // (see sim::step). It drops no pickup, because the run is over.
             state.run.bossHpFraction = 0.0f;
             state.run.phase = RunPhase::Won;
             pushEvent(state, EventType::BossKilled, dead.pos, dead.radius, static_cast<uint8_t>(dead.type));

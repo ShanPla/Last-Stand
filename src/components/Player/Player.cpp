@@ -76,6 +76,7 @@ void damage(GameState& state, float amount) {
 
 void heal(GameState& state, float amount) {
     Player& player = state.player;
+    if (player.hp <= 0.0f) return;  // A lethal hit stands. See the death rule in sim::step.
     player.hp = std::min(player.maxHp, player.hp + amount);
 }
 

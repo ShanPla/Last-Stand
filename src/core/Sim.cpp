@@ -86,7 +86,11 @@ void step(GameState& state, const InputFrame& input) {
     if (run.debugEnemyTarget > 0) run.pendingLevels = 0;
     upgrades::update(state);
 
-    if (run.phase == RunPhase::Playing && state.player.hp <= 0.0f) {
+    // One rule for a step with a lethal hit: death beats everything else in that step.
+    // All damage to the player has landed by now, so this HP is final. A boss killed in
+    // the same step still counts as killed, but the run is a loss, not a win. Otherwise
+    // the result would depend only on the order of the calls above.
+    if (state.player.hp <= 0.0f) {
         run.phase = RunPhase::Dead;
         pushEvent(state, EventType::PlayerDied, state.player.pos);
     }
