@@ -8,12 +8,41 @@
 
 #include "raylib.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
+
 #include <algorithm>
 
 // This file is the only part of the audio code that talks to raylib. All the
 // sound is made by the pure code in the folders next to it. Before unlock() the
 // audio device is never opened, because browsers refuse to start audio until the
 // player has pressed something, and opening it early logs warnings.
+#ifdef __EMSCRIPTEN__
+// The browser's audio context is made inside raylib's sound library. This looks at it,
+// and with resume set it asks a suspended one to start. A context only starts after the
+// page has had a real click or key press, so this is tried again on later presses.
+// Returns 1 when sound is running, 0 when it is not yet, and -1 when the context can't be found.
+EM_JS(int, ls_js_audio_running, (int resume), {
+    try {
+        var devices = window.miniaudio && window.miniaudio.devices;
+        if (!devices) return -1;
+        var found = false;
+        var running = false;
+        for (var i = 0; i < devices.length; i++) {
+            var context = devices[i] && devices[i].webaudio;
+            if (!context) continue;
+            found = true;
+            if (context.state === 'running') running = true;
+            else if (resume) context.resume();
+        }
+        return found ? (running ? 1 : 0) : -1;
+    } catch (error) {
+        return -1;
+    }
+});
+#endif
+
 namespace ls::audio {
 
 namespace {
@@ -27,10 +56,12 @@ constexpr float kDuckedGain = 0.25f;        // Music volume while paused or in a
 constexpr double kRenderBudgetSeconds = 0.0025;  // Music rendering time allowed in one frame.
 constexpr double kLoadBudgetSeconds = 0.003;  // Sound loading time allowed in one frame.
 constexpr double kStallSeconds = 0.35;      // A frame gap this long means the tab was hidden or the game stalled.
+constexpr double kDeviceRetrySeconds = 2.0; // After the device fails to open, wait this long before trying again.
 
 bool g_inited = false;
-bool g_unlocked = false;
-int g_unlockAttempts = 0;
+bool g_unlocked = false;  // The audio device is open.
+bool g_running = false;   // Sound can really be heard: the browser's audio context is running.
+double g_nextDeviceTry = 0.0;
 bool g_musicReady = false;
 bool g_streamPlaying = false;
 int g_nextToLoad = 0;  // Next sound to turn into playable voices.
@@ -41,8 +72,10 @@ int g_startsThisFrame = 0;
 
 float g_musicVolume = 1.0f;
 float g_effectsVolume = 1.0f;
-float g_duckTarget = 1.0f;
-float g_duck = 1.0f;
+// The game starts on the title screen, which is a menu, so music starts ducked. The app
+// starts its own ducked flag the same way, so the first menu frame sends no change.
+float g_duckTarget = kDuckedGain;
+float g_duck = kDuckedGain;
 float g_fade = 0.0f;  // Music fades in after it is ready, and again after a stall.
 float g_intensity = 0.0f;
 bool g_boss = false;
@@ -104,15 +137,21 @@ void refillStream() {
     UpdateAudioStream(g_stream, g_block, kStreamBlock);
 }
 
+float streamVolume() { return g_musicVolume * g_duck * g_fade * kMusicLevel; }
+
 void startStream() {
     g_mixer.setTargets(layers::targetsFor(g_intensity, g_boss));
     g_mixer.snapToTargets();
+    // The fade starts from silence, and the volume is set before the stream starts. The
+    // mixer thread can read the volume the moment playing begins, and raylib's default
+    // is full volume, which would be heard as a pop.
+    g_fade = 0.0f;
+    SetAudioStreamVolume(g_stream, streamVolume());
     // Play first: starting a stream marks its buffers as empty, which would discard data written before it.
     PlayAudioStream(g_stream);
     refillStream();
     refillStream();
     g_streamPlaying = true;
-    g_fade = 0.0f;
 }
 
 // Turns one rendered sound into playable voices. Done a few per frame after
@@ -159,17 +198,38 @@ void init() {
     g_lastFrameTime = GetTime();
 }
 
-void unlock() {
-    if (!g_inited || g_unlocked || g_unlockAttempts >= 3) return;
-    ++g_unlockAttempts;
-    InitAudioDevice();
-    if (!IsAudioDeviceReady()) return;
-    SetAudioStreamBufferSizeDefault(kStreamBlock);
-
-    g_stream = LoadAudioStream(music::kSampleRate, 16, 1);
-    AttachAudioMixedProcessor(limiterCallback);
-    g_unlocked = true;
+bool unlock(bool pressed) {
+    if (!g_inited) return false;
+    if (g_running) return true;
+    if (!g_unlocked) {
+        // Open the device. If there is none yet (no output, or the browser refused), try again
+        // on a later press, but not more than once in a while, instead of giving up for the
+        // whole session. A failed attempt prints a warning, so it is never repeated every frame.
+        if (!pressed || GetTime() < g_nextDeviceTry) return false;
+        InitAudioDevice();
+        if (!IsAudioDeviceReady()) {
+            g_nextDeviceTry = GetTime() + kDeviceRetrySeconds;
+            return false;
+        }
+        SetAudioStreamBufferSizeDefault(kStreamBlock);
+        g_stream = LoadAudioStream(music::kSampleRate, 16, 1);
+        AttachAudioMixedProcessor(limiterCallback);
+        g_unlocked = true;
+    }
+#ifdef __EMSCRIPTEN__
+    // An open device is not enough in a browser: the context starts suspended, and a press
+    // that does not count as user activation (Esc, a gamepad button) leaves it that way.
+    // Ask it to start on every press, and look at it every frame until it runs.
+    g_running = ls_js_audio_running(pressed ? 1 : 0) != 0;
+#else
+    (void)pressed;
+    g_running = true;
+#endif
+    return g_running;
 }
+
+bool isRunning() { return g_running; }
+float duckLevel() { return g_duck; }
 
 void update(float dtReal, float intensity, bool boss) {
     if (!g_inited) return;
@@ -184,7 +244,7 @@ void update(float dtReal, float intensity, bool boss) {
 
     pumpRender();
     if (g_unlocked) loadSomeSounds();
-    if (!g_unlocked || !g_musicReady) return;
+    if (!g_running || !g_musicReady) return;
 
     // After a long gap (hidden tab, or a stall) the stream has run dry. Restart it
     // cleanly and fade in, instead of playing stale data.
@@ -199,17 +259,17 @@ void update(float dtReal, float intensity, bool boss) {
     g_mixer.setTargets(layers::targetsFor(intensity, boss));
     // Two refills a frame is plenty: a refill is only needed about five times a second.
     for (int i = 0; i < 2 && IsAudioStreamProcessed(g_stream); ++i) refillStream();
-    SetAudioStreamVolume(g_stream, g_musicVolume * g_duck * g_fade * kMusicLevel);
+    SetAudioStreamVolume(g_stream, streamVolume());
 }
 
 void onEvent(const SimEvent& event) {
-    if (!g_unlocked) return;
+    if (!g_running) return;
     router::PlayRequest request;
     if (g_router.route(event, g_clock, request)) playRequest(request);
 }
 
 void playUi(UiSound sound) {
-    if (!g_unlocked) return;
+    if (!g_running) return;
     router::PlayRequest request;
     if (g_router.routeUi(sound, g_clock, request)) playRequest(request);
 }

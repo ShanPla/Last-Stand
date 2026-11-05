@@ -99,9 +99,10 @@ float g_runStartFade = 0.0f;
 float g_moveTime = 0.0f;    // Seconds the player has moved this run, which fades the controls hint.
 float g_demoTime = 0.0f;
 float g_demoAmmoTimer = 0.0f;
-bool g_audioUnlocked = false;
+bool g_audioTried = false;     // A press has started the audio attempt.
+bool g_audioUnlocked = false;  // Sound is really running.
 bool g_settingsDirty = false;
-bool g_ducked = true;
+bool g_ducked = true;  // The title screen is a menu, so music starts ducked. Audio starts the same way.
 ui::RunSummary g_summary;
 
 // Rolling averages, for the debug overlay and performance tests.
@@ -482,9 +483,12 @@ void frame() {
     input::update(g_input);
     ui::beginFrame(g_input, dtReal);
     g_screenAge += dtReal;
-    if (g_input.anyPress && !g_audioUnlocked) {
-        audio::unlock();  // Browsers only allow sound after the first press.
-        g_audioUnlocked = true;
+    // Browsers only allow sound after a press, and some presses (Esc, a gamepad button) do
+    // not count. So the first press starts the attempt, and every later press tries again
+    // until sound is really running.
+    if (!g_audioUnlocked && (g_audioTried || g_input.anyPress)) {
+        g_audioTried = true;
+        g_audioUnlocked = audio::unlock(g_input.anyPress);
     }
 
     // A dash press only counts while playing. Space is also confirm, so on a menu it must
