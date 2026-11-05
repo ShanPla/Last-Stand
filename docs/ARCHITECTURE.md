@@ -837,6 +837,18 @@ The soldier can dash (Space, a gamepad shoulder button, or the corner button on 
 - The afterimage is drawn along the way he really went. A car can stop him partway, so the start and the direction alone would draw ghosts in the wrong place. The renderer keeps a short list of his positions during the dash ([`DashPath.h`](../src/components/WorldView/DashPath.h), at most 16 points, a dash is 12 steps long). Nothing in the game reads that list, so it cannot change a replay. It uses no raylib, so a unit test checks it.
 - The HUD shows the cooldown: a big corner button on a touch screen (placed so the joystick ignores touches that start on it), and a small indicator under the weapon slots for every other device.
 
+### The boss's look per difficulty
+
+The boss looks more horrid on each level. One painter in [`ZombieArt.cpp`](../src/components/WorldView/ZombieArt.cpp) takes a horror level from 0 to 3 and adds parts on top of the level below, so every look keeps the same skeleton, feet and warning positions. Easy is the original look. Normal adds boils, a belly mouth and broken bones, Hard rotting flesh, tusks and tendrils, and Hell a chest split into a mouth ringed with eyes, a second head and a crown of spikes, drawn 20 percent bigger. Collision, speed and attacks are the same for every look. Colors are in the "Boss looks" section of [`Theme.h`](../src/data/Theme.h).
+
+All twelve looks (four levels, three phases each) would not fit in the sprite atlas, so the atlas holds one level's boss at a time. Startup paints Normal, because the title demo plays Normal. On the first frame of a run on another level, `useBossLevel` repaints just the boss rows and uploads that strip, which took 21 to 41 ms in the browser. It never happens during play. To save room, Hard and Hell are painted at one size, halfway between the near and far sizes, so they can be up to about 7 percent off their true size on screen.
+
+### Depth of standing map objects
+
+Cars, trees, walls, lamps, poles, signs, fences, barrels and shacks are painted with lit tops, shaded sides and grounded shadows, so they read as standing up in the tilted view. They also cover a figure standing behind them, which then shows as a faint silhouette, so a threat is never fully hidden.
+
+The ground is one painted texture per chunk, so this uses the same idea as the cars. While painting, `CoverMark` in [`Paint.h`](../src/components/Maps/Paint/Paint.h) stores in each standing pixel's spare alpha how many rows below it the object's foot is, and records the object's rectangle in the chunk's cover list. A depth pass then turns each pixel's foot into the depth a figure standing there would have, and writes it to the depth buffer. A wall running up the screen keeps its own depth on every row. Figures check only the covers in their own 32-pixel columns, which keeps it cheap with large crowds. See-through fences, wires, bushes and bones are left out of covering. Standing objects also get part of the characters' gentler lighting at night (`kStandingGrade`), so they no longer vanish in the dark.
+
 ### Solid cars
 
 Wrecked cars, buses and tankers are solid on both maps and on every difficulty. Everything else on the ground is decoration. A solid car is an axis-aligned box. The soldier and the zombies slide along its sides, and bullets, blasts and beams pass over it.
@@ -1276,7 +1288,7 @@ The tests also take a **real pixel check** ([`countColorNearCenter`](../tests/e2
 
 The functional tests run Chrome with a software renderer, so they check behavior, not speed. [`perf.mjs`](../tests/e2e/perf.mjs) is run by hand and uses the machine's real GPU.
 
-**Measured result.** The last full browser run passed **264 of 264** tests, with none skipped.
+**Measured result.** The last full browser run passed **278 of 278** tests, with none skipped.
 
 ### Performance
 
