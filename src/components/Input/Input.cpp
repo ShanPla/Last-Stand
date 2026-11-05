@@ -118,7 +118,10 @@ void readTouch(Snapshot& s) {
     float latchedX = 0.0f;
     float latchedY = 0.0f;
     const bool latched = platform::consumeTouchStart(&latchedX, &latchedY);
-    const int points = GetTouchPointCount();
+    // raylib keeps counting a finger whose touch the browser cancelled (an edge swipe, a
+    // call), because it only removes fingers on touchend. The browser's own count says the
+    // screen is empty, and that wins, so a cancelled touch can't leave the joystick stuck.
+    const int points = platform::noFingerDown() ? 0 : GetTouchPointCount();
     if (latched) {
         s.pointerPressed = true;
         s.pointerIsTouch = true;

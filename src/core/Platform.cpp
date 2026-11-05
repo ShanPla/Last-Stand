@@ -24,13 +24,14 @@
 
 EM_JS(void, ls_js_install, (), {
     if (Module.lsInput) return;
-    var state = Module.lsInput = { touches: [], lastTouchMs: -100000, focusLost: false, probe: null };
+    var state = Module.lsInput = { touches: [], lastTouchMs: -100000, focusLost: false, probe: null, fingers: 0 };
     var canvas = Module.canvas || document.getElementById('canvas');
 
     // The first finger of the event, converted to drawing buffer pixels.
     window.addEventListener('touchstart', function (event) {
         var touch = event.changedTouches[0];
         state.lastTouchMs = performance.now();
+        state.fingers = event.touches.length;
         if (!touch) return;
         var rect = canvas.getBoundingClientRect();
         // A short queue, so that two quick taps between frames each count.
@@ -39,7 +40,14 @@ EM_JS(void, ls_js_install, (), {
             state.touches.push((touch.clientY - rect.top) * canvas.height / Math.max(1, rect.height));
         }
     }, { capture: true, passive: true });
-    window.addEventListener('touchend', function () { state.lastTouchMs = performance.now(); }, { capture: true, passive: true });
+    // touchcancel is what the browser sends when the system takes a touch away (an edge
+    // swipe, a call). It has no touchend, so the finger count is kept up to date here.
+    var fingersChanged = function (event) {
+        state.lastTouchMs = performance.now();
+        state.fingers = event.touches.length;
+    };
+    window.addEventListener('touchend', fingersChanged, { capture: true, passive: true });
+    window.addEventListener('touchcancel', fingersChanged, { capture: true, passive: true });
 
     // After a tap, browsers send a made-up mouse click. It would press a second
     // button under the finger, so it is dropped before the game sees it.
@@ -59,6 +67,11 @@ EM_JS(int, ls_js_take_touch, (float* out), {
     HEAPF32[out >> 2] = state.touches.shift();
     HEAPF32[(out >> 2) + 1] = state.touches.shift();
     return 1;
+});
+
+EM_JS(int, ls_js_no_finger_down, (), {
+    var state = Module.lsInput;
+    return state && state.fingers === 0 ? 1 : 0;
 });
 
 EM_JS(int, ls_js_take_focus_lost, (), {
@@ -205,6 +218,15 @@ bool consumeTouchStart(float* x, float* y) {
 #else
     (void)x;
     (void)y;
+    return false;
+#endif
+}
+
+bool noFingerDown() {
+#ifdef __EMSCRIPTEN__
+    ensureInstalled();
+    return ls_js_no_finger_down() != 0;
+#else
     return false;
 #endif
 }

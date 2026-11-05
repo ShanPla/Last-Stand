@@ -20,6 +20,11 @@ bool consumeMouseDown(float* x, float* y);
 // of the event, in drawing buffer pixels.
 bool consumeTouchStart(float* x, float* y);
 
+// True while the browser says no finger is on the screen. raylib keeps counting a finger
+// after the browser cancels its touch (a system swipe, a call), so the browser's own
+// count is what ends a touch. Always false on native, where raylib's list is right.
+bool noFingerDown();
+
 // True once after the tab was hidden or the window lost focus, so the game can pause.
 bool consumeFocusLost();
 
