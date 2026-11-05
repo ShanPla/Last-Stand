@@ -868,7 +868,15 @@ This rescue is based on **progress toward the player**, not on speed or position
 #### Special cases
 
 - **The Charger.** It only starts a charge when `lineBlocked` says the line to the player is clear of cars, otherwise a car between them would waste it. Once it is locked on and dashing, it does not steer around cars. If it hits one, it crashes: it bounces back (`kChargerCrashKnock`) and is stunned for 1.5 seconds (`kChargerCrashSeconds`), which is the player's reward for stepping behind a car.
-- **The boss ignores cars.** It is wider than a car is deep, and its telegraphed attacks and its catch-up speed would be unfair if a wreck could stop it. It is drawn over cars.
+- **The boss crushes cars.** It isn't blocked by them: it is wider than a car is deep, and its telegraphed attacks and its catch-up speed would be unfair if a wreck could stop it. Each car it steps on goes flat for the rest of the run, and stops being solid.
+
+**How a car is crushed.** `obstacles::crushUnder` adds the car to `RunState::crushed`, a fixed list of up to 1024 cars. A car is named by where its feet stand on the map (`CarId`), which comes from the seed alone, so the name stays the same across tile lists and cache refills. The list changes later steps, so it is part of the state hash. The car then leaves every cached tile list, and a tile that refills later leaves it out too, so every collision query reads one source. Removal closes the gap rather than swapping, so the cache stays exactly what a fresh look at the map would give. If the list ever filled, the next car would stay whole and solid. A unit test walks the fastest possible boss in a straight line for 15 minutes and reaches at most 262 cars, and the most in a bot's boss fight was 16.
+
+**How a flat car is drawn.** The normal car painter runs into a private buffer, with the same random numbers, and [`FlatCar`](../src/components/Maps/FlatCar) presses each column flat, adding folds, a torn edge and scattered bits. So every car type stays recognisable with no extra art. The picture rule becomes: same seed and same crushed set, same picture. Chunks on screen repaint one piece per frame into spare textures, and all of them swap in the same frame, so a seam never shows half a flat car. Until the swap, the old picture shows under the dust for 4 to 16 frames, though the car has already stopped being solid.
+
+**At the moment of the crush.** A `CarCrushed` event brings dust, metal debris, a generated crunch and a small screen shake. The shake only lifts to a level and never adds up, and it respects the settings. Its event is in the rare tier, so a flood of hits can't lose it.
+
+**Measured.** No crush frame was worse than the frames before it, at 1280 by 720 and 390 by 844, at normal speed and with the processor slowed 4x. Bot win rates on Normal stayed within a point of what they were without crushing. Cars flattened per bot boss fight averaged 5 to 6 in the city, and about 1 in the desert, where cars are sparse. The spare textures add about 1.4 MB of graphics memory.
 - **Nothing appears inside a car.** A spawned zombie is pushed out with `resolveCircle`. The boss is the exception.
 - **`placeItem`.** A gem, a pickup or a mine that is dropped lands where the player can collect it: clear of every car, and somewhere the player can walk to, or at least reach into collecting range. This matters in a pile of overlapping wrecks, where a pocket can fit the item but be closed off on all sides.
 - **No car near the start.** `clearOfStart` drops any car close to where the player starts, so a run never opens against one. Both the painters and the simulation drop that car.
@@ -1184,6 +1192,7 @@ The tests use [doctest](https://github.com/doctest/doctest) and run natively, wi
 | [`AmmoCrateTests.cpp`](../tests/unit/AmmoCrateTests.cpp), [`BladeRingTests.cpp`](../tests/unit/BladeRingTests.cpp), [`ExplosionEventTests.cpp`](../tests/unit/ExplosionEventTests.cpp) | 2, 2 and 1 | The timed ammo crate; blades reach adjacent zombies; a blast that hits nothing still sends its event |
 | [`DashTests.cpp`](../tests/unit/DashTests.cpp) | 19 | Dash distance and direction, cooldown, invulnerability window, no chaining, no dash on the level-up screen, a new run resets it, determinism with dash inputs |
 | [`DifficultyTests.cpp`](../tests/unit/DifficultyTests.cpp) | 6 | Normal changes nothing, harder levels give more health, damage and spawns, boss health follows the level |
+| [`CrushTests.cpp`](../tests/unit/CrushTests.cpp) | 19 | The boss crushes what it overlaps and nothing else; a crushed car is not solid, even after the cache refills; the list is hashed and cleared; determinism over a fight with crushing. |
 | [`ObstacleTests.cpp`](../tests/unit/ObstacleTests.cpp) | 26 | Solid cars: layout depends only on map, seed and tile; the cache equals a fresh computation; resolving and sliding; the dash against a car; nothing spawns inside a car; the boss walks through; the Charger crash; zombies reach a player among cars; the stuck rescue; item placement; determinism over cars on both maps; the dash afterimage path |
 | [`EffectsTests.cpp`](../tests/unit/EffectsTests.cpp) | 11 | The flash limiter (never above three flashes in any second), hit pause, screen shake in whole pixels, crowd flash strength, the token budget, damage number merging and the hard cap |
 | [`StateHashTests.cpp`](../tests/unit/StateHashTests.cpp), [`RunResetTests.cpp`](../tests/unit/RunResetTests.cpp) | 5 and 2 | The state hash covers every field that matters (and none that are drawing only); a new run on a used state equals one on a fresh state |
@@ -1193,7 +1202,7 @@ The tests use [doctest](https://github.com/doctest/doctest) and run natively, wi
 | [`AudioTests.cpp`](../tests/unit/AudioTests.cpp) | 16 | Every sound is clean and ends in silence, music loops join without a click, layers, router limits |
 | [`TestMain.cpp`](../tests/unit/TestMain.cpp) | 2 | Random number generator |
 
-**Measured result.** The last full run passed **230 of 230** unit test cases, with 385,007 assertions.
+**Measured result.** The last full run passed **249 of 249** unit test cases.
 
 ### The determinism test
 
@@ -1255,13 +1264,14 @@ These numbers tune the game, but a bot is not a person. A human playtest decides
 - The wasteland map, the map picker and the difficulty selector ([`wasteland.test.mjs`](../tests/e2e/wasteland.test.mjs), [`mappicker.test.mjs`](../tests/e2e/mappicker.test.mjs), [`difficulty.test.mjs`](../tests/e2e/difficulty.test.mjs)).
 - The dash ([`dash.test.mjs`](../tests/e2e/dash.test.mjs)) and the effects ([`effects.test.mjs`](../tests/e2e/effects.test.mjs)).
 - Solid cars ([`solidcars.test.mjs`](../tests/e2e/solidcars.test.mjs)).
+- Crushed cars ([`crush.test.mjs`](../tests/e2e/crush.test.mjs)).
 - Installing and offline play ([`install.test.mjs`](../tests/e2e/install.test.mjs)).
 
 The tests also take a **real pixel check** ([`countColorNearCenter`](../tests/e2e/harness.mjs) counts screen pixels of a color). This exists because a state query can pass while nothing is visible on screen (see [bugs](#bugs-worth-knowing-about)).
 
 The functional tests run Chrome with a software renderer, so they check behavior, not speed. [`perf.mjs`](../tests/e2e/perf.mjs) is run by hand and uses the machine's real GPU.
 
-**Measured result.** The last full browser run passed **220 of 220** tests, with none skipped.
+**Measured result.** The last full browser run passed **231 of 231** tests, with none skipped.
 
 ### Performance
 

@@ -22,7 +22,7 @@ Survive 10 minutes against a growing horde, then fight the final boss. You only 
 - **Limited ammo.** Guns use magazines and reloads, and crates keep you supplied. An empty Rifle still fires weak free shots, so you can always fight back.
 - **8 zombie types and elites,** plus a 3-phase boss with telegraphed attacks. Its health scales with your build.
 - **Two endless maps,** a ruined city and a desert highway wasteland, generated from the run's seed, with a day cycle that moves from dusk into night.
-- **Solid wrecked cars.** You and the zombies slide around them, Chargers crash into them, and the boss walks straight through.
+- **Solid wrecked cars.** You and the zombies slide around them, Chargers crash into them, and the boss flattens every one it steps on.
 - **A dash with a cooldown,** and **Easy, Normal and Hard** on the title screen. Play stays one press away.
 
 ### Controls
@@ -59,7 +59,7 @@ Measured on a laptop with an Intel UHD integrated GPU, in headless Chrome. Real 
 | Stress test: 2,000 zombies and 3,000 shots at 1920x1080 | Locked at the 144 Hz display, with a 99th percentile frame gap of 7.3 ms |
 | 2,000 zombies at phone size, with the processor slowed 6 times as a stand-in for a weak phone | Average above 30 fps, though single frames drop below it. This does not slow the graphics chip |
 | Compressed download | About 384 KB on a first visit |
-| Tests | 230 unit test cases and 220 browser tests, all passing |
+| Tests | 249 unit test cases and 231 browser tests, all passing |
 
 Balance is checked by bots that play 100 games per setting on seeds not used for tuning:
 
@@ -73,7 +73,7 @@ Bots can measure balance, but not whether the game is fun. That needs people pla
 
 ## Status
 
-The whole game is playable from title to victory or death. This is a first public version, and balance may change after playtesting. There is no packaged release yet.
+The whole game is playable from title to victory or death. A PC download is on the [Releases](https://github.com/ShanPla/Last-Stand/releases) page.
 
 [docs/prototypes](docs/prototypes) shows how the look developed.
 
