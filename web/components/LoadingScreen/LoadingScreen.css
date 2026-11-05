@@ -49,3 +49,16 @@
 @media (prefers-reduced-motion: reduce) {
   #loading-screen { transition: none; }
 }
+
+/* A fatal message replaces the bar. It shows the same way after the game has started. */
+#loading-screen.is-error .loading-track {
+  display: none;
+}
+
+#loading-screen.is-error .loading-label {
+  max-width: 520px;
+  font-size: 20px;
+  line-height: 1.5;
+  text-align: center;
+  color: #f2e6cf;
+}
