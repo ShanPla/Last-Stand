@@ -540,13 +540,17 @@ LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal) {
         DrawRectangle(static_cast<int>(l.centerX() - lineWidth * 0.5f), static_cast<int>(lineY), static_cast<int>(lineWidth * readiness), std::max(2, static_cast<int>(2.0f * u)), tint(theme::kUiAccent));
     }
 
-    // Navigation. Items 0..count-1 are the cards, and count is the reroll button.
-    const int items = count + 1;
+    // Navigation. Items 0..count-1 are the cards, and count is the reroll button. With no
+    // rerolls left the button is disabled and draws no highlight, so focus must never land
+    // on it: it would look as if nothing is selected and Enter did nothing.
+    const bool rerollUsable = state.run.rerollsLeft > 0;
+    const int items = rerollUsable ? count + 1 : count;
+    if (g_nav.selected >= items) g_nav.selected = count - 1;  // The last reroll was just used while it had focus.
     if (ready) {
         // Steps are summed, so two quick presses in one frame move two cards.
         if (m.columns) {
             if (in.stepX != 0 && g_nav.selected < count) g_nav.selected = ((g_nav.selected + in.stepX) % count + count) % count;
-            else if (in.stepY > 0 && g_nav.selected < count) g_nav.selected = count;
+            else if (in.stepY > 0 && g_nav.selected < count && rerollUsable) g_nav.selected = count;
             else if (in.stepY < 0 && g_nav.selected == count) g_nav.selected = count / 2;
         } else {
             const int step = in.stepX + in.stepY;
@@ -584,7 +588,9 @@ LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal) {
     setInputEnabled(ready);
     const bool rerollPressed = button(g_nav, count, m.reroll, rerollLabel, ButtonLook::Normal, promptReroll(), left > 0);
     setInputEnabled(wasEnabled);
-    if (left > 0 && ready && (rerollPressed || in.reroll)) choice.reroll = true;
+    // One action per frame: a card choice wins over a reroll pressed in the same frame.
+    // Both together would reroll and then pick from cards the player never saw.
+    if (left > 0 && ready && choice.card < 0 && (rerollPressed || in.reroll)) choice.reroll = true;
 
     // The held build, so the player can see what they own.
     const float weaponSlot = 34.0f * u;

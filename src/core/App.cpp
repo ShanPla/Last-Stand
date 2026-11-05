@@ -416,8 +416,14 @@ static void drawUiPass(float dtReal, bool playing) {
             if (g_state->run.phase == RunPhase::LevelUp) {
                 ui::setFade(smoothstep01(g_phaseAge / kScreenFadeSeconds));
                 const ui::LevelUpChoice choice = ui::drawLevelUpCards(*g_state, dtReal);
-                if (choice.card >= 0) g_pendingChoice.card = choice.card;
-                if (choice.reroll) g_pendingChoice.reroll = true;
+                // One action until a step uses it. On a fast display several frames can pass
+                // before a step runs, and a pick made after a reroll would be applied to
+                // cards the player never saw.
+                const bool actionWaiting = g_pendingChoice.card >= 0 || g_pendingChoice.reroll;
+                if (!actionWaiting) {
+                    if (choice.card >= 0) g_pendingChoice.card = choice.card;
+                    else if (choice.reroll) g_pendingChoice.reroll = true;
+                }
             }
             break;
         case Screen::Paused: {
