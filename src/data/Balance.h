@@ -21,6 +21,7 @@ inline constexpr float kPlayerPickupRange = 80.0f;
 inline constexpr float kPlayerInvulnerableAfterHit = 0.35f;
 inline constexpr float kMinDamageTaken = 1.0f;
 inline constexpr float kHealCardFraction = 0.30f;
+inline constexpr float kPlayerHitFlashSeconds = 0.15f;
 
 // --- Dash --------------------------------------------------------------------
 // A short burst of speed with a cooldown. The cooldown runs from the moment of the
@@ -257,6 +258,9 @@ inline constexpr float kSpitterStrafeSpeedFraction = 0.6f;
 inline constexpr float kBloaterCrawlerSpread = 22.0f;       // How far from the corpse crawlers appear.
 inline constexpr float kBombBossMaxHpFraction = 0.015f;      // A bomb takes at most this much of the boss's HP.
 inline constexpr float kPickupDropOffset = 18.0f;           // Moves a second drop off the first.
+inline constexpr float kPickupDropFanRadians = 2.1f;        // Angle between drops from one kill.
+inline constexpr float kWaveGroupSpread = 44.0f;            // A wave group spawns within this of its center.
+inline constexpr uint32_t kSpitterFirePhases = 16;          // Spitters start at one of this many points in the fire cycle.
 inline constexpr float kBossDashSeconds = 0.6f;
 inline constexpr float kBossCircleScatter = 260.0f;         // Extra circles land within this of the player.
 inline constexpr float kBossSecondLineRadians = 0.5f;       // Extra lines in the last phase, either side.
@@ -361,8 +365,10 @@ inline constexpr EliteEvent kEliteEvents[] = {
 // --- Pickups and gems ---------------------------------------------------------
 inline constexpr float kGemAttractSpeed = 520.0f;
 inline constexpr float kPickupCollectRadius = 34.0f;
+inline constexpr float kGemCollectMargin = 6.0f;  // A gem is collected this far past the player's edge.
 inline constexpr int kGemMergeStartCount = 500;  // Above this, nearby gems merge into one.
 inline constexpr float kGemMergeCellSize = 96.0f;
+inline constexpr uint32_t kGemMergeIntervalSteps = 30;  // How often merging runs: half a second at 60 steps per second.
 inline constexpr int kKillsPerPickupDrop = 70;   // A pickup drops about this often.
 inline constexpr float kHealPickupFraction = 0.25f;
 inline constexpr float kAmmoCrateFraction = 0.40f;  // Refills this much of each gun's reserve.

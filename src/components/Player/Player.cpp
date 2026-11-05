@@ -70,7 +70,7 @@ void damage(GameState& state, float amount) {
     const float taken = std::max(balance::kMinDamageTaken, scaled - player.stats.armor);
     player.hp -= taken;
     player.invulnerable = balance::kPlayerInvulnerableAfterHit;
-    player.hitFlash = 0.15f;
+    player.hitFlash = balance::kPlayerHitFlashSeconds;
     pushEvent(state, EventType::PlayerHit, player.pos, taken);
 }
 

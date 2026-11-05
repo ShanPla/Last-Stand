@@ -417,3 +417,44 @@ TEST_CASE("the fastest possible player can't outrun the boss in any phase") {
     }
 }
 
+// --- Numbers that moved to the balance file --------------------------------------
+
+TEST_CASE("the numbers moved to the balance file are the ones in use") {
+    SUBCASE("player hit flash") {
+        auto state = makeRun();
+        pickups::spawnPickup(*state, Vec2{9000.0f, 0.0f}, PickupType::Heal);
+        REQUIRE(enemies::spawn(*state, EnemyType::Walker, state->player.pos + Vec2{5.0f, 0.0f}, false));
+        enemies::update(*state);
+        CHECK(state->player.hitFlash == doctest::Approx(balance::kPlayerHitFlashSeconds));
+    }
+    SUBCASE("elite bloater crawlers") {
+        auto state = makeRun();
+        Enemy* bloater = enemies::spawn(*state, EnemyType::Bloater, Vec2{500.0f, 0.0f}, true);
+        REQUIRE(bloater != nullptr);
+        bloater->hp = 0.0f;
+        enemies::removeDead(*state);
+        CHECK(state->enemies.count == balance::kCrawlersPerBloater * balance::kElite_CrawlerMult);
+    }
+    SUBCASE("gem collect distance") {
+        const float edge = balance::kPlayerRadius + balance::kGemCollectMargin;
+        auto state = makeRun();
+        pickups::dropGem(*state, state->player.pos + Vec2{edge + 1.0f, 0.0f}, 1);
+        pickups::update(*state);
+        CHECK(state->gems.count == 1);
+        auto inside = makeRun();
+        pickups::dropGem(*inside, inside->player.pos + Vec2{edge - 1.0f, 0.0f}, 1);
+        pickups::update(*inside);
+        CHECK(inside->gems.count == 0);
+    }
+    SUBCASE("gem merge interval") {
+        auto state = makeRun();
+        const int gems = balance::kGemMergeStartCount + 1;
+        for (int i = 0; i < gems; ++i) pickups::dropGem(*state, Vec2{5000.0f, 5000.0f}, 1);
+        state->run.tick = balance::kGemMergeIntervalSteps + 1;
+        pickups::update(*state);
+        CHECK(state->gems.count == gems);
+        state->run.tick = balance::kGemMergeIntervalSteps * 2;
+        pickups::update(*state);
+        CHECK(state->gems.count == 1);
+    }
+}

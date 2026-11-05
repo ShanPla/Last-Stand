@@ -191,7 +191,7 @@ void applyDamage(GameState& state, int enemyIndex, float amount, bool credited, 
 
 // Crawlers burst out of a dead Bloater, spread evenly around it from a random start angle.
 void spawnCrawlers(GameState& state, const Enemy& bloater) {
-    const int count = balance::kCrawlersPerBloater * (bloater.elite ? 2 : 1);
+    const int count = balance::kCrawlersPerBloater * (bloater.elite ? balance::kElite_CrawlerMult : 1);
     const float start = state.rng.range(0.0f, kTau);
     for (int i = 0; i < count; ++i) {
         const float angle = start + kTau * static_cast<float>(i) / static_cast<float>(count);

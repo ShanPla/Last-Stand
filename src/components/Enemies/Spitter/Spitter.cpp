@@ -16,7 +16,8 @@ Vec2 spitterVelocity(GameState& state, Enemy& enemy) {
     // point in the cycle, taken from its id, so a group does not fire in step.
     if (enemy.state == 0) {
         enemy.state = 1;
-        enemy.timer = balance::kSpitterFireInterval * static_cast<float>((enemy.id * 7u) % 16u) / 16.0f;
+        const uint32_t phase = (enemy.id * 7u) % balance::kSpitterFirePhases;
+        enemy.timer = balance::kSpitterFireInterval * static_cast<float>(phase) / static_cast<float>(balance::kSpitterFirePhases);
     }
     // While out of range it may bank at most one step of readiness, so it can't fire a
     // burst of catch-up shots when it comes back into range. Guns work the same way.

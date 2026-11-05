@@ -103,7 +103,7 @@ void onEnemyKilled(GameState& state, Vec2 pos, bool elite) {
     int dropped = 0;
     const auto drop = [&](PickupType type) {
         // Later drops from the same kill sit a little to the side so they do not overlap.
-        const Vec2 offset = fromAngle(static_cast<float>(dropped) * 2.1f) * (balance::kPickupDropOffset * static_cast<float>(dropped));
+        const Vec2 offset = fromAngle(static_cast<float>(dropped) * balance::kPickupDropFanRadians) * (balance::kPickupDropOffset * static_cast<float>(dropped));
         spawnPickup(state, pos + offset, type);
         dropped++;
     };
@@ -150,7 +150,7 @@ void mergeGems(GameState& state) {
 void update(GameState& state) {
     Player& player = state.player;
     const float range = player.stats.pickupRange;
-    const float collectDistance = balance::kPlayerRadius + 6.0f;
+    const float collectDistance = balance::kPlayerRadius + balance::kGemCollectMargin;
 
     for (int i = state.gems.count - 1; i >= 0; --i) {
         Gem& gem = state.gems[i];
@@ -171,7 +171,7 @@ void update(GameState& state) {
 
     collectPickups(state);
 
-    if (state.gems.count > balance::kGemMergeStartCount && state.run.tick % 30 == 0) {
+    if (state.gems.count > balance::kGemMergeStartCount && state.run.tick % balance::kGemMergeIntervalSteps == 0) {
         mergeGems(state);
     }
 }

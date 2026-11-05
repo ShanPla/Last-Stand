@@ -46,7 +46,7 @@ void update(GameState& state) {
             // A group spawns together at one point, so it arrives as a pack.
             const Vec2 groupCenter = spawnPoint(state);
             for (int member = 0; member < row.groupSize; ++member) {
-                const Vec2 jitter = fromAngle(state.rng.range(0.0f, kTau)) * state.rng.range(0.0f, 44.0f);
+                const Vec2 jitter = fromAngle(state.rng.range(0.0f, kTau)) * state.rng.range(0.0f, balance::kWaveGroupSpread);
                 enemies::spawn(state, row.type, groupCenter + jitter, false);
             }
         }
