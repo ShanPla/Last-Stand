@@ -403,6 +403,8 @@ void consumeEvents(const GameState& state) {
 
 void draw(const GameState& state, float alpha) {
     if (!g_ready) init();
+    // Only does work on the first frame of a run on another difficulty.
+    useBossLevel(state.run.difficulty);
     fitTargetToWindow();
     const Vec2 ringCenter = aimCamera(state, alpha);
     updateGround(g_view, state.run.seed, state.run.map, maps::CrushedCars{state.run.crushed, state.run.crushedCount});

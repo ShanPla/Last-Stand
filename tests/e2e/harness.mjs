@@ -66,6 +66,8 @@ const KNOWN_WARNINGS = [
   // The renderer reports its view size and its start-up cost on purpose, once each.
   /^world view: target \d+x\d+, scale [\d.]+, sees \d+ of \d+$/,
   /^world renderer ready: /,
+  // A run on another difficulty repaints the boss once, and reports what that cost.
+  /^boss looks for difficulty \d painted in [\d.]+ ms using \d+ rows from row \d+$/,
 ];
 
 // Collects console errors, unexpected console warnings and uncaught exceptions on a page

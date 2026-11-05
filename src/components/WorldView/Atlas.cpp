@@ -1,10 +1,12 @@
 #include "components/WorldView/Sprites.h"
+#include "core/Platform.h"
 #include "data/Theme.h"
 
 #include "raylib.h"
 #include "rlgl.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 namespace ls::worldview {
@@ -22,11 +24,18 @@ SpriteRef g_blades[kBladeFrames];
 unsigned int g_atlasTexture = 0;
 unsigned int g_paletteTexture = 0;
 
+// The boss's part of the atlas: every row from g_bossTop down. Its sprites are painted
+// again when the difficulty changes, so they sit below everything that never changes.
+int g_bossTop = 0;
+int g_bossRows = 0;
+Difficulty g_bossLevel = Difficulty::Normal;
+
 // Rows of sprites, left to right. Frames of one figure have similar heights, so this
-// simple packer leaves little waste, and needs no sorting.
+// simple packer leaves little waste, and needs no sorting. pixels holds the atlas from
+// firstRow down, so the boss's part can be repainted in a smaller buffer of its own.
 class Packer {
 public:
-    explicit Packer(uint8_t* pixels) : pixels_(pixels) {}
+    Packer(uint8_t* pixels, int firstRow) : pixels_(pixels), firstRow_(firstRow), penY_(firstRow) {}
 
     SpriteRef add(const Canvas& canvas) {
         SpriteRef ref;
@@ -34,6 +43,9 @@ public:
         if (!canvas.bounds(&left, &top, &right, &bottom)) return ref;
         const int width = right - left + 1;
         const int height = bottom - top + 1;
+        // A boss drawing that reaches the canvas edge has been cut off. The boss grows
+        // with the difficulty, so this catches a level drawn too big.
+        if (checkEdges_ && (left == 0 || top == 0 || right == Canvas::kSize - 1 || bottom == Canvas::kSize - 1)) clipped_ = true;
         if (penX_ + width + kGap > kAtlasSize) {
             penX_ = 1;
             penY_ += rowHeight_ + kGap;
@@ -45,7 +57,7 @@ public:
         }
         const uint8_t* source = canvas.pixels();
         for (int y = 0; y < height; ++y) {
-            std::memcpy(pixels_ + (penY_ + y) * kAtlasSize + penX_, source + (top + y) * Canvas::kSize + left, static_cast<size_t>(width));
+            std::memcpy(pixels_ + (penY_ - firstRow_ + y) * kAtlasSize + penX_, source + (top + y) * Canvas::kSize + left, static_cast<size_t>(width));
         }
         ref.x = static_cast<uint16_t>(penX_);
         ref.y = static_cast<uint16_t>(penY_);
@@ -60,14 +72,28 @@ public:
 
     int usedRows() const { return penY_ + rowHeight_; }
     bool overflowed() const { return overflowed_; }
+    bool clipped() const { return clipped_; }
+    void checkEdges() { checkEdges_ = true; }
+    // Where a part of the atlas that starts on a row of its own begins.
+    int startRow() {
+        if (penX_ > 1) {
+            penY_ += rowHeight_ + kGap;
+            penX_ = 1;
+            rowHeight_ = 0;
+        }
+        return penY_;
+    }
 
 private:
     static constexpr int kGap = 1;  // Stops a neighbor bleeding in at a rounding edge.
     uint8_t* pixels_;
+    int firstRow_;
     int penX_ = 1;
-    int penY_ = 1;
+    int penY_;
     int rowHeight_ = 0;
     bool overflowed_ = false;
+    bool clipped_ = false;
+    bool checkEdges_ = false;
 };
 
 // Elites only exist for some types, and don't need every step.
@@ -84,32 +110,70 @@ int posesOf(Figure figure) {
     }
 }
 
+// Every zombie but the boss.
 void buildFigures(Packer& packer, Canvas& canvas) {
-    for (int f = 0; f < kFigureCount; ++f) {
+    for (int f = 0; f < static_cast<int>(Figure::Boss1); ++f) {
         const Figure figure = static_cast<Figure>(f);
-        const bool boss = figure >= Figure::Boss1;
         for (int step = 0; step < kScaleSteps; ++step) {
             const bool normal = step <= kStepNormalLast;
-            const bool usable = boss ? (step >= kStepBossFirst && step <= kStepBossLast) : (normal || (hasElites(figure) && step >= kStepEliteFirst));
-            if (!usable) continue;
+            if (!normal && !(hasElites(figure) && step >= kStepEliteFirst)) continue;
             for (int facing = 0; facing < kFacingCount; ++facing) {
-                for (int pose = 0; pose < kPoseCount; ++pose) {
-                    bool wanted;
-                    if (boss) wanted = pose < kBossWalkFrames || pose == kPoseBraceA || pose == kPoseBraceB || pose == kPoseDashA;
-                    else wanted = pose < posesOf(figure);
-                    if (!wanted) continue;
+                for (int pose = 0; pose < posesOf(figure); ++pose) {
                     canvas.begin(kStepScale[step]);
-                    paintFigure(canvas, figure, facing, pose);
+                    paintFigure(canvas, figure, Difficulty::Normal, facing, pose);
                     g_figures[f][step][facing][pose] = packer.add(canvas);
                 }
             }
-            if (step <= (boss ? kStepBossLast : kStepNormalLast)) {
-                for (int frame = 0; frame < kCorpseFrames; ++frame) {
-                    canvas.begin(kStepScale[step]);
-                    paintCorpse(canvas, figure, frame);
-                    g_corpses[f][step][frame] = packer.add(canvas);
+            if (!normal) continue;
+            for (int frame = 0; frame < kCorpseFrames; ++frame) {
+                canvas.begin(kStepScale[step]);
+                paintCorpse(canvas, figure, Difficulty::Normal, frame);
+                g_corpses[f][step][frame] = packer.add(canvas);
+            }
+        }
+    }
+}
+
+// The boss's three phases for one difficulty. It always dies in its last phase, so only
+// that phase needs a corpse.
+void buildBoss(Packer& packer, Canvas& canvas, Difficulty level) {
+    const float size = bossArtScale(level);
+    // Hard and Hell are drawn so much bigger that two sizes of them don't fit in the
+    // atlas. They get one size halfway between the two, used near and far: at most 7% off
+    // the true perspective size, which is hard to see on a figure this big.
+    const bool oneSize = level >= Difficulty::Hard;
+    const float middle = (kStepScale[kStepBossFirst] + kStepScale[kStepBossLast]) * 0.5f;
+    // Pose by pose, so frames of a similar height share a row of the atlas. The packer
+    // wastes the space above short frames in a row of tall ones, and the boss's frames
+    // differ in height a lot, for example with its arms raised to charge.
+    for (int step = oneSize ? kStepBossLast : kStepBossFirst; step <= kStepBossLast; ++step) {
+        const float scale = (oneSize ? middle : kStepScale[step]) * size;
+        for (int pose = 0; pose < kPoseCount; ++pose) {
+            const bool wanted = pose < kBossWalkFrames || pose == kPoseBraceA || pose == kPoseBraceB || pose == kPoseDashA;
+            if (!wanted) continue;
+            for (int facing = 0; facing < kFacingCount; ++facing) {
+                for (int phase = 0; phase < 3; ++phase) {
+                    const Figure figure = static_cast<Figure>(static_cast<int>(Figure::Boss1) + phase);
+                    canvas.begin(scale);
+                    paintFigure(canvas, figure, level, facing, pose);
+                    g_figures[static_cast<int>(figure)][step][facing][pose] = packer.add(canvas);
                 }
             }
+        }
+        const int last = static_cast<int>(Figure::Boss3);
+        for (int frame = 0; frame < kCorpseFrames; ++frame) {
+            canvas.begin(scale);
+            paintCorpse(canvas, Figure::Boss3, level, frame);
+            g_corpses[last][step][frame] = packer.add(canvas);
+        }
+    }
+    if (!oneSize) return;
+    for (int f = static_cast<int>(Figure::Boss1); f <= static_cast<int>(Figure::Boss3); ++f) {
+        for (int step = kStepBossFirst; step < kStepBossLast; ++step) {
+            for (int facing = 0; facing < kFacingCount; ++facing) {
+                for (int pose = 0; pose < kPoseCount; ++pose) g_figures[f][step][facing][pose] = g_figures[f][kStepBossLast][facing][pose];
+            }
+            for (int frame = 0; frame < kCorpseFrames; ++frame) g_corpses[f][step][frame] = g_corpses[f][kStepBossLast][frame];
         }
     }
 }
@@ -226,6 +290,7 @@ void fillBaseRow(Color* row) {
     row[kPEnemyHotLight] = kEnemyBulletHot;
     row[kPEnemyCore] = kEnemyBulletCore;
     for (int i = 0; i < 3; ++i) row[kPFlame + i] = kFireFlame[i];
+    setRamp4(row, kPGrowth, kBossGrowthEasy);
 }
 
 // Clothes in a ruined city have faded. Pulling them toward gray keeps a big crowd from
@@ -317,23 +382,34 @@ void buildPalette() {
     setRamp3(evolved, kPBlade, kBladeSteelEvolved);
     setRamp3(evolved, kPMuzzle, kMuzzleRampEvolved);
 
+}
+
+// The boss's phase rows and its charge-up row, for one difficulty.
+void setBossRows(Difficulty level) {
+    using namespace theme;
+    const BossLook& look = kBossLooks[static_cast<int>(level)];
     for (int phase = 0; phase < 3; ++phase) {
         Color* row = g_palette[kRowBoss + phase];
-        const BossPalette& boss = kBossPhases[phase];
+        const BossPalette& boss = look.phase[phase];
         setRamp4(row, kPSkin, boss.skin);
         setRamp4(row, kPShirt, boss.cloth);
         setRamp4(row, kPPants, boss.pants);
         setRamp4(row, kPBile, boss.glow);
+        setRamp4(row, kPGrowth, boss.growth);
+        setRamp3(row, kPBlood, boss.blood);
         for (int i = 0; i < 3; ++i) row[kPHair + i] = boss.skin.tone[i];
         setRamp2(row, kPShoes, kZombieShoes[0]);
         row[kPOutline] = boss.outline;
     }
+    // The charge-up paints the whole body in the warning glow, so it reads the same at
+    // every difficulty however dark the boss's own colors are.
     Color* charge = g_palette[kRowBossCharge];
-    setRamp4(charge, kPSkin, kBossPhases[2].glow);
-    setRamp4(charge, kPShirt, kBossPhases[1].glow);
-    setRamp4(charge, kPPants, kBossPhases[0].glow);
-    setRamp4(charge, kPBile, kBossPhases[2].glow);
-    for (int i = 0; i < 3; ++i) charge[kPHair + i] = kBossPhases[1].glow.tone[i];
+    setRamp4(charge, kPSkin, look.phase[2].glow);
+    setRamp4(charge, kPShirt, look.phase[1].glow);
+    setRamp4(charge, kPPants, look.phase[0].glow);
+    setRamp4(charge, kPBile, look.phase[2].glow);
+    setRamp4(charge, kPGrowth, look.phase[1].glow);
+    for (int i = 0; i < 3; ++i) charge[kPHair + i] = look.phase[1].glow.tone[i];
     charge[kPOutline] = kBossChargeOutline;
 }
 
@@ -342,11 +418,18 @@ void buildPalette() {
 int buildAtlas() {
     uint8_t* pixels = new uint8_t[kAtlasSize * kAtlasSize]();
     Canvas* canvas = new Canvas();
-    Packer packer(pixels);
+    Packer packer(pixels, 0);
     buildSoldier(packer, *canvas);
     buildItems(packer, *canvas);
     buildFigures(packer, *canvas);
+    // Normal first, because the title screen's demo plays Normal.
+    g_bossTop = packer.startRow();
+    packer.checkEdges();
+    g_bossLevel = Difficulty::Normal;
+    buildBoss(packer, *canvas, g_bossLevel);
+    g_bossRows = packer.usedRows() - g_bossTop;
     if (packer.overflowed()) TraceLog(LOG_WARNING, "Sprite atlas is full: some sprites are missing");
+    if (packer.clipped()) TraceLog(LOG_WARNING, "A boss sprite was too big for the canvas and was cut off");
 
     g_atlasTexture = rlLoadTexture(pixels, kAtlasSize, kAtlasSize, RL_PIXELFORMAT_UNCOMPRESSED_GRAYSCALE, 1);
     // Palette positions can't be blended, so the atlas must never be filtered.
@@ -357,10 +440,38 @@ int buildAtlas() {
     const int usedRows = packer.overflowed() ? 0 : packer.usedRows();
 
     buildPalette();
+    setBossRows(g_bossLevel);
     g_paletteTexture = rlLoadTexture(g_palette, kPaletteWidth, kPaletteHeight, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, 1);
     rlTextureParameters(g_paletteTexture, RL_TEXTURE_MIN_FILTER, RL_TEXTURE_FILTER_NEAREST);
     rlTextureParameters(g_paletteTexture, RL_TEXTURE_MAG_FILTER, RL_TEXTURE_FILTER_NEAREST);
     return usedRows;
+}
+
+void useBossLevel(Difficulty level) {
+    if (level == g_bossLevel || g_atlasTexture == 0) return;
+    const double start = GetTime();
+    // A fresh buffer for the boss's rows only. This happens once when a run starts on
+    // another difficulty, never during play, so the allocation can't cause a stutter.
+    const int rows = kAtlasSize - g_bossTop;
+    uint8_t* pixels = new uint8_t[static_cast<size_t>(rows) * kAtlasSize]();
+    Canvas* canvas = new Canvas();
+    Packer packer(pixels, g_bossTop);
+    packer.checkEdges();
+    buildBoss(packer, *canvas, level);
+    const int used = packer.usedRows() - g_bossTop;
+    if (packer.overflowed()) TraceLog(LOG_WARNING, "Sprite atlas is full: some boss sprites are missing");
+    if (packer.clipped()) TraceLog(LOG_WARNING, "A boss sprite was too big for the canvas and was cut off");
+    // As many rows as the taller of the old and new looks, which also wipes the old one.
+    rlUpdateTexture(g_atlasTexture, 0, g_bossTop, kAtlasSize, std::min(rows, std::max(used, g_bossRows)), RL_PIXELFORMAT_UNCOMPRESSED_GRAYSCALE, pixels);
+    delete canvas;
+    delete[] pixels;
+    g_bossRows = used;
+    g_bossLevel = level;
+    setBossRows(level);
+    rlUpdateTexture(g_paletteTexture, 0, 0, kPaletteWidth, kPaletteHeight, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, g_palette);
+    if (platform::debugEnabled()) {
+        std::fprintf(stderr, "boss looks for difficulty %d painted in %.1f ms using %d rows from row %d\n", static_cast<int>(level), (GetTime() - start) * 1000.0, used, g_bossTop);
+    }
 }
 
 unsigned int atlasTextureId() { return g_atlasTexture; }

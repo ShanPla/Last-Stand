@@ -50,6 +50,15 @@ inline constexpr int kSceneCarOverEdge = -130;     // The first car whose pictur
 inline constexpr int kSceneBossSpiral = -140;      // A boss charging its spiral from off the left edge.
 inline constexpr int kSceneBossCross = -141;       // A boss off the left edge has just cast its cross.
 inline constexpr int kSceneBossTrail = -142;       // A boss off the left edge has just started its trail.
+// The boss's look for one difficulty and phase, at -180 - (difficulty * 3 + phase), facing
+// the soldier with enemy bullets beside and over it, for judging its picture and readability.
+inline constexpr int kSceneBossLook = -180;
+inline constexpr int kSceneBossLookCount = 12;
+// A standing object with the soldier beside it: a wall, a tree, a lamp, then a pole, three
+// scenes each. For the object at -160 - 3 * n, that number is the object alone, one less adds
+// a zombie behind it, and two less a zombie in front of it.
+inline constexpr int kScenePropFirst = -160;
+inline constexpr int kScenePropCount = 12;
 void setupShowcase(GameState& state, int extraZombies);
 
 // Debug only: flattens the car nearest the soldier, the way the boss's body would.

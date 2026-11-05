@@ -26,6 +26,7 @@ namespace {
 constexpr uint32_t kGunChangeTicks = 80;
 bool g_clockStopped = false;  // For comparing pictures of the ground.
 int g_sheetPage = -1;         // Which sprite sheet is showing, if any.
+constexpr int kSheetBossEasy = 4;  // Pages 4 to 7 show the boss sheet for Easy to Hell.
 constexpr WeaponId kGuns[] = {WeaponId::Rifle, WeaponId::Shotgun, WeaponId::Smg, WeaponId::Sniper,
                               WeaponId::Flamethrower, WeaponId::GrenadeLauncher, WeaponId::Rockets, WeaponId::Tesla};
 constexpr int kShownGunCount = static_cast<int>(sizeof(kGuns) / sizeof(kGuns[0]));
@@ -344,6 +345,17 @@ void placeTestScene(GameState& state, int scene) {
             state.run.bossSpawned = true;
             enemies::startBossAttack(state, *boss, kAttack[scene - kSceneBossTrail]);
         }
+    } else if (scene <= kSceneBossLook && scene > kSceneBossLook - kSceneBossLookCount) {
+        const int look = kSceneBossLook - scene;
+        state.run.difficulty = static_cast<Difficulty>(look / 3);
+        state.run.bossPhase = static_cast<uint8_t>(look % 3);
+        state.run.bossSpawned = true;
+        // Above the soldier, so it faces the camera and fits a tall phone and a wide laptop.
+        const Vec2 bossAt{0.0f, -100.0f};
+        if (Enemy* boss = placeEnemy(state, EnemyType::Boss, bossAt, false)) boss->id = 7u;
+        // One bullet over its body and one between it and the soldier.
+        placeBullet(state, bossAt + Vec2{20.0f, -10.0f});
+        placeBullet(state, Vec2{-30.0f, -45.0f});
     } else if (scene == kSceneWalkerOffLeft) {
         placeOffLeft(state, EnemyType::Walker, 30.0f, right);
     } else if (scene == kSceneOnlyMines) {
@@ -411,6 +423,22 @@ void drawSpriteSheet() {
             spriteQuad(figureSprite(Figure::Brute, step, kFacingFront, 0), x + 76, 330, false, kOutfit[2]);
             x += 124;
         }
+    } else if (g_sheetPage >= kSheetBossEasy && g_sheetPage < kSheetBossEasy + 4) {
+        // One difficulty's boss, spaced for its biggest look: the three phases from the
+        // front, and on a wide screen from the side as well.
+        const View& view = currentView();
+        const bool wide = view.width >= view.height;
+        for (int phase = 0; phase < 3; ++phase) {
+            const Figure figure = static_cast<Figure>(static_cast<int>(Figure::Boss1) + phase);
+            const uint8_t row = static_cast<uint8_t>(kRowBoss + phase);
+            if (wide) {
+                const int x = view.width * (1 + 2 * phase) / 6;
+                spriteQuad(figureSprite(figure, 2, kFacingFront, 1), x, view.height * 47 / 100, false, row);
+                spriteQuad(figureSprite(figure, 2, kFacingSide, 0), x, view.height * 96 / 100, false, row);
+            } else {
+                spriteQuad(figureSprite(figure, 2, kFacingFront, 1), view.width / 2, view.height * (2 + 3 * phase) / 10 + view.height / 10, false, row);
+            }
+        }
     } else if (g_sheetPage == 2) {
         // The boss: each phase from each side, then its special poses.
         for (int phase = 0; phase < 3; ++phase) {
@@ -475,6 +503,8 @@ void setupShowcase(GameState& state, int extraZombies) {
 
     g_clockStopped = extraZombies < 0;
     g_sheetPage = extraZombies <= -2 && extraZombies > kSceneChargerOffLeft ? -2 - extraZombies : -1;
+    // The boss pages for one difficulty switch the run to it, so the atlas paints that look.
+    if (g_sheetPage >= kSheetBossEasy && g_sheetPage < kSheetBossEasy + 4) state.run.difficulty = static_cast<Difficulty>(g_sheetPage - kSheetBossEasy);
     if (extraZombies <= kSceneChargerOffLeft) placeTestScene(state, extraZombies);
     if (extraZombies < 0) return;
     if (extraZombies > 0) {

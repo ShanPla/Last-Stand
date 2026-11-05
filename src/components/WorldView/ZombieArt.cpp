@@ -697,30 +697,162 @@ void paintCharger(Canvas& c, int facing, int pose, float t) {
 }
 
 // --- Boss: about three times a Brute, with a different look each phase ---------
+// One painter draws all twelve looks: three phases for each difficulty. Each difficulty
+// keeps every part of the one below it and adds more on top, so all twelve share one
+// skeleton, and the walk, the feet and the attack warnings line up the same on every
+// level. The additions are big shapes rather than fine detail, so they still read at
+// game zoom on a phone, and at night.
 
-void paintBossArmHuge(Canvas& c, Vec2 shoulder, Vec2 elbow, Vec2 hand, float r, int shift) {
-    c.limb(shoulder.x, shoulder.y, elbow.x, elbow.y, r * 1.2f, r, kSkin, shift);
-    c.limb(elbow.x, elbow.y, hand.x, hand.y, r, r * 0.8f, kSkin, shift);
-    c.ball(hand.x, hand.y - 1.0f, r * 1.05f, r, kSkin, shift);
-    // Claws.
-    for (int i = -1; i <= 1; ++i) {
-        const float x = hand.x + static_cast<float>(i) * r * 0.7f;
-        c.limb(x, hand.y - r * 0.6f, x + static_cast<float>(i), hand.y - r * 1.8f, 1.6f, 0.5f, kBone, shift);
+constexpr Ramp kGrowth{kPGrowth, 4};
+
+// How much bigger each difficulty draws the boss, by Difficulty. Only the picture grows:
+// its body in the game, and so every hit and warning, stays the same size.
+constexpr float kBossArtScale[4] = {1.0f, 1.05f, 1.1f, 1.2f};
+
+struct BossLookArt {
+    int phase;   // 0 rotting, 1 scrap armor, 2 flayed.
+    int horror;  // 0 for Easy, up to 3 for Hell. Each step adds parts.
+};
+
+// A cluster of boils: a big one with smaller ones around it, each with a pale head of
+// pus. The offsets are fixed, so every frame of the walk shows the same cluster. flip -1
+// mirrors it, so a cluster can spread away from a face instead of over it.
+void paintGrowths(Canvas& c, float x, float y, float size, int count, float flip) {
+    static constexpr float kSpots[5][3] = {{0.0f, 0.0f, 1.0f}, {0.95f, 0.35f, 0.7f}, {-0.85f, 0.5f, 0.62f}, {0.25f, 1.0f, 0.55f}, {-0.4f, -0.75f, 0.5f}};
+    for (int i = 0; i < std::min(count, 5); ++i) {
+        const float r = size * kSpots[i][2];
+        const float bx = x + kSpots[i][0] * size * flip;
+        const float by = y + kSpots[i][1] * size;
+        c.ball(bx, by, r, r * 0.9f, kGrowth);
+        const float pus = r >= 5.0f ? 3.0f : (r >= 3.0f ? 2.0f : 1.0f);
+        c.patch(bx - r * 0.45f, by + r * 0.5f, pus, pus, kPGrowth + 3);
     }
 }
 
-void paintBossDetails(Canvas& c, int phase, Vec2 chest, float y, bool front) {
-    if (phase == 0) {
+// An extra eye: a dark socket with an ember in it, a tone dimmer than the two main eyes
+// so the face keeps one clear pair to read.
+void paintSmallEye(Canvas& c, float x, float y) {
+    c.patch(x - 2.0f, y + 2.0f, 5.0f, 4.0f, kPSocket);
+    c.patch(x - 1.0f, y + 1.0f, 3.0f, 2.0f, kPBile + 2);
+}
+
+// A second mouth torn open in the flesh: bloody lips, a dark throat and two rows of fangs.
+// A tall one has its fangs along the sides, like a chest split down the middle.
+void paintMaw(Canvas& c, float x, float y, float w, float h, bool tall) {
+    c.ball(x, y, w * 0.5f + 2.5f, h * 0.5f + 2.5f, kBlood);
+    c.ball(x, y, w * 0.5f, h * 0.5f, Ramp{kPMouth, 1});
+    if (tall) {
+        // Fire deep in the throat, so the split reads as a hole into the body.
+        c.ball(x, y - h * 0.1f, w * 0.18f, h * 0.28f, kBile, 1);
+    }
+    const float edge = tall ? h : w;
+    const int teeth = std::max(3, static_cast<int>(edge / (tall ? 5.0f : 3.5f)));
+    const float fang = std::min(w, h) * 0.3f + 1.0f;
+    for (int i = 0; i < teeth; ++i) {
+        const float along = -edge * 0.5f + edge * (static_cast<float>(i) + 0.5f) / static_cast<float>(teeth);
+        if (tall) {
+            c.limb(x - w * 0.5f, y + along, x - w * 0.5f + fang, y + along - 0.5f, 1.3f, 0.4f, kBone);
+            c.limb(x + w * 0.5f, y + along + 1.5f, x + w * 0.5f - fang, y + along + 1.0f, 1.3f, 0.4f, kBone);
+        } else {
+            c.limb(x + along, y + h * 0.5f, x + along + 0.5f, y + h * 0.5f - fang, 1.3f, 0.4f, kBone);
+            c.limb(x + along + 1.5f, y - h * 0.5f, x + along + 1.0f, y - h * 0.5f + fang, 1.3f, 0.4f, kBone);
+        }
+    }
+}
+
+// A tendril: tapering pieces that curl more toward the tip, ending in a bone barb. The
+// caller sways its angle with the walk, so it writhes instead of hanging still.
+void paintTendril(Canvas& c, Vec2 base, float angle, float length, float curl, float r) {
+    constexpr int kPieces = 6;
+    Vec2 at = base;
+    float heading = angle;
+    for (int i = 0; i < kPieces; ++i) {
+        const float k0 = static_cast<float>(i) / kPieces;
+        const float k1 = static_cast<float>(i + 1) / kPieces;
+        const Vec2 next = at + fromAngle(heading) * (length / kPieces);
+        c.limb(at.x, at.y, next.x, next.y, r * (1.0f - 0.65f * k0), r * (1.0f - 0.65f * k1), kGrowth);
+        at = next;
+        heading += curl * (0.4f + k1);
+    }
+    const Vec2 tip = at + fromAngle(heading + curl * 2.0f) * 5.0f;
+    c.limb(at.x, at.y, tip.x, tip.y, r * 0.4f, 0.4f, kBone);
+}
+
+// A glowing wound: a jagged line of the boss's warm inner fire, seen through the skin.
+void paintCrack(Canvas& c, Vec2 a, Vec2 b, Vec2 d) {
+    c.limb(a.x, a.y, b.x, b.y, 1.4f, 1.1f, kBile, 1);
+    c.limb(b.x, b.y, d.x, d.y, 1.1f, 0.6f, kBile, 1);
+}
+
+// Hell only: a second, smaller head bursting out of the body, its mouth open.
+void paintSecondHead(Canvas& c, Vec2 at) {
+    c.limb(at.x, at.y - 7.0f, at.x, at.y, 4.5f, 4.0f, kSkin, -1);
+    c.ball(at.x, at.y, 7.5f, 7.0f, kSkin);
+    c.ball(at.x, at.y + 4.0f, 6.5f, 2.6f, kHair);
+    c.ball(at.x - 3.0f, at.y + 1.5f, 1.8f, 1.6f, kBile, 2);
+    c.ball(at.x + 3.0f, at.y + 1.5f, 1.8f, 1.6f, kBile, 2);
+    c.patch(at.x - 4.5f, at.y - 1.5f, 9.0f, 5.0f, kPMouth);
+    for (int i = 0; i < 3; ++i) {
+        c.patch(at.x - 3.5f + static_cast<float>(i) * 3.0f, at.y - 1.5f, 1.0f, 2.0f, kPTeeth);
+        c.patch(at.x - 2.5f + static_cast<float>(i) * 3.0f, at.y - 5.0f, 1.0f, 2.0f, kPTeeth);
+    }
+}
+
+void paintBossArmHuge(Canvas& c, const BossLookArt& look, Vec2 shoulder, Vec2 elbow, Vec2 hand, float r, int shift) {
+    c.limb(shoulder.x, shoulder.y, elbow.x, elbow.y, r * 1.2f, r, kSkin, shift);
+    c.limb(elbow.x, elbow.y, hand.x, hand.y, r, r * 0.8f, kSkin, shift);
+    c.ball(hand.x, hand.y - 1.0f, r * 1.05f, r, kSkin, shift);
+    // Claws. Hell's are longer and thicker.
+    const float clawReach = look.horror >= 3 ? 2.6f : 1.8f;
+    const float clawWidth = look.horror >= 3 ? 2.1f : 1.6f;
+    for (int i = -1; i <= 1; ++i) {
+        const float x = hand.x + static_cast<float>(i) * r * 0.7f;
+        c.limb(x, hand.y - r * 0.6f, x + static_cast<float>(i), hand.y - r * clawReach, clawWidth, 0.5f, kBone, shift);
+    }
+    const float out = elbow.x < shoulder.x ? -1.0f : 1.0f;  // Away from the body.
+    if (look.horror >= 1) {
+        // The forearm has split open, and a broken bone pokes far out through the skin, so
+        // it breaks the arm's outline as well as its color.
+        const Vec2 along = hand - elbow;
+        const float length = std::max(1.0f, std::sqrt(along.x * along.x + along.y * along.y));
+        Vec2 side{-along.y / length, along.x / length};
+        if (side.x * out < 0.0f) side = side * -1.0f;
+        const Vec2 woundFrom = lerp(elbow, hand, 0.15f) + side * (r * 0.3f);
+        const Vec2 woundTo = lerp(elbow, hand, 0.62f) + side * (r * 0.5f);
+        c.limb(woundFrom.x, woundFrom.y, woundTo.x, woundTo.y, r * 0.5f, r * 0.36f, kBlood, shift);
+        const Vec2 boneFrom = lerp(elbow, hand, 0.22f) + side * (r * 0.1f);
+        const Vec2 boneTo = lerp(elbow, hand, 0.55f) + side * (r * 1.7f);
+        c.limb(boneFrom.x, boneFrom.y, boneTo.x, boneTo.y, r * 0.3f, r * 0.26f, kBone, shift);
+        c.ball(boneTo.x, boneTo.y, r * 0.4f, r * 0.34f, kBone, shift);
+    }
+    if (look.horror >= 2) {
+        // A glowing split down the upper arm.
+        const Vec2 a = lerp(shoulder, elbow, 0.2f) + Vec2{out * r * 0.4f, 0.0f};
+        const Vec2 b = lerp(shoulder, elbow, 0.5f) + Vec2{out * r * 0.1f, 0.0f};
+        const Vec2 d = lerp(shoulder, elbow, 0.85f) + Vec2{out * r * 0.5f, 0.0f};
+        paintCrack(c, a, b, d);
+    }
+    if (look.horror >= 1 && look.phase == 2) {
+        // Bone spurs out of the elbow.
+        c.limb(elbow.x, elbow.y, elbow.x + out * 8.0f, elbow.y + 10.0f, 2.4f, 0.5f, kBone, shift);
+        c.limb(elbow.x, elbow.y - 4.0f, elbow.x + out * 9.0f, elbow.y + 0.5f, 2.0f, 0.5f, kBone, shift);
+    }
+}
+
+void paintBossDetails(Canvas& c, const BossLookArt& look, Vec2 chest) {
+    if (look.phase == 0) {
         // Exposed ribs and torn overalls.
         for (int i = 0; i < 4; ++i) {
             const float rowY = chest.y + 7.0f - static_cast<float>(i) * 4.0f;
             c.limb(chest.x - 9.0f, rowY + 1.0f, chest.x + 9.0f, rowY + 1.0f, 0.9f, 0.9f, kBone);
         }
-        c.ball(chest.x, chest.y - 16.0f + y, 7.0f, 4.0f, kBlood);
-        c.ball(chest.x - 1.0f, chest.y - 15.5f + y, 3.5f, 1.8f, Ramp{kPMouth, 1});
+        if (look.horror == 0) {
+            c.ball(chest.x, chest.y - 16.0f, 7.0f, 4.0f, kBlood);
+            c.ball(chest.x - 1.0f, chest.y - 15.5f, 3.5f, 1.8f, Ramp{kPMouth, 1});
+        }
         c.box(chest.x - 12.0f, chest.y + 2.0f, chest.x - 9.0f, chest.y + 15.0f, kPants);
         c.box(chest.x + 9.0f, chest.y + 2.0f, chest.x + 12.0f, chest.y + 15.0f, kPants);
-    } else if (phase == 1) {
+    } else if (look.phase == 1) {
         // Bolted scrap plates, with burning cracks between them.
         c.setContour(true);
         c.box(chest.x - 15.0f, chest.y - 2.0f, chest.x - 1.5f, chest.y + 13.0f, kMetal);
@@ -733,6 +865,13 @@ void paintBossDetails(Canvas& c, int phase, Vec2 chest, float y, bool front) {
             c.dot(chest.x - 13.0f + static_cast<float>(i) * 9.0f, chest.y + 11.0f, kPMetal + 3);
             c.dot(chest.x - 13.0f + static_cast<float>(i) * 9.0f, chest.y - 0.5f, kPMetal);
         }
+        if (look.horror >= 1) {
+            // Rotten flesh bulges out between the plates, and a bar runs right through.
+            c.setContour(true);
+            paintGrowths(c, chest.x - 1.0f, chest.y + 8.0f, 4.0f, 3, 1.0f);
+            c.limb(chest.x - 27.0f, chest.y - 13.0f, chest.x + 25.0f, chest.y + 4.0f, 1.8f, 1.5f, kMetal);
+            c.setContour(false);
+        }
     } else {
         // Flayed: glowing heart and burning veins.
         c.ball(chest.x, chest.y + 3.0f, 8.0f, 8.0f, kBile);
@@ -741,22 +880,71 @@ void paintBossDetails(Canvas& c, int phase, Vec2 chest, float y, bool front) {
         c.limb(chest.x + 2.0f, chest.y - 4.0f, chest.x + 7.0f, chest.y - 18.0f, 1.2f, 0.7f, kBile, 1);
         c.limb(chest.x - 7.0f, chest.y + 2.0f, chest.x - 16.0f, chest.y + 9.0f, 1.0f, 0.6f, kBile, 1);
         c.limb(chest.x + 7.0f, chest.y + 2.0f, chest.x + 16.0f, chest.y + 9.0f, 1.0f, 0.6f, kBile, 1);
+        if (look.horror >= 1) {
+            // Bare ribs curl round the heart like a cage.
+            for (int side = -1; side <= 1; side += 2) {
+                const float s = static_cast<float>(side);
+                for (int i = 0; i < 3; ++i) {
+                    const float rowY = chest.y + 10.0f - static_cast<float>(i) * 5.5f;
+                    c.limb(chest.x + s * 9.0f, rowY, chest.x + s * 19.0f, rowY - 2.5f, 1.4f, 1.1f, kBone);
+                }
+            }
+        }
     }
-    (void)front;
 }
 
-void paintBossSpikes(Canvas& c, int phase, float shoulderY, float headX, float headY) {
-    if (phase == 1) {
+// The second mouth, from Normal up: a gash across the belly that grows into a chest
+// split from top to bottom in Hell, ringed with eyes.
+void paintBossMaw(Canvas& c, const BossLookArt& look, Vec2 chest, bool front) {
+    if (look.horror < 1) return;
+    const float x = chest.x + (front ? 0.0f : 7.0f);
+    if (look.horror >= 3) {
+        paintMaw(c, x, chest.y - 4.0f, front ? 20.0f : 12.0f, 30.0f, true);
+        for (int i = 0; i < 6; ++i) {
+            const float side = i % 2 == 0 ? -1.0f : 1.0f;
+            const float rowY = chest.y + 9.0f - static_cast<float>(i / 2) * 12.0f;
+            paintSmallEye(c, x + side * (front ? 16.0f : 10.0f), rowY);
+        }
+        return;
+    }
+    const float w = look.horror >= 2 ? 22.0f : 17.0f;
+    const float h = look.horror >= 2 ? 11.0f : 8.0f;
+    paintMaw(c, x, chest.y - 15.0f, front ? w : w * 0.7f, h, false);
+    if (look.horror >= 2) {
+        paintSmallEye(c, x - w * 0.5f - 2.0f, chest.y - 8.0f);
+        if (front) paintSmallEye(c, x + w * 0.5f + 2.0f, chest.y - 8.0f);
+    }
+    if (look.phase == 0) {
+        // A loop of gut hangs out of it.
+        c.limb(x + 3.0f, chest.y - 19.0f, x + 6.0f, chest.y - 29.0f, 3.0f, 2.5f, kGrowth);
+        c.ball(x + 5.0f, chest.y - 30.0f, 3.6f, 3.0f, kGrowth);
+    }
+}
+
+// From Normal up: a torn hole in the flank, with the ribs showing through.
+void paintFlankRibs(Canvas& c, const BossLookArt& look, float x, float chestY) {
+    if (look.horror < 1 || look.phase == 2) return;
+    c.ball(x, chestY - 3.0f, 6.5f, 9.5f, kBlood);
+    for (int i = 0; i < 3; ++i) {
+        const float rowY = chestY + 3.0f - static_cast<float>(i) * 5.0f;
+        c.limb(x - 5.0f, rowY, x + 5.0f, rowY - 1.5f, 1.5f, 1.2f, kBone);
+    }
+}
+
+void paintBossSpikes(Canvas& c, const BossLookArt& look, float shoulderY, float headX, float headY) {
+    if (look.phase == 1) {
         // Rebar through the shoulders.
         c.limb(-20.0f, shoulderY + 2.0f, -29.0f, shoulderY + 20.0f, 1.3f, 1.0f, kMetal);
         c.limb(-14.0f, shoulderY + 4.0f, -18.0f, shoulderY + 26.0f, 1.3f, 1.0f, kMetal);
         c.limb(20.0f, shoulderY + 2.0f, 27.0f, shoulderY + 22.0f, 1.3f, 1.0f, kMetal);
         c.limb(13.0f, shoulderY + 4.0f, 18.0f, shoulderY + 26.0f, 1.3f, 1.0f, kMetal);
-    } else if (phase == 2) {
-        // Bone spikes bursting out of the back and head.
-        for (int i = -3; i <= 3; ++i) {
-            const float x = static_cast<float>(i) * 8.0f;
-            const float tall = 14.0f + 5.0f * (3.0f - std::abs(static_cast<float>(i)));
+    } else if (look.phase == 2) {
+        // Bone spikes bursting out of the back and head. Normal and up grow more of them.
+        const int reach = look.horror >= 1 ? 4 : 3;
+        const float spacing = look.horror >= 1 ? 6.5f : 8.0f;
+        for (int i = -reach; i <= reach; ++i) {
+            const float x = static_cast<float>(i) * spacing;
+            const float tall = 14.0f + 5.0f * (static_cast<float>(reach) - std::abs(static_cast<float>(i)));
             c.limb(x, shoulderY + 3.0f, x * 1.25f, shoulderY + tall, 2.4f, 0.5f, kBone);
         }
         c.limb(headX - 6.0f, headY + 8.0f, headX - 12.0f, headY + 20.0f, 2.0f, 0.5f, kBone);
@@ -764,7 +952,105 @@ void paintBossSpikes(Canvas& c, int phase, float shoulderY, float headX, float h
     }
 }
 
-void paintBoss(Canvas& c, int phase, int facing, int pose, float t) {
+// Tendrils from the back: two from Hard, four in Hell. They sway with the walk.
+void paintBossTendrils(Canvas& c, const BossLookArt& look, Vec2 root, float spread, float t, bool sideView) {
+    if (look.horror < 2) return;
+    const float sway = 0.18f * std::sin(t * kTau);
+    const float r = look.horror >= 3 ? 4.2f : 3.4f;
+    const float length = look.horror >= 3 ? 40.0f : 32.0f;
+    if (sideView) {
+        // Seen from the side, they stream back and up from the hump.
+        paintTendril(c, root, 2.2f + sway, length, -0.22f, r);
+        if (look.horror >= 3) {
+            paintTendril(c, root + Vec2{-4.0f, -8.0f}, 2.8f - sway, length * 0.9f, -0.18f, r * 0.9f);
+            paintTendril(c, root + Vec2{4.0f, 4.0f}, 1.8f - sway, length * 0.8f, 0.2f, r * 0.85f);
+        }
+        return;
+    }
+    paintTendril(c, root + Vec2{-spread, 0.0f}, 2.0f + sway, length, 0.22f, r);
+    paintTendril(c, root + Vec2{spread, 0.0f}, 1.14f - sway, length, -0.22f, r);
+    if (look.horror >= 3) {
+        paintTendril(c, root + Vec2{-spread * 1.6f, -6.0f}, 2.65f - sway, length * 0.95f, 0.26f, r * 0.9f);
+        paintTendril(c, root + Vec2{spread * 1.6f, -6.0f}, 0.49f + sway, length * 0.95f, -0.26f, r * 0.9f);
+    }
+}
+
+// Hell: a crown of bone spikes through the top of the skull.
+void paintSpikeCrown(Canvas& c, const BossLookArt& look, Vec2 head) {
+    if (look.horror < 3) return;
+    for (int i = -2; i <= 2; ++i) {
+        const float f = static_cast<float>(i);
+        c.limb(head.x + f * 4.5f, head.y + 6.0f, head.x + f * 8.0f, head.y + 20.0f - std::abs(f) * 2.5f, 2.2f, 0.4f, kBone);
+    }
+}
+
+void paintBossHeadFront(Canvas& c, const BossLookArt& look, Vec2 head) {
+    const int h = look.horror;
+    c.ball(head.x, head.y, 12.0f, 10.5f, kSkin);
+    c.ball(head.x, head.y + 6.5f, 10.5f, 4.0f, kHair);
+    if (h >= 2) {
+        // Half the face has rotted away to the skull.
+        c.ball(head.x + 5.0f, head.y + 0.5f, 7.5f, 9.0f, kBone);
+        c.ball(head.x + 5.0f, head.y + 2.0f, 3.8f, 3.4f, Ramp{kPSocket, 1});
+    }
+    c.ball(head.x - 5.0f, head.y + 2.0f, 2.8f, 2.4f, kBile, 2);
+    c.ball(head.x + 5.0f, head.y + 2.0f, 2.8f, 2.4f, kBile, 2);
+    // From Normal up the jaw hangs lower, with longer teeth.
+    const float drop = h >= 1 ? 3.0f : 0.0f;
+    const float tooth = h >= 1 ? 3.0f : 2.0f;
+    c.ball(head.x, head.y - 7.5f - drop, 9.0f + drop * 0.4f, 4.0f + drop * 0.3f, kSkin, -1);
+    c.patch(head.x - 7.0f, head.y - 2.5f, 14.0f, 6.0f + drop, kPMouth);
+    for (int i = 0; i < 6; ++i) {
+        c.patch(head.x - 6.5f + static_cast<float>(i) * 2.5f, head.y - 2.5f, 1.0f, tooth, kPTeeth);
+        c.patch(head.x - 5.5f + static_cast<float>(i) * 2.2f, head.y - 6.0f - drop, 1.0f, tooth, kPTeeth);
+    }
+    if (h >= 1) {
+        paintSmallEye(c, head.x - 6.5f, head.y + 7.5f);
+        paintSmallEye(c, head.x + 9.5f, head.y + 5.5f);
+        c.limb(head.x - 4.0f, head.y - 12.0f, head.x - 4.5f, head.y - 21.0f, 1.3f, 0.6f, kBlood);
+        c.limb(head.x + 3.0f, head.y - 12.5f, head.x + 3.5f, head.y - 18.0f, 1.1f, 0.6f, kBlood);
+    }
+    if (h >= 2) {
+        // Tusks out of the corners of the jaw.
+        c.limb(head.x - 7.5f, head.y - 9.0f - drop, head.x - 13.0f, head.y - 1.0f, 2.4f, 0.6f, kBone);
+        c.limb(head.x + 7.5f, head.y - 9.0f - drop, head.x + 13.0f, head.y - 1.0f, 2.4f, 0.6f, kBone);
+    }
+    c.setContour(true);
+    if (h >= 1) paintGrowths(c, head.x - 13.0f, head.y + 8.0f, 3.5f + 1.5f * static_cast<float>(h), 3, -1.0f);
+    paintSpikeCrown(c, look, head);
+    c.setContour(false);
+}
+
+void paintBossHeadSide(Canvas& c, const BossLookArt& look, Vec2 head) {
+    const int h = look.horror;
+    c.ball(head.x, head.y, 11.0f, 10.5f, kSkin);
+    c.ball(head.x - 3.0f, head.y + 5.0f, 8.5f, 6.0f, kHair);
+    if (h >= 2) {
+        c.ball(head.x + 5.0f, head.y + 1.5f, 6.5f, 8.5f, kBone);
+        c.ball(head.x + 5.0f, head.y + 2.5f, 3.6f, 3.2f, Ramp{kPSocket, 1});
+    }
+    // Burning eye, and a jaw that could take a head off.
+    c.ball(head.x + 5.0f, head.y + 2.5f, 2.8f, 2.4f, kBile, 2);
+    const float drop = h >= 1 ? 3.0f : 0.0f;
+    const float tooth = h >= 1 ? 3.0f : 2.0f;
+    c.ball(head.x + 3.0f, head.y - 7.5f - drop, 8.0f + drop * 0.4f, 4.0f + drop * 0.3f, kSkin, -1);
+    c.patch(head.x - 1.0f, head.y - 2.0f, 11.0f, 5.0f + drop, kPMouth);
+    for (int i = 0; i < 4; ++i) {
+        c.patch(head.x + static_cast<float>(i) * 2.8f, head.y - 2.0f, 1.0f, tooth, kPTeeth);
+        c.patch(head.x + 1.0f + static_cast<float>(i) * 2.6f, head.y - 5.0f - drop, 1.0f, tooth, kPTeeth);
+    }
+    if (h >= 1) {
+        paintSmallEye(c, head.x + 0.5f, head.y + 7.5f);
+        c.limb(head.x + 7.0f, head.y - 12.0f, head.x + 7.5f, head.y - 21.0f, 1.3f, 0.6f, kBlood);
+    }
+    if (h >= 2) c.limb(head.x + 9.0f, head.y - 9.0f - drop, head.x + 15.0f, head.y - 1.0f, 2.4f, 0.6f, kBone);
+    c.setContour(true);
+    if (h >= 1) paintGrowths(c, head.x - 9.0f, head.y + 3.0f, 3.5f + 1.5f * static_cast<float>(h), 3, 1.0f);
+    paintSpikeCrown(c, look, Vec2{head.x - 2.0f, head.y});
+    c.setContour(false);
+}
+
+void paintBoss(Canvas& c, const BossLookArt& look, int facing, int pose, float t) {
     const bool charge = pose == kPoseBraceA || pose == kPoseBraceB;
     const bool dash = pose == kPoseDashA;
     const float angle = t * kTau;
@@ -773,6 +1059,10 @@ void paintBoss(Canvas& c, int phase, int facing, int pose, float t) {
     if (charge) bob = pose == kPoseBraceA ? -5.0f : -6.5f;
     if (dash) bob = -3.0f;
     const float raise = charge ? (pose == kPoseBraceA ? 22.0f : 26.0f) : 0.0f;
+    const bool metalShoulders = look.phase == 1;
+    const float h = static_cast<float>(look.horror);
+    // From Hard up one arm has swollen, so the two sides no longer match.
+    const float swollen = look.horror >= 2 ? 1.28f : 1.0f;
 
     if (facing == kFacingSide) {
         const float lean = dash ? 14.0f : 0.0f;
@@ -781,40 +1071,39 @@ void paintBoss(Canvas& c, int phase, int facing, int pose, float t) {
         const Vec2 head{10.0f + lean * 1.6f, 87.0f + bob - (dash ? 8.0f : 0.0f)};
         const Vec2 nearFoot = footPath(t, -4.0f, 10.0f, 7.0f);
         const Vec2 farFoot = footPath(t + 0.5f, 2.0f, 10.0f, 7.0f);
+        const Vec2 nearShoulder{chest.x - 15.0f, chest.y + 12.0f};
         Body legs;
         legs.legTop = 10.5f;
         legs.legBottom = 7.5f;
         legs.shoeLength = 6.0f;
         legs.kneeBend = 2.0f;
-        paintBossArmHuge(c, Vec2{chest.x + 8.0f, chest.y + 12.0f}, Vec2{chest.x + 20.0f, chest.y - 8.0f + raise}, Vec2{chest.x + 22.0f + swing * 0.5f, chest.y - 32.0f + raise * 2.0f}, 8.0f, -1);
+        paintBossTendrils(c, look, Vec2{nearShoulder.x + 2.0f, nearShoulder.y + 8.0f}, 0.0f, t, true);
+        paintBossArmHuge(c, look, Vec2{chest.x + 8.0f, chest.y + 12.0f}, Vec2{chest.x + 20.0f, chest.y - 8.0f + raise}, Vec2{chest.x + 22.0f + swing * 0.5f, chest.y - 32.0f + raise * 2.0f}, 8.0f, -1);
         paintLeg(c, legs, Vec2{hip.x + 4.0f, hip.y}, farFoot, -1);
         paintLeg(c, legs, Vec2{hip.x - 4.0f, hip.y}, nearFoot, 0);
         c.ball(hip.x, hip.y + 2.0f, 18.0f, 13.0f, kPants);
         c.limb(hip.x, hip.y + 10.0f, chest.x, chest.y, 18.0f, 24.0f, kShirt);
         c.ball(chest.x + 2.0f, chest.y + 10.0f, 25.0f, 15.0f, kShirt);
-        paintBossDetails(c, phase, Vec2{chest.x + 3.0f, chest.y + 0.0f}, 0.0f, false);
-        paintBossSpikes(c, phase, chest.y + 16.0f, head.x, head.y);
-        c.ball(head.x, head.y, 11.0f, 10.5f, kSkin);
-        c.ball(head.x - 3.0f, head.y + 5.0f, 8.5f, 6.0f, kHair);
-        // Burning eye, and a jaw that could take a head off.
-        c.ball(head.x + 5.0f, head.y + 2.5f, 2.8f, 2.4f, kBile, 2);
-        c.ball(head.x + 3.0f, head.y - 7.5f, 8.0f, 4.0f, kSkin, -1);
-        c.patch(head.x - 1.0f, head.y - 2.0f, 11.0f, 5.0f, kPMouth);
-        for (int i = 0; i < 4; ++i) {
-            c.patch(head.x + static_cast<float>(i) * 2.8f, head.y - 2.0f, 1.0f, 2.0f, kPTeeth);
-            c.patch(head.x + 1.0f + static_cast<float>(i) * 2.6f, head.y - 5.0f, 1.0f, 2.0f, kPTeeth);
-        }
+        paintBossDetails(c, look, Vec2{chest.x + 3.0f, chest.y + 0.0f});
+        paintBossMaw(c, look, Vec2{chest.x + 3.0f, chest.y}, false);
+        paintFlankRibs(c, look, chest.x - 6.0f, chest.y + 2.0f);
+        if (look.horror >= 2) paintCrack(c, Vec2{chest.x + 14.0f, chest.y + 14.0f}, Vec2{chest.x + 8.0f, chest.y + 6.0f}, Vec2{chest.x + 13.0f, chest.y - 4.0f});
+        paintBossSpikes(c, look, chest.y + 16.0f, head.x, head.y);
+        paintBossHeadSide(c, look, head);
         c.setContour(true);
         // The near arm hangs at the back of the body, leaving the chest's detail in view.
-        const Vec2 nearShoulder{chest.x - 15.0f, chest.y + 12.0f};
-        c.ball(nearShoulder.x, nearShoulder.y, 11.0f, 10.0f, phase == 1 ? kMetal : kShirt);
-        paintBossArmHuge(c, nearShoulder, Vec2{nearShoulder.x - 5.0f - swing * 0.5f, chest.y - 14.0f + raise}, Vec2{nearShoulder.x - 1.0f - swing, chest.y - 38.0f + raise * 2.0f}, 7.5f, 0);
+        c.ball(nearShoulder.x, nearShoulder.y, 11.0f, 10.0f, metalShoulders ? kMetal : kShirt);
+        if (look.horror >= 1) paintGrowths(c, nearShoulder.x - 2.0f, nearShoulder.y + 10.0f, 5.5f + 1.5f * h, 5, 1.0f);
+        if (look.horror >= 3) paintSecondHead(c, Vec2{nearShoulder.x + 6.0f, nearShoulder.y + 20.0f});
+        paintBossArmHuge(c, look, nearShoulder, Vec2{nearShoulder.x - 5.0f - swing * 0.5f, chest.y - 14.0f + raise}, Vec2{nearShoulder.x - 1.0f - swing, chest.y - 38.0f + raise * 2.0f}, 7.5f * swollen, 0);
         c.setContour(false);
     } else {
         const bool front = facing == kFacingFront;
         const float crouch = dash ? 10.0f : 0.0f;
         const Vec2 chest{0.0f, 62.0f + bob - crouch};
         const Vec2 head{0.0f, (front ? 88.0f : 90.0f) + bob - crouch * 1.5f};
+        // Facing the camera the tendrils grow behind the body, so they go first.
+        if (front) paintBossTendrils(c, look, Vec2{0.0f, chest.y + 20.0f}, 14.0f, t, false);
         Body legs;
         legs.legTop = 10.5f;
         legs.legBottom = 7.5f;
@@ -824,37 +1113,64 @@ void paintBoss(Canvas& c, int phase, int facing, int pose, float t) {
         c.limb(0.0f, 44.0f + bob, 0.0f, chest.y, 22.0f, 27.0f, kShirt);
         c.ball(0.0f, chest.y + 11.0f, 33.0f, 14.0f, kShirt);
         if (front) {
-            paintBossDetails(c, phase, chest, 0.0f, true);
+            // In Hell the phase-three heart beats inside the split chest, so the mouth goes under it.
+            const bool heartInMaw = look.horror >= 3 && look.phase == 2;
+            if (heartInMaw) paintBossMaw(c, look, chest, true);
+            paintBossDetails(c, look, chest);
+            if (!heartInMaw) paintBossMaw(c, look, chest, true);
+            paintFlankRibs(c, look, 20.0f, chest.y);
+            if (look.horror >= 2) {
+                paintCrack(c, Vec2{-22.0f, chest.y + 8.0f}, Vec2{-15.0f, chest.y}, Vec2{-19.0f, chest.y - 10.0f});
+                paintCrack(c, Vec2{9.0f, chest.y - 22.0f}, Vec2{15.0f, chest.y - 27.0f}, Vec2{11.0f, chest.y - 33.0f});
+            }
         } else {
             c.patch(-11.0f, chest.y + 12.0f, 5.0f, 30.0f, kPSkin + 1);
             c.patch(5.0f, chest.y + 2.0f, 4.0f, 18.0f, kPSkin + 1);
-        }
-        paintBossSpikes(c, phase, chest.y + 16.0f, head.x, head.y);
-        c.ball(head.x, head.y, 12.0f, 10.5f, kSkin);
-        if (front) {
-            c.ball(head.x, head.y + 6.5f, 10.5f, 4.0f, kHair);
-            c.ball(head.x - 5.0f, head.y + 2.0f, 2.8f, 2.4f, kBile, 2);
-            c.ball(head.x + 5.0f, head.y + 2.0f, 2.8f, 2.4f, kBile, 2);
-            c.ball(head.x, head.y - 7.5f, 9.0f, 4.0f, kSkin, -1);
-            c.patch(head.x - 7.0f, head.y - 2.5f, 14.0f, 6.0f, kPMouth);
-            for (int i = 0; i < 6; ++i) {
-                c.patch(head.x - 6.5f + static_cast<float>(i) * 2.5f, head.y - 2.5f, 1.0f, 2.0f, kPTeeth);
-                c.patch(head.x - 5.5f + static_cast<float>(i) * 2.2f, head.y - 6.0f, 1.0f, 2.0f, kPTeeth);
+            if (look.horror >= 1) {
+                // The spine has burst out through the skin of the back.
+                c.setContour(true);
+                for (int i = 0; i < 6; ++i) c.ball(0.0f, chest.y + 15.0f - static_cast<float>(i) * 6.0f, 3.6f, 2.5f, kBone);
+                paintGrowths(c, 13.0f, chest.y + 2.0f, 5.0f + 1.5f * h, 5, 1.0f);
+                if (look.horror >= 2) paintCrack(c, Vec2{-16.0f, chest.y + 10.0f}, Vec2{-9.0f, chest.y + 1.0f}, Vec2{-14.0f, chest.y - 10.0f});
+                c.setContour(false);
             }
+            c.setContour(true);
+            paintBossTendrils(c, look, Vec2{0.0f, chest.y + 14.0f}, 10.0f, t, false);
+            c.setContour(false);
+        }
+        paintBossSpikes(c, look, chest.y + 16.0f, head.x, head.y);
+        if (front) {
+            paintBossHeadFront(c, look, head);
         } else {
+            c.ball(head.x, head.y, 12.0f, 10.5f, kSkin);
             c.ball(head.x, head.y + 1.5f, 11.0f, 8.5f, kHair);
+            c.setContour(true);
+            paintSpikeCrown(c, look, head);
+            c.setContour(false);
         }
         c.setContour(true);
         const float armOut = 36.0f;
-        paintBossArmHuge(c, Vec2{-armOut + 6.0f, chest.y + 11.0f}, Vec2{-armOut - 5.0f, chest.y - 12.0f + raise * 0.8f + swing * 0.4f}, Vec2{-armOut - 2.0f, chest.y - 36.0f + raise * 2.2f + swing}, 9.5f, 0);
-        paintBossArmHuge(c, Vec2{armOut - 6.0f, chest.y + 11.0f}, Vec2{armOut + 5.0f, chest.y - 12.0f + raise * 0.8f - swing * 0.4f}, Vec2{armOut + 2.0f, chest.y - 36.0f + raise * 2.2f - swing}, 9.5f, 0);
-        c.ball(-armOut + 7.0f, chest.y + 11.0f, 13.0f, 11.0f, phase == 1 ? kMetal : kShirt);
-        c.ball(armOut - 7.0f, chest.y + 11.0f, 13.0f, 11.0f, phase == 1 ? kMetal : kShirt);
+        // Hell's left arm hangs lower than its right.
+        const float longArm = look.horror >= 3 ? 8.0f : 0.0f;
+        const float bulge = (swollen - 1.0f) * 8.0f;
+        paintBossArmHuge(c, look, Vec2{-armOut + 6.0f, chest.y + 11.0f}, Vec2{-armOut - 5.0f, chest.y - 12.0f + raise * 0.8f + swing * 0.4f},
+                         Vec2{-armOut - 2.0f, chest.y - 36.0f - longArm + raise * 2.2f + swing}, 9.5f, 0);
+        paintBossArmHuge(c, look, Vec2{armOut - 6.0f, chest.y + 11.0f}, Vec2{armOut + 5.0f + bulge, chest.y - 12.0f + raise * 0.8f - swing * 0.4f},
+                         Vec2{armOut + 2.0f + bulge, chest.y - 36.0f + raise * 2.2f - swing}, 9.5f * swollen, 0);
+        c.ball(-armOut + 7.0f, chest.y + 11.0f, 13.0f, 11.0f, metalShoulders ? kMetal : kShirt);
+        c.ball(armOut - 7.0f, chest.y + 11.0f, 13.0f * swollen, 11.0f * swollen, metalShoulders ? kMetal : kShirt);
+        if (look.horror >= 1) {
+            // A big cluster of boils bursts out of one shoulder and breaks the outline.
+            // Lopsided on purpose: it reads as sick.
+            paintGrowths(c, -armOut + 2.0f, chest.y + 23.0f, 6.5f + 1.5f * h, 5, 1.0f);
+            if (look.horror == 2) paintGrowths(c, armOut - 3.0f, chest.y + 22.0f, 7.0f, 4, -1.0f);
+            if (look.horror >= 3) paintSecondHead(c, Vec2{armOut - 8.0f, chest.y + 26.0f});
+        }
         c.setContour(false);
     }
 }
 
-void paintFigureBody(Canvas& c, Figure figure, int facing, int pose, float t) {
+void paintFigureBody(Canvas& c, Figure figure, Difficulty bossLevel, int facing, int pose, float t) {
     switch (figure) {
         case Figure::Walker: {
             const Body b = walkerBody(facing, t);
@@ -873,33 +1189,45 @@ void paintFigureBody(Canvas& c, Figure figure, int facing, int pose, float t) {
         case Figure::Bloater: paintBloater(c, facing, t); break;
         case Figure::Crawler: paintCrawler(c, facing, t); break;
         case Figure::Charger: paintCharger(c, facing, pose, t); break;
-        case Figure::Boss1: paintBoss(c, 0, facing, pose, t); break;
-        case Figure::Boss2: paintBoss(c, 1, facing, pose, t); break;
-        case Figure::Boss3: paintBoss(c, 2, facing, pose, t); break;
+        case Figure::Boss1:
+        case Figure::Boss2:
+        case Figure::Boss3: {
+            const BossLookArt look{static_cast<int>(figure) - static_cast<int>(Figure::Boss1), static_cast<int>(bossLevel)};
+            paintBoss(c, look, facing, pose, t);
+            break;
+        }
         case Figure::Count: break;
     }
 }
 
 }  // namespace
 
-void paintFigure(Canvas& c, Figure figure, int facing, int pose) {
+float bossArtScale(Difficulty level) { return kBossArtScale[static_cast<int>(level)]; }
+
+void paintFigure(Canvas& c, Figure figure, Difficulty bossLevel, int facing, int pose) {
     const bool boss = figure >= Figure::Boss1;
     const float t = static_cast<float>(pose) / static_cast<float>(boss ? kBossWalkFrames : kWalkFrames);
-    paintFigureBody(c, figure, facing, pose, t);
+    paintFigureBody(c, figure, bossLevel, facing, pose, t);
     c.outline(kPOutline);
 }
 
-void paintCorpse(Canvas& c, Figure figure, int frame) {
+void paintCorpse(Canvas& c, Figure figure, Difficulty bossLevel, int frame) {
     // A falling corpse is a walking pose, turned around its feet. The last frame
     // adds a pool of blood underneath, so the pile of dead reads as a battle scar.
     static constexpr float kTurns[kCorpseFrames] = {0.45f, 1.05f, 1.48f};
-    const float height = figure >= Figure::Boss1 ? 40.0f : (figure == Figure::Brute || figure == Figure::Bloater ? 14.0f : 8.0f);
+    const bool boss = figure >= Figure::Boss1;
+    const float height = boss ? 40.0f : (figure == Figure::Brute || figure == Figure::Bloater ? 14.0f : 8.0f);
+    // The boss is too long to lie down around its feet inside the canvas, so it is painted
+    // a little up and to the right of where it fell, which keeps all of it in the picture.
+    const float shiftX = boss ? 40.0f : 0.0f;
+    const float shiftY = boss ? 24.0f : 0.0f;
     if (frame == kCorpseFrames - 1) {
+        c.setFrame(shiftX, shiftY, 1.0f, 0.0f);
         c.ball(-height * 1.1f, 2.0f, height * 1.4f, height * 0.45f, kBlood);
     }
     const float turn = figure == Figure::Crawler ? kTurns[frame] * 0.15f : kTurns[frame];
-    c.setTurn(turn);
-    paintFigureBody(c, figure, kFacingSide, 0, 0.25f);
+    c.setFrame(shiftX, shiftY, std::cos(turn), std::sin(turn));
+    paintFigureBody(c, figure, bossLevel, kFacingSide, 0, 0.25f);
     c.clearFrame();
     c.outline(kPOutline);
 }

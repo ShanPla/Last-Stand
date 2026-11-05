@@ -592,7 +592,8 @@ void addCorpse(EnemyType type, Vec2 pos, uint32_t tick) {
     corpse.used = true;
     corpse.bornTick = tick;
     corpse.mirror = (hash & 1u) != 0u;
-    corpse.row = type == EnemyType::Boss ? kRowBoss : static_cast<uint8_t>(kRowOutfits + (hash >> 4) % kOutfitCount);
+    // The boss always dies in its last phase, so it falls in that phase's colors.
+    corpse.row = type == EnemyType::Boss ? static_cast<uint8_t>(kRowBoss + 2) : static_cast<uint8_t>(kRowOutfits + (hash >> 4) % kOutfitCount);
 }
 
 void drawCorpses(const View& view, uint32_t tick) {
@@ -611,7 +612,7 @@ void drawCorpses(const View& view, uint32_t tick) {
         if (!onTarget(view, feet, 50.0f, 40.0f, 30.0f)) continue;
         setSpriteDepth(depthOfRow(view, feet.y));
         const int frame = age >= kFallTicks ? kCorpseFrames - 1 : static_cast<int>(age * kCorpseFrames / kFallTicks);
-        const Figure figure = corpse.type == EnemyType::Boss ? Figure::Boss1 : static_cast<Figure>(static_cast<int>(corpse.type));
+        const Figure figure = corpse.type == EnemyType::Boss ? Figure::Boss3 : static_cast<Figure>(static_cast<int>(corpse.type));
         const int step = corpse.type == EnemyType::Boss ? stepFor(feet.scale, kStepBossFirst, kStepBossLast) : stepFor(feet.scale, 0, kStepNormalLast);
         const SpriteRef& sprite = corpseSprite(figure, step, frame);
         float alpha = 1.0f;

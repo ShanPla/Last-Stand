@@ -67,6 +67,7 @@ enum PaletteColumn : uint8_t {
     kPEnemyCore = 117,
     kPFlame = 118,  // 3 tones
     kPLight = 121,  // 3 tones
+    kPGrowth = 124, // 4 tones. Boils and tumors, which only the boss has.
     kPaletteWidth = 128,
 };
 
@@ -79,7 +80,7 @@ enum PaletteRow : uint8_t {
     kRowBase = 42,
     kRowEvolved = 43,
     kRowHot = 44,    // Charger and boss telegraph flash.
-    kRowBoss = 45,   // Three rows, one per phase.
+    kRowBoss = 45,   // Three rows, one per phase, for the difficulty the atlas holds now.
     kRowBossCharge = 48,
     kRowFireHot = 49,   // These recolor the same puff sprite as fire or smoke.
     kRowFireOld = 50,
@@ -172,6 +173,16 @@ const SpriteRef& itemSprite(Item item);
 const SpriteRef& rocketSprite(int angleIndex);
 const SpriteRef& bladeSprite(int frame);
 
+// The boss has twelve looks, three phases for each difficulty. Painting all of them at
+// startup would cost too much time and atlas space, and a run only ever meets one
+// difficulty. So the atlas holds one difficulty's boss at a time. This repaints it, and
+// its palette rows, when a run of another difficulty begins. Calling it again with the
+// same difficulty costs nothing, so the renderer can call it every frame.
+void useBossLevel(Difficulty level);
+// How much bigger than Easy each difficulty draws the boss. Its body for the game stays
+// the same size.
+float bossArtScale(Difficulty level);
+
 // Builds the atlas and palette textures. Needs a live graphics context.
 // Returns how many atlas rows were used, out of kAtlasSize. 0 means it overflowed.
 int buildAtlas();
@@ -180,8 +191,9 @@ unsigned int paletteTextureId();
 inline constexpr int kAtlasSize = 2048;
 
 // Painters, one per family of sprites. Each draws one frame into the canvas.
-void paintFigure(Canvas& canvas, Figure figure, int facing, int pose);
-void paintCorpse(Canvas& canvas, Figure figure, int frame);
+// bossLevel only matters for the boss figures.
+void paintFigure(Canvas& canvas, Figure figure, Difficulty bossLevel, int facing, int pose);
+void paintCorpse(Canvas& canvas, Figure figure, Difficulty bossLevel, int frame);
 void paintSoldierBody(Canvas& canvas, int facing, int pose);
 void paintSoldierGun(Canvas& canvas, WeaponId gun, float angleRadians);
 void paintSoldierReload(Canvas& canvas, WeaponId gun, int frame);
