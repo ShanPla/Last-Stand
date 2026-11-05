@@ -22,7 +22,7 @@
 
 EM_JS(void, ls_js_install, (), {
     if (Module.lsInput) return;
-    var state = Module.lsInput = { touchPending: false, touchX: 0, touchY: 0, lastTouchMs: -100000, focusLost: false, probe: null };
+    var state = Module.lsInput = { touches: [], lastTouchMs: -100000, focusLost: false, probe: null };
     var canvas = Module.canvas || document.getElementById('canvas');
 
     // The first finger of the event, converted to drawing buffer pixels.
@@ -31,9 +31,11 @@ EM_JS(void, ls_js_install, (), {
         state.lastTouchMs = performance.now();
         if (!touch) return;
         var rect = canvas.getBoundingClientRect();
-        state.touchX = (touch.clientX - rect.left) * canvas.width / Math.max(1, rect.width);
-        state.touchY = (touch.clientY - rect.top) * canvas.height / Math.max(1, rect.height);
-        state.touchPending = true;
+        // A short queue, so that two quick taps between frames each count.
+        if (state.touches.length < 8) {
+            state.touches.push((touch.clientX - rect.left) * canvas.width / Math.max(1, rect.width));
+            state.touches.push((touch.clientY - rect.top) * canvas.height / Math.max(1, rect.height));
+        }
     }, { capture: true, passive: true });
     window.addEventListener('touchend', function () { state.lastTouchMs = performance.now(); }, { capture: true, passive: true });
 
@@ -51,10 +53,9 @@ EM_JS(void, ls_js_install, (), {
 
 EM_JS(int, ls_js_take_touch, (float* out), {
     var state = Module.lsInput;
-    if (!state || !state.touchPending) return 0;
-    state.touchPending = false;
-    HEAPF32[out >> 2] = state.touchX;
-    HEAPF32[(out >> 2) + 1] = state.touchY;
+    if (!state || state.touches.length === 0) return 0;
+    HEAPF32[out >> 2] = state.touches.shift();
+    HEAPF32[(out >> 2) + 1] = state.touches.shift();
     return 1;
 });
 
@@ -133,18 +134,27 @@ float g_insetOverride = -1.0f;
 bool g_insetDirty = false;  // Set when the override changes, so the next read is fresh.
 
 #ifdef __EMSCRIPTEN__
-bool g_mouseDown = false;
-float g_mouseX = 0.0f;
-float g_mouseY = 0.0f;
+// Clicks waiting for a frame. Two can land between frames on a slow device, and each
+// must count. The game takes one per frame, so a second click can never press a button
+// on a screen that the first click has already closed.
+struct MousePress {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+constexpr int kMaxMousePresses = 8;
+MousePress g_mousePresses[kMaxMousePresses];
+int g_mousePressCount = 0;
 
 EM_BOOL onMouseDown(int, const EmscriptenMouseEvent* event, void*) {
     if (event->button != 0) return EM_FALSE;
     double cssWidth = 1.0;
     double cssHeight = 1.0;
     emscripten_get_element_css_size("#canvas", &cssWidth, &cssHeight);
-    g_mouseDown = true;
-    g_mouseX = static_cast<float>(event->targetX * GetScreenWidth() / cssWidth);
-    g_mouseY = static_cast<float>(event->targetY * GetScreenHeight() / cssHeight);
+    if (g_mousePressCount < kMaxMousePresses) {
+        g_mousePresses[g_mousePressCount].x = static_cast<float>(event->targetX * GetScreenWidth() / cssWidth);
+        g_mousePresses[g_mousePressCount].y = static_cast<float>(event->targetY * GetScreenHeight() / cssHeight);
+        g_mousePressCount++;
+    }
     return EM_FALSE;  // Not consumed, so the normal input handling still sees it.
 }
 
@@ -167,10 +177,11 @@ bool consumeMouseDown(float* x, float* y) {
         return true;
     }();
     (void)registered;
-    if (!g_mouseDown) return false;
-    g_mouseDown = false;
-    *x = g_mouseX;
-    *y = g_mouseY;
+    if (g_mousePressCount == 0) return false;
+    *x = g_mousePresses[0].x;
+    *y = g_mousePresses[0].y;
+    g_mousePressCount--;
+    for (int i = 0; i < g_mousePressCount; ++i) g_mousePresses[i] = g_mousePresses[i + 1];
     return true;
 #else
     if (!IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) return false;
