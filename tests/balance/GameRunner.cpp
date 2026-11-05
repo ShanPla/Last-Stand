@@ -75,6 +75,7 @@ void readEvents(const GameState& state, RunResult& result, int hitSource) {
                 }
                 break;
             case EventType::BossKilled: result.bossKilled = true; break;
+            case EventType::PlayerDashed: ++result.dashes; break;
             case EventType::PlayerHit:
                 result.damageTaken += event.value;
                 result.damageBySource[hitSource] += event.value;

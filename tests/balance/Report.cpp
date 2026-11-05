@@ -107,8 +107,9 @@ void printOutcome(std::FILE* out, const std::vector<RunResult>& runs) {
     const auto taken = collect(runs, [](const RunResult& r) {
         return r.playedSeconds > 0.0f ? 60.0 * static_cast<double>(r.damageTaken / r.playedSeconds) : 0.0;
     });
-    std::fprintf(out, "Damage taken per minute (mean): %.0f   rerolls used (mean): %.2f\n", mean(taken),
-                 mean(collect(runs, [](const RunResult& r) { return static_cast<double>(r.rerollsUsed); })));
+    std::fprintf(out, "Damage taken per minute (mean): %.0f   rerolls used (mean): %.2f   dashes (mean): %.1f\n", mean(taken),
+                 mean(collect(runs, [](const RunResult& r) { return static_cast<double>(r.rerollsUsed); })),
+                 mean(collect(runs, [](const RunResult& r) { return static_cast<double>(r.dashes); })));
 
     double bySource[kDamageSources] = {};
     double totalTaken = 0.0;

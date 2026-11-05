@@ -5,7 +5,7 @@
 namespace ls::player {
 
 void reset(GameState& state);
-void update(GameState& state, float moveX, float moveY);
+void update(GameState& state, float moveX, float moveY, bool dashPressed);
 
 // Applies armor and the short invulnerability after a hit.
 void damage(GameState& state, float amount);

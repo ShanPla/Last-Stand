@@ -59,7 +59,9 @@ void readKeyboard(Snapshot& s) {
             case KEY_S: case KEY_DOWN: s.down = true; s.stepY++; break;
             case KEY_A: case KEY_LEFT: s.left = true; s.stepX--; break;
             case KEY_D: case KEY_RIGHT: s.right = true; s.stepX++; break;
-            case KEY_ENTER: case KEY_KP_ENTER: case KEY_SPACE: s.confirm = true; break;
+            case KEY_ENTER: case KEY_KP_ENTER: s.confirm = true; break;
+            case KEY_SPACE: s.confirm = true; s.dash = true; break;
+            case KEY_LEFT_SHIFT: case KEY_RIGHT_SHIFT: s.dash = true; break;
             case KEY_ESCAPE: case KEY_P: s.back = true; break;
             case KEY_R: s.reroll = true; break;
             default: break;
@@ -92,6 +94,8 @@ void readGamepad(Snapshot& s) {
     const bool back = IsGamepadButtonPressed(kGamepad, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT) ||
                       IsGamepadButtonPressed(kGamepad, GAMEPAD_BUTTON_MIDDLE_RIGHT);
     const bool reroll = IsGamepadButtonPressed(kGamepad, GAMEPAD_BUTTON_RIGHT_FACE_UP);
+    // The right shoulder, not A: A is menu confirm, and must not dash when a card is picked.
+    const bool dash = IsGamepadButtonPressed(kGamepad, GAMEPAD_BUTTON_RIGHT_TRIGGER_1);
     s.stepX += (right ? 1 : 0) - (left ? 1 : 0);
     s.stepY += (down ? 1 : 0) - (up ? 1 : 0);
     s.left |= left;
@@ -101,7 +105,8 @@ void readGamepad(Snapshot& s) {
     s.confirm |= confirm;
     s.back |= back;
     s.reroll |= reroll;
-    if (left || right || up || down || confirm || back || reroll) {
+    s.dash |= dash;
+    if (left || right || up || down || confirm || back || reroll || dash) {
         s.lastDevice = Device::Gamepad;
         s.anyPress = true;
     }

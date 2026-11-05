@@ -31,6 +31,8 @@ void drawSoldier(const GameState& state, const ScreenPoint& feet, uint8_t streng
 void drawSoldierRing(const View& view, Vec2 worldFeet);
 void drawSoldierRingOverCrowd(const View& view, Vec2 worldFeet);
 void drawMuzzleFlash(const GameState& state, const ScreenPoint& feet);
+// The pale afterimage behind him during a dash. Goes inside an open sprite pass, under the figures.
+void drawDashTrail(const View& view, const GameState& state, Vec2 playerWorld);
 
 // Updates the soldier's walk cycle and timers, once per drawn frame. These live here,
 // not in the simulation, because they only change how things look.

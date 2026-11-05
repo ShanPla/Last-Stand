@@ -22,6 +22,15 @@ inline constexpr float kPlayerInvulnerableAfterHit = 0.35f;
 inline constexpr float kMinDamageTaken = 1.0f;
 inline constexpr float kHealCardFraction = 0.30f;
 
+// --- Dash --------------------------------------------------------------------
+// A short burst of speed with a cooldown. The cooldown runs from the moment of the
+// dash, and only counts down while the game is being played.
+inline constexpr float kDashSeconds = 0.20f;
+inline constexpr float kDashDistance = 170.0f;  // About 3.7 times what walking covers in the same time.
+inline constexpr float kDashSpeed = kDashDistance / kDashSeconds;
+inline constexpr float kDashInvulnerableSeconds = 0.15f;  // From the start of the dash only.
+inline constexpr float kDashCooldownSeconds = 4.0f;
+
 // XP needed to go from this level to the next.
 inline constexpr int xpForLevel(int level) { return 5 + (level - 1) * 4 + (level - 1) * (level - 1) / 3; }
 

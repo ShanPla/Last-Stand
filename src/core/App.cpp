@@ -69,6 +69,9 @@ enum DebugCommand {
     kResetFxCounters = 26,
     kRunSteps = 27,      // Runs this many steps at once with no input, then reads their events.
     kSetMap = 28,        // For tests only. A bad value falls back to the default map.
+    kDash = 40,          // Presses dash, as the key would.
+    kHoldSim = 41,       // 1 holds the simulation still (the screen still draws), 0 lets it run. For screenshots.
+    kSetDashCooldown = 42,  // Percent of the full cooldown left.
 };
 
 // Which screen is showing. Level-up is not here: it is a phase of a running game.
@@ -110,6 +113,12 @@ int g_lastSteps = 0;
 // A menu choice waits here until a simulation step runs. On a fast display many
 // frames run no step at all, so a choice tied to its own frame could be lost.
 ui::LevelUpChoice g_pendingChoice;
+
+// A dash press waits here the same way. It lasts until a step uses it, but never past
+// the play screen: a press made on a menu is dropped, so Space that confirms a menu
+// can't dash a moment later.
+bool g_pendingDash = false;
+bool g_holdSim = false;  // Debug only: the simulation stands still, for screenshots.
 
 float smooth(float average, float sample) { return average + (sample - average) * 0.05f; }
 float smoothstep01(float t) {
@@ -188,6 +197,8 @@ void startRun(uint64_t seed) {
     g_lastPhase = RunPhase::Playing;
     g_phaseAge = 0.0f;
     ui::resetLevelUpCards();
+    g_pendingDash = false;
+    g_holdSim = false;
     setScreen(Screen::Playing);
 }
 
@@ -261,6 +272,9 @@ void runSimulation(float dtReal) {
     if (steps == kMaxStepsPerFrame) g_accumulator = 0.0f;
     g_lastSteps = steps;
     // Each step's time, not each frame's, so numbers compare across refresh rates.
+        // One press is one dash: the first step of the frame takes it, the others don't.
+        frameInput.dash = g_pendingDash;
+        g_pendingDash = false;
     if (steps > 0) g_simMs = smooth(g_simMs, static_cast<float>((GetTime() - start) * 1000.0) / static_cast<float>(steps));
 }
 
@@ -363,8 +377,9 @@ static void drawUiPass(float dtReal, bool playing) {
     if (!g_inDemo && g_screen == Screen::Playing && g_state->run.phase != RunPhase::LevelUp) {
         // The boss bar needs the space at the bottom, so the hint gives way to it.
         const float hintAlpha = g_state->run.bossSpawned ? 0.0f : 1.0f - smoothstep01((g_moveTime - 0.4f) / 0.6f);
-        const bool pausePressed = ui::drawHud(*g_state, hintAlpha, playing);
-        if (pausePressed) pauseGame();
+        const ui::HudPresses presses = ui::drawHud(*g_state, hintAlpha, playing);
+        if (presses.pause) pauseGame();
+        else if (presses.dash) g_pendingDash = true;
         if (g_input.joystickActive && playing) ui::drawVirtualJoystick(g_input);
     }
 
@@ -446,8 +461,8 @@ void frame() {
     const bool running = !g_inDemo && g_screen == Screen::Playing;
     const bool playing = running && g_state->run.phase == RunPhase::Playing;
     input::setJoystickEnabled(playing);
-    const input::Rect pauseHit = ui::pauseButtonRect();
-    input::setTouchBlockers(&pauseHit, 1);
+    const input::Rect blockers[2] = {ui::pauseButtonRect(), ui::dashButtonRect()};
+    input::setTouchBlockers(blockers, 2);
     input::update(g_input);
     ui::beginFrame(g_input, dtReal);
     g_screenAge += dtReal;
@@ -468,6 +483,11 @@ void frame() {
         } else if (g_screen == Screen::Settings) leaveSettings();
         else if (g_screen == Screen::HowToPlay) {
             audio::playUi(audio::UiSound::Back);
+    // A dash press only counts while playing. Space is also confirm, so on a menu it must
+    // not leave a dash waiting for the first moment the game runs.
+    if (!playing) g_pendingDash = false;
+    else if (g_input.dash) g_pendingDash = true;
+
             ui::resetTitleScreen();
             setScreen(Screen::Title);
         }
@@ -541,12 +561,15 @@ const char* queryState() {
     std::snprintf(json, sizeof(json),
                   "{\"phase\":%d,\"tick\":%u,\"kills\":%d,\"level\":%d,\"hp\":%.1f,\"x\":%.1f,\"y\":%.1f,"
                   "\"enemies\":%d,\"shots\":%d,\"bullets\":%d,\"gems\":%d,\"offers\":%d,\"rerolls\":%d,"
-                  "\"fps\":%d,\"frameMs\":%.2f,\"simMs\":%.3f,\"drawMs\":%.3f,\"width\":%d,\"height\":%d,\"hash\":\"%llx\"}",
+                  "\"fps\":%d,\"frameMs\":%.2f,\"simMs\":%.3f,\"drawMs\":%.3f,\"width\":%d,\"height\":%d,\"dashLeft\":%.3f,\"dashCooldown\":%.2f,"
+                  "\"dashX\":%.3f,\"dashY\":%.3f,\"difficulty\":%d,\"hash\":\"%llx\"}",
                   static_cast<int>(s.run.phase), s.run.tick, s.run.kills, s.player.level, static_cast<double>(s.player.hp),
                   static_cast<double>(s.player.pos.x), static_cast<double>(s.player.pos.y), s.enemies.count, s.projectiles.count,
                   s.enemyBullets.count, s.gems.count, s.run.offerCount, s.run.rerollsLeft, GetFPS(),
                   static_cast<double>(g_frameMs), static_cast<double>(g_simMs), static_cast<double>(g_drawMs),
-                  GetScreenWidth(), GetScreenHeight(), static_cast<unsigned long long>(sim::stateHash(s)));
+                  GetScreenWidth(), GetScreenHeight(), static_cast<double>(s.player.dashLeft), static_cast<double>(s.player.dashCooldown),
+                  static_cast<double>(s.player.dashDir.x), static_cast<double>(s.player.dashDir.y), static_cast<int>(s.run.difficulty),
+                  static_cast<unsigned long long>(sim::stateHash(s)));
     return json;
 }
 
@@ -625,7 +648,11 @@ void debugCommand(int command, int value) {
         case kResetFxCounters: effects::resetDebugCounters(); break;
         case kRunSteps:
             for (int i = 0; i < value; ++i) {
-                sim::step(s, InputFrame{});
+                // A dash asked for with kDash starts on the first of these steps.
+                InputFrame input;
+                input.dash = g_pendingDash;
+                g_pendingDash = false;
+                sim::step(s, input);
                 effects::consumeEvents(s, false);
                 effects::update(kDt, true);
                 s.events.clear();
@@ -709,3 +736,6 @@ EMSCRIPTEN_KEEPALIVE const char* ls_query_ui() { return ls::app::queryUi(); }
 EMSCRIPTEN_KEEPALIVE const char* ls_query_effects() { return ls::effects::debugJson(); }
 }
 #endif
+        case kDash: g_pendingDash = true; break;
+        case kHoldSim: g_holdSim = value != 0; break;
+        case kSetDashCooldown: s.player.dashCooldown = balance::kDashCooldownSeconds * static_cast<float>(value) / 100.0f; break;

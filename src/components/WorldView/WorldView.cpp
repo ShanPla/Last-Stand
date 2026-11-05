@@ -367,6 +367,7 @@ void draw(const GameState& state, float alpha) {
         drawZombieShadow(enemy, figure.feet);
     }
 
+    drawDashTrail(g_view, state, playerWorld);
     for (int i = 0; i < figures; ++i) {
         const VisibleFigure& figure = g_visible[g_drawOrder[i]];
         if (figure.enemyIndex == kPlayerSlot) drawSoldier(state, figure.feet, 255);

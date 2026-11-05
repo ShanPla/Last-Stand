@@ -496,4 +496,20 @@ inline constexpr Color kFxScreenFlashWarm{255, 228, 180, 255};
 inline constexpr Color kFxScreenFlashHostile{255, 110, 70, 255};
 inline constexpr Color kFxScreenFlashEvolved{206, 164, 255, 255};
 
+// --- Dash button and cooldown (HUD) ---
+inline constexpr Color kDashReady{255, 196, 64, 255};        // Border and icon when a dash is ready.
+inline constexpr Color kDashCooling{112, 102, 96, 255};      // Dim icon while it recharges.
+inline constexpr Color kDashShade{14, 12, 16, 190};          // Covers the part of the button not yet recharged.
+inline constexpr Color kDashActive{255, 236, 170, 255};      // The button while the dash itself runs.
+inline constexpr Color kDashButtonFill{40, 34, 30, 255};
+
+// --- Difficulty labels (title, pause, game over) ---
+inline constexpr Color kDifficultyEasy{112, 208, 170, 255};
+inline constexpr Color kDifficultyNormal{240, 226, 196, 255};
+inline constexpr Color kDifficultyHard{222, 92, 60, 255};
+inline constexpr Color kDifficultyColors[3] = {kDifficultyEasy, kDifficultyNormal, kDifficultyHard};  // Indexed by Difficulty.
+
+// --- Map selector ---
+inline constexpr Color kMapColors[2] = {Color{176, 170, 190, 255}, Color{226, 178, 104, 255}};
+
 }  // namespace ls::theme

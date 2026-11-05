@@ -282,6 +282,21 @@ constexpr Rows kGem = {
     "............",
     "............"};
 
+// Two chevrons running right, with speed lines trailing behind them.
+constexpr Rows kDash = {
+    "............",
+    "............",
+    "...##..##...",
+    "oo..##..##..",
+    "ooo..##..##.",
+    "oo....##..##",
+    ".....##..##.",
+    "....##..##..",
+    "...##..##...",
+    "............",
+    "............",
+    "............"};
+
 // The zombie head on the title screen. It has its own colors.
 constexpr Rows kZombie = {
     "...######...",
@@ -370,6 +385,8 @@ void drawPickupIcon(PickupType type, float cx, float cy, float size, Color color
 }
 
 void drawGemIcon(float cx, float cy, float size, Color color) { drawGrid(kGem, cx, cy, size, color); }
+
+void drawDashIcon(float cx, float cy, float size, Color color) { drawGrid(kDash, cx, cy, size, color); }
 
 void drawZombieIcon(float cx, float cy, float size, float alpha) {
     const int cell = std::max(1, static_cast<int>(size / static_cast<float>(kGrid)));

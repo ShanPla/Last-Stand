@@ -132,6 +132,7 @@ bool showPrompts() { return g_input.lastDevice != input::Device::Touch; }
 const char* promptConfirm() { return g_input.lastDevice == input::Device::Gamepad ? "A" : "Enter"; }
 const char* promptBack() { return g_input.lastDevice == input::Device::Gamepad ? "B" : "Esc"; }
 const char* promptReroll() { return g_input.lastDevice == input::Device::Gamepad ? "Y" : "R"; }
+const char* promptDash() { return g_input.lastDevice == input::Device::Gamepad ? "RB" : "Shift"; }
 const char* promptPause() { return g_input.lastDevice == input::Device::Gamepad ? "Start" : "Esc"; }
 
 void text(const char* string, float x, float y, float size, Color color, font::Align align, float tracking) {

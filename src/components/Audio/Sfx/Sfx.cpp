@@ -299,6 +299,25 @@ Samples playerDied() {
     });
 }
 
+// A quick rush of air: noise through a band that sweeps up and then back down, with a soft
+// push of low sound under it, so the dash feels like a body leaving the ground.
+Samples playerDash() {
+    constexpr float kLength = 0.3f;
+    Noise n(48);
+    Biquad bp;
+    OnePole lp;
+    lp.setCutoff(2600.0f);
+    int tick = 0;
+    return render(kLength, [&](float t, size_t) {
+        const float u = t / kLength;
+        if ((tick++ & 15) == 0) bp.bandpass(500.0f + 2200.0f * std::sin(kPi * std::min(1.0f, u)), 0.9f);
+        const float window = std::sin(kPi * std::min(1.0f, u));
+        const float air = lp.low(bp.process(n.next())) * window * window * 2.4f;
+        const float push = glideSine(t, 150.0f, 70.0f, 0.05f) * decay(t, 0.08f) * 0.5f;
+        return air + push;
+    });
+}
+
 // Minor pentatonic steps above A4, so a run of gems plays a rising tune that fits the music.
 Samples gem(int step) {
     static constexpr int kLadder[kGemSteps] = {0, 3, 5, 7, 10, 12, 15, 17, 19, 22};
@@ -537,6 +556,7 @@ const Entry kEntries[kSfxCount] = {
     {{"reload", 1, 0.20f}, 0.34f},         {{"dry", 1, 0.25f}, 0.30f},          {{"enemy_hit", 2, 0.08f}, 0.18f},
     {{"kill_squelch", 4, 0.05f}, 0.42f},   {{"kill_thud", 3, 0.05f}, 0.42f},    {{"kill_pop", 3, 0.05f}, 0.38f},
     {{"elite_killed", 2, 0.15f}, 0.62f},   {{"player_hit", 2, 0.12f}, 0.65f},   {{"player_died", 1, 2.0f}, 0.75f},
+    {{"dash", 1, 0.2f}, 0.42f},
     {{"gem_0", 2, 0.035f}, 0.26f},         {{"gem_1", 2, 0.035f}, 0.26f},       {{"gem_2", 2, 0.035f}, 0.26f},
     {{"gem_3", 2, 0.035f}, 0.26f},         {{"gem_4", 2, 0.035f}, 0.26f},       {{"gem_5", 2, 0.035f}, 0.26f},
     {{"gem_6", 2, 0.035f}, 0.26f},         {{"gem_7", 2, 0.035f}, 0.26f},       {{"gem_8", 2, 0.035f}, 0.26f},
@@ -574,6 +594,7 @@ Samples renderSfx(SfxId id) {
         case SfxId::EliteKilled: out = eliteKilled(); break;
         case SfxId::PlayerHit: out = playerHit(); break;
         case SfxId::PlayerDied: out = playerDied(); break;
+        case SfxId::PlayerDash: out = playerDash(); break;
         case SfxId::LevelUp: out = levelUp(); break;
         case SfxId::PickupHeal: out = pickupHeal(); break;
         case SfxId::PickupMagnet: out = pickupMagnet(); break;

@@ -361,6 +361,31 @@ void onEvolution(const SimEvent& event, bool quiet) {
     groundRing(event.pos, 40, 460.0f, theme::kFxEvolvedSpark, 3, 0.5f, 2, kFlagHot);
 }
 
+// A kick of dust behind his feet. It only reads the dash direction, and a dash comes at
+// most every few seconds, so it needs no budget.
+void onPlayerDashed(const GameState& state, const SimEvent& event) {
+    const Vec2 back = state.player.dashDir * -1.0f;
+    Burst dust;
+    dust.at = event.pos;
+    dust.height = 3.0f;
+    dust.count = 12;
+    dust.speedMin = 40.0f;
+    dust.speedMax = 190.0f;
+    dust.liftMin = 4.0f;
+    dust.liftMax = 26.0f;
+    dust.lifeMin = 0.2f;
+    dust.lifeMax = 0.4f;
+    dust.gravity = 120.0f;
+    dust.sizeMin = 1;
+    dust.sizeMax = 2;
+    dust.colors = theme::kFxDust;
+    dust.colorCount = 2;
+    dust.aim = back;
+    dust.aimSpread = 0.6f;
+    dust.flags = kFlagDrag | kFlagTinted;
+    emitBurst(dust, g_random);
+}
+
 void onPickup(const SimEvent& event) {
     static constexpr Color kColors[static_cast<int>(PickupType::Count)][2] = {
         {theme::kPickupHeal, theme::kPickupIcon},
@@ -482,6 +507,7 @@ void consumeEvents(const GameState& state, bool quiet) {
             case EventType::Explosion:
                 if (nearView(event.pos) || distanceSq(event.pos, state.player.pos) < kShakeReach * kShakeReach) onExplosion(state, event, quiet);
                 break;
+            case EventType::PlayerDashed: onPlayerDashed(state, event); break;
             case EventType::ReloadStarted:
             case EventType::WeaponDry: break;
         }

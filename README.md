@@ -18,12 +18,12 @@ Survive 10 minutes against a growing horde, then fight the final boss. You only 
 
 ### Controls
 
-| Device | Move | Menus |
-|---|---|---|
-| Keyboard | WASD or arrow keys | Arrow keys, Enter, Esc |
-| Touch | Drag anywhere for a floating joystick | Tap |
-| Gamepad | Left stick | D-pad or stick, A, B, Start |
-| Mouse | Not used for moving | Click |
+| Device | Move | Dash | Menus |
+|---|---|---|---|
+| Keyboard | WASD or arrow keys | Shift or Space | Arrow keys, Enter, Esc |
+| Touch | Drag anywhere for a floating joystick | The DASH button in the lower right corner | Tap |
+| Gamepad | Left stick | Right shoulder button | D-pad or stick, A, B, Start |
+| Mouse | Not used for moving | Click the dash icon under the weapons | Click |
 
 ## How it works
 

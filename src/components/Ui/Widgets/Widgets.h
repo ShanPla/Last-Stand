@@ -61,6 +61,7 @@ bool showPrompts();
 const char* promptConfirm();
 const char* promptBack();
 const char* promptReroll();
+const char* promptDash();
 const char* promptPause();
 
 // Text, faded with the screen.

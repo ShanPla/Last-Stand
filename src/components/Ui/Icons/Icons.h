@@ -13,6 +13,7 @@ void drawWeaponIcon(WeaponId id, float cx, float cy, float size, Color color);
 void drawPassiveIcon(PassiveId id, float cx, float cy, float size, Color color);
 void drawPickupIcon(PickupType type, float cx, float cy, float size, Color color);
 void drawGemIcon(float cx, float cy, float size, Color color);
+void drawDashIcon(float cx, float cy, float size, Color color);
 
 // A pixel zombie head for the title logo. It brings its own colors, so only alpha is given.
 void drawZombieIcon(float cx, float cy, float size, float alpha);

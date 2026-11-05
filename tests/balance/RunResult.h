@@ -62,6 +62,7 @@ struct RunResult {
     float playedSeconds = 0.0f;          // Time with the game actually running.
     int cratesCollected = 0;
     int rerollsUsed = 0;
+    int dashes = 0;
 
     std::vector<float> sampleZombies;  // One entry every kSampleSeconds.
     std::vector<float> sampleHp;

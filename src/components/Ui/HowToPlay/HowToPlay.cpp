@@ -24,9 +24,9 @@ struct Tip {
 
 const char* moveText() {
     switch (input().lastDevice) {
-        case input::Device::Touch: return "Touch and drag anywhere. A stick appears under your thumb.";
-        case input::Device::Gamepad: return "Push the left stick to run. Your gun does the rest.";
-        default: return "WASD or arrow keys to run. You never need to aim.";
+        case input::Device::Touch: return "Drag anywhere to run. Tap the DASH button to dodge.";
+        case input::Device::Gamepad: return "Left stick to run. RB dashes, and makes you untouchable for a moment.";
+        default: return "WASD or arrows to run. Shift or Space dashes, and makes you untouchable for a moment.";
     }
 }
 
@@ -68,7 +68,7 @@ bool drawHowToPlay() {
     char eight[110];
     std::snprintf(eight, sizeof(eight), "Survive %d minutes. Then the boss arrives. Win or die, the run ends.", static_cast<int>(balance::kRunSeconds / 60.0f));
     const Tip tips[] = {
-        {Glyph::Move, "Move", ""},
+        {Glyph::Move, "Move and dash", ""},
         {Glyph::Fire, "Weapons fire on their own", "Every gun shoots the nearest zombie. You only steer."},
         {Glyph::Gem, "Collect gems", "Green gems drop from zombies. Collect enough to level up."},
         {Glyph::Cards, "Pick a card", "Each level offers 3 cards. Reroll twice per run if none fit."},

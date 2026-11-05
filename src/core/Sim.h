@@ -12,6 +12,7 @@ struct InputFrame {
     float moveY = 0.0f;
     int8_t chooseCard = -1;  // Card index picked on the level-up screen, or -1.
     bool reroll = false;
+    bool dash = false;       // A dash was asked for this step. Ignored during cooldown.
 };
 
 namespace sim {

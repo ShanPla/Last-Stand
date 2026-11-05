@@ -75,7 +75,7 @@ void step(GameState& state, const InputFrame& input) {
 
     run.tick++;
     applyStressTargets(state);
-    player::update(state, input.moveX, input.moveY);
+    player::update(state, input.moveX, input.moveY, input.dash);
     waves::update(state);
     enemies::update(state);
     weapons::update(state);
@@ -113,6 +113,11 @@ uint64_t stateHash(const GameState& state) {
     mixFloat(state.player.pos.x);
     mixFloat(state.player.pos.y);
     mixFloat(state.player.hp);
+    mixFloat(state.player.dashLeft);
+    mixFloat(state.player.dashCooldown);
+    mixFloat(state.player.dashInvulnerable);
+    mixFloat(state.player.dashDir.x);
+    mixFloat(state.player.dashDir.y);
     mixInt(state.player.level);
     mixInt(state.player.xp);
     mixInt(state.enemies.count);

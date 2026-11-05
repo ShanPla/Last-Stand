@@ -328,6 +328,8 @@ TEST_CASE("the router limits rates and picks the right sound") {
     CHECK(req.id == sfx::SfxId::Reload);
     CHECK(r3.route(makeEvent(EventType::WeaponDry, 0), 7.0f, req));
     CHECK(req.id == sfx::SfxId::Dry);
+    CHECK(r3.route(makeEvent(EventType::PlayerDashed, 0), 8.0f, req));
+    CHECK(req.id == sfx::SfxId::PlayerDash);
 
     // Each pickup type has its own sound, and a bad type is ignored.
     sfx::SfxId seen[4];

@@ -145,6 +145,11 @@ struct Player {
     float maxHp = 0.0f;
     float invulnerable = 0.0f;
     float hitFlash = 0.0f;
+    // Dash. The direction is locked when it starts, so steering can't bend it.
+    Vec2 dashDir;
+    float dashLeft = 0.0f;          // Seconds of dash still to run. Above 0 means dashing.
+    float dashCooldown = 0.0f;      // Seconds until the next dash is allowed.
+    float dashInvulnerable = 0.0f;  // Kept apart from the post-hit window, so neither can stretch the other.
     int level = 1;
     int xp = 0;
     int xpToNext = 0;
@@ -197,6 +202,7 @@ enum class EventType : uint8_t {
     EnemyHit, EnemyKilled, EliteKilled, PlayerHit, GemCollected, LevelUp, PickupCollected,
     BombBlast, WeaponFired, ReloadStarted, WeaponDry, EvolutionGained, BossSpawned, BossPhaseChanged, BossKilled, PlayerDied,
     Explosion,  // detail is the weapon that made it. value is the blast radius.
+    PlayerDashed,  // At the spot the dash started. The direction is in player.dashDir.
 };
 
 struct SimEvent {

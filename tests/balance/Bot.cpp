@@ -19,6 +19,7 @@ const BotProfile kNovice = {
     /*look*/ 230.0f, 8, 0.30f, false, false, 0.0f, 0.30f,
     /*mistakes*/ 0.50f, 0.12f,
     /*loot*/ 220.0f, 1.0f, false,
+    /*dash*/ 0.15f, 120.0f, 4, 0.7f, false,  // Rarely, and late: only when hurt and swamped, and then not always.
     CardStyle::Random,
 };
 
@@ -28,6 +29,7 @@ const BotProfile kAverage = {
     /*look*/ 380.0f, 12, 0.45f, true, false, 200.0f, 0.80f,
     /*mistakes*/ 0.20f, 0.03f,
     /*loot*/ 380.0f, 2.5f, true,
+    /*dash*/ 0.5f, 60.0f, 3, 0.8f, false,  // Sometimes, to get out of a pile when it is hurting.
     CardStyle::Greedy,
 };
 
@@ -37,6 +39,7 @@ const BotProfile kSkilled = {
     /*look*/ 520.0f, 20, 0.50f, true, true, 340.0f, 1.00f,
     /*mistakes*/ 0.04f, 0.0f,
     /*loot*/ 560.0f, 3.5f, true,
+    /*dash*/ 1.0f, 30.0f, 4, 0.6f, true,  // Whenever it helps: warnings and shots, and a pile when it is hurting.
     CardStyle::Planner,
 };
 
@@ -47,6 +50,11 @@ constexpr float kHazardPenalty = 40.0f;       // Cost of ending inside a boss zo
 constexpr float kHazardMargin = 10.0f;
 constexpr float kMomentumWeight = 0.25f;      // Keeps the path smooth instead of jittering.
 constexpr float kBulletFalloff = 25.0f;
+constexpr float kDashContactRange = 30.0f;    // Gap to a zombie that counts as touching, for feeling surrounded.
+constexpr float kDashWarnSeconds = 0.45f;     // A warning this close to going off is worth leaving.
+constexpr float kDashBulletSeconds = 0.2f;    // A shot this close to landing is worth leaving.
+constexpr float kDashPanicHp = 0.3f;          // Health share at which even a poor player reaches for the dash.
+constexpr float kDashMinGain = 1.5f;          // The dash must make things at least this much better.
 constexpr float kChargerLaneLength = balance::kChargerDashSpeed * balance::kChargerDashSeconds;
 constexpr float kBossDashLaneLength = balance::kBossDashSpeed * balance::kBossDashSeconds;
 
@@ -104,6 +112,8 @@ InputFrame Bot::act(const GameState& state) {
     --stepsUntilDecision_;
     input.moveX = heading_.x;
     input.moveY = heading_.y;
+    input.dash = dashNext_;
+    dashNext_ = false;
     return input;
 }
 
@@ -286,6 +296,74 @@ void Bot::decideMove(const GameState& state) {
         }
     }
     heading_ = rotated(bestDir, rng_.range(-profile_.noiseRadians, profile_.noiseRadians));
+    considerDash(state);
+}
+
+// How bad it is to be at a point once the given time has passed: the same idea as
+// headingCost, but for a spot instead of a heading.
+float Bot::dashCost(Vec2 where, float seconds) const {
+    const float playerR = balance::kPlayerRadius;
+    float cost = 0.0f;
+    for (const Threat& threat : threats_) {
+        const Vec2 q = threat.pos + threat.vel * seconds;
+        const float gap = distance(where, q) - threat.radius - playerR;
+        cost += threat.weight * (gap < 0.0f ? kContactPenalty : std::exp(-gap / kThreatFalloff));
+    }
+    for (const Threat& bullet : bullets_) {
+        const Vec2 q = bullet.pos + bullet.vel * seconds;
+        const float gap = distance(where, q) - bullet.radius - playerR;
+        cost += bullet.weight * (gap < 0.0f ? kContactPenalty : 2.0f * std::exp(-gap / kBulletFalloff));
+    }
+    for (const Hazard& hazard : hazards_) {
+        const float gap = segmentDistance(where, hazard.a, hazard.b) - hazard.radius - playerR - kHazardMargin;
+        cost += hazard.weight * (gap < 0.0f ? kHazardPenalty : 3.0f * std::exp(-gap / 30.0f));
+    }
+    return cost;
+}
+
+// Decides whether to dash on the next step, and sets the heading to dash along. It only
+// dashes when it has a reason (surrounded, or for the skilled bot a warning or a shot
+// about to land) and the best landing spot is clearly better than staying put.
+void Bot::considerDash(const GameState& state) {
+    dashNext_ = false;
+    if (profile_.dashChance <= 0.0f || state.timeSeconds() < profile_.dashAfterSeconds) return;
+    const Player& player = state.player;
+    if (player.dashCooldown > 0.0f || player.dashLeft > 0.0f || player.hp <= 0.0f) return;
+
+    const Vec2 pos = player.pos;
+    const float playerR = balance::kPlayerRadius;
+    int touching = 0;
+    for (const Threat& threat : threats_) {
+        if (distance(threat.pos, pos) - threat.radius - playerR < kDashContactRange) ++touching;
+    }
+    bool reason = touching >= profile_.dashCrowd && player.hp < profile_.dashHurtBelow * player.maxHp;
+    // Anyone panics when nearly dead with zombies on top of them.
+    if (touching >= 2 && player.hp < kDashPanicHp * player.maxHp) reason = true;
+    if (profile_.dashDodges && !reason) {
+        for (const Hazard& hazard : hazards_) {
+            if (hazard.life < kDashWarnSeconds && segmentDistance(pos, hazard.a, hazard.b) < hazard.radius + playerR + kHazardMargin) reason = true;
+        }
+        for (const Threat& bullet : bullets_) {
+            const Vec2 q = bullet.pos + bullet.vel * kDashBulletSeconds;
+            if (distance(pos, q) < bullet.radius + playerR + 12.0f) reason = true;
+        }
+    }
+    if (!reason || !rng_.chance(profile_.dashChance)) return;
+
+    const float here = dashCost(pos, balance::kDashSeconds);
+    float bestCost = 1.0e30f;
+    Vec2 bestDir = heading_;
+    for (int k = 0; k < profile_.directions; ++k) {
+        const Vec2 dir = fromAngle(kTau * static_cast<float>(k) / static_cast<float>(profile_.directions));
+        const float cost = dashCost(pos + dir * balance::kDashDistance, balance::kDashSeconds);
+        if (cost < bestCost) {
+            bestCost = cost;
+            bestDir = dir;
+        }
+    }
+    if (bestCost + kDashMinGain > here) return;
+    heading_ = bestDir;
+    dashNext_ = true;
 }
 
 // ---------------------------------------------------------------------------

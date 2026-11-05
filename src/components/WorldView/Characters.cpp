@@ -264,6 +264,11 @@ constexpr float kRecoilSeconds = 0.08f;
 constexpr float kRecoilPixels = 2.5f;
 constexpr float kFlashSeconds = 0.05f;
 constexpr float kShoulderHeight = 17.5f;
+constexpr int kTrailGhosts = 4;          // Copies in a dash afterimage.
+constexpr int kTrailGhostsSimple = 2;    // With reduced motion or flashes off.
+constexpr float kTrailSpacing = 28.0f;   // World units between copies.
+constexpr float kTrailAlpha = 140.0f;    // Strength of the nearest copy, out of 255.
+constexpr uint8_t kTrailWash = 110;      // How far a copy mixes toward the pale flash color.
 
 bool isHeldGun(WeaponId weapon) { return weapon != WeaponId::Blades && weapon != WeaponId::Landmines; }
 
@@ -394,6 +399,27 @@ void drawSoldier(const GameState& state, const ScreenPoint& feet, uint8_t streng
     if (gunBehind) spriteQuad(gunSprite, gunX, gunY, gunMirror, gunRow, grade, strength, flash);
     spriteQuad(body, x, y, heading.mirror, row, grade, strength, flash);
     if (!gunBehind) spriteQuad(gunSprite, gunX, gunY, gunMirror, gunRow, grade, strength, flash);
+}
+
+// The afterimage of a dash: a few pale copies of his body strung out behind him. Where they
+// stand comes straight from the dash state, so the renderer keeps no list of old positions.
+// Reduced motion or no flicker keeps only two, steady and without the fade-out blink.
+void drawDashTrail(const View& view, const GameState& state, Vec2 playerWorld) {
+    const Player& player = state.player;
+    if (player.dashLeft <= 0.0f || state.run.phase != RunPhase::Playing) return;
+    const bool simple = !effects::flickerAllowed();
+    const int ghosts = simple ? kTrailGhostsSimple : kTrailGhosts;
+    const float travelled = (balance::kDashSeconds - player.dashLeft) * balance::kDashSpeed;
+    const Heading heading = soldierHeading(state);
+    const SpriteRef& body = soldierBody(heading.facing, bodyPose(state.run.tick));
+    // Far ghosts first, so nearer ones draw over them.
+    for (int i = ghosts; i >= 1; --i) {
+        const float back = static_cast<float>(i) * kTrailSpacing;
+        if (back > travelled) continue;
+        const ScreenPoint at = project(view, playerWorld - player.dashDir * back);
+        const float strength = 1.0f - static_cast<float>(i - 1) / static_cast<float>(ghosts);
+        spriteQuad(body, roundToInt(at.x), roundToInt(at.y), heading.mirror, kRowBase, 150, static_cast<uint8_t>(kTrailAlpha * strength), kTrailWash);
+    }
 }
 
 void drawMuzzleFlash(const GameState& state, const ScreenPoint& feet) {

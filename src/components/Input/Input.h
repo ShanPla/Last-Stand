@@ -21,6 +21,9 @@ struct Snapshot {
     bool confirm = false;
     bool back = false;     // Esc, P, gamepad B or Start. Pauses, and goes back in menus.
     bool reroll = false;
+    // Dash: Shift or Space, or the gamepad's right shoulder button. Space is also confirm,
+    // so the game only acts on this while playing. The on-screen button is the HUD's own.
+    bool dash = false;
     // Net arrow or D-pad presses this frame, so two quick presses in one frame still
     // move two steps. Left and up are negative.
     int stepX = 0;

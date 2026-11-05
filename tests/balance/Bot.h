@@ -38,6 +38,12 @@ struct BotProfile {
     float lootRadius;          // How far it will detour for gems and pickups.
     float lootWeight;          // How much it values loot against danger.
     bool knowsAmmoNeed;        // Heads for crates when guns run low.
+    // Dashing. A dash is only spent on a real problem, and only when it would end somewhere safer.
+    float dashChance;          // Chance per decision to dash once there is a reason. Zero never dashes.
+    float dashAfterSeconds;    // Run time before it starts to dash at all.
+    int dashCrowd;             // Zombies within touching range that make it feel surrounded.
+    float dashHurtBelow;       // Being surrounded only counts as a reason once health is under this share.
+    bool dashDodges;           // Also dashes out of boss and charger warnings and shots about to land.
     // Level-ups.
     CardStyle cards;
 };
@@ -75,6 +81,8 @@ private:
 
     void decideMove(const GameState& state);
     void gatherThreats(const GameState& state);
+    void considerDash(const GameState& state);
+    float dashCost(Vec2 where, float seconds) const;
     void chooseLoot(const GameState& state);
     float headingCost(const GameState& state, Vec2 dir) const;
     float ammoNeed(const GameState& state) const;
@@ -94,6 +102,7 @@ private:
     std::vector<Hazard> hazards_;
     Vec2 lootTarget_;
     bool hasLoot_ = false;
+    bool dashNext_ = false;  // Dash on the next step.
 };
 
 }  // namespace ls::tools
