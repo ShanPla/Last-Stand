@@ -3,6 +3,10 @@
 # and a list of every file that belongs on the web host.
 #
 # Inputs: OUT_DIR (build output), WEB_DIR (the web folder), TOOLS_DIR (the tools folder).
+
+# The old copies are removed first. COPY never deletes, so a component that was removed
+# from web/ would otherwise stay in the output and in the file list below.
+file(REMOVE_RECURSE "${OUT_DIR}/components" "${OUT_DIR}/icons")
 file(COPY "${WEB_DIR}/components" DESTINATION "${OUT_DIR}")
 file(COPY "${WEB_DIR}/manifest.webmanifest" DESTINATION "${OUT_DIR}")
 

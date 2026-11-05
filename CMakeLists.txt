@@ -143,8 +143,13 @@ if(EMSCRIPTEN)
     -sEXPORTED_FUNCTIONS=_main,_ls_query_state,_ls_debug_command
     -fno-exceptions -fno-rtti
   )
+  # Every file the page shell is made of. A change to any of them relinks, which is what
+  # runs the finishing step below, so the output folder never keeps an old copy.
+  # CONFIGURE_DEPENDS makes a new or deleted file rerun CMake too.
+  file(GLOB_RECURSE LS_WEB_SHELL_FILES CONFIGURE_DEPENDS "${LS_WEB_DIR}/*")
+  list(APPEND LS_WEB_SHELL_FILES "${CMAKE_SOURCE_DIR}/tools/generate-icons.mjs")
   set_target_properties(laststand PROPERTIES OUTPUT_NAME "index"
-    LINK_DEPENDS "${LS_WEB_DIR}/index.html")
+    LINK_DEPENDS "${LS_WEB_SHELL_FILES}")
   # Copies the page shell next to the build output and writes the real
   # .wasm size into the page, so the loading bar can show true progress.
   add_custom_command(TARGET laststand POST_BUILD
