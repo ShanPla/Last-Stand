@@ -3,6 +3,7 @@
 #include "components/Enemies/Boss/Boss.h"
 #include "components/Enemies/Charger/Charger.h"
 #include "components/Effects/Effects.h"
+#include "components/WorldView/DashPath.h"
 #include "data/Balance.h"
 #include "data/Theme.h"
 
@@ -297,6 +298,8 @@ struct SoldierState {
 };
 
 SoldierState g_soldierState;
+DashPath g_dashPath;
+uint32_t g_dashPathTick = 0;  // The simulation step the path was last added to.
 int g_muzzleFrames = 0;  // Only read by the browser tests.
 
 constexpr float kStrideLength = 62.0f;   // World units for one full walk cycle.
@@ -367,7 +370,10 @@ void noteWeaponFired(WeaponId weapon) {
     g_soldierState.seenAny = true;
 }
 
-void resetSoldierAnimation() { g_soldierState = SoldierState{}; }
+void resetSoldierAnimation() {
+    g_soldierState = SoldierState{};
+    g_dashPath.clear();
+}
 
 SoldierDebug soldierDebug(const GameState& state) { return {static_cast<int>(heldGun(state)), g_muzzleFrames}; }
 
@@ -451,22 +457,33 @@ void drawSoldier(const GameState& state, const ScreenPoint& feet, uint8_t streng
     if (!gunBehind) spriteQuad(gunSprite, gunX, gunY, gunMirror, gunRow, grade, strength, flash);
 }
 
-// The afterimage of a dash: a few pale copies of his body strung out behind him. Where they
-// stand comes straight from the dash state, so the renderer keeps no list of old positions.
+// The afterimage of a dash: a few pale copies of his body strung out behind him, on the way he
+// really went. A dash into a car goes nowhere, so it leaves no copies.
 // Reduced motion or no flicker keeps only two, steady and without the fade-out blink.
 void drawDashTrail(const View& view, const GameState& state, Vec2 playerWorld) {
     const Player& player = state.player;
-    if (player.dashLeft <= 0.0f || state.run.phase != RunPhase::Playing) return;
+    if (player.dashLeft <= 0.0f) {
+        g_dashPath.clear();
+        return;
+    }
+    if (state.run.phase != RunPhase::Playing) return;
+    if (g_dashPath.empty()) {
+        g_dashPath.add(player.prevPos);
+        g_dashPath.add(player.pos);
+        g_dashPathTick = state.run.tick;
+    } else if (state.run.tick != g_dashPathTick) {
+        g_dashPath.add(player.pos);
+        g_dashPathTick = state.run.tick;
+    }
     const bool simple = !effects::flickerAllowed();
     const int ghosts = simple ? kTrailGhostsSimple : kTrailGhosts;
-    const float travelled = (balance::kDashSeconds - player.dashLeft) * balance::kDashSpeed;
     const Heading heading = soldierHeading(state);
     const SpriteRef& body = soldierBody(heading.facing, bodyPose(state.run.tick));
     // Far ghosts first, so nearer ones draw over them.
     for (int i = ghosts; i >= 1; --i) {
-        const float back = static_cast<float>(i) * kTrailSpacing;
-        if (back > travelled) continue;
-        const ScreenPoint at = project(view, playerWorld - player.dashDir * back);
+        Vec2 ghost;
+        if (!g_dashPath.pointBack(playerWorld, static_cast<float>(i) * kTrailSpacing, &ghost)) continue;
+        const ScreenPoint at = project(view, ghost);
         const float strength = 1.0f - static_cast<float>(i - 1) / static_cast<float>(ghosts);
         spriteQuad(body, roundToInt(at.x), roundToInt(at.y), heading.mirror, kRowBase, 150, static_cast<uint8_t>(kTrailAlpha * strength), kTrailWash);
     }
