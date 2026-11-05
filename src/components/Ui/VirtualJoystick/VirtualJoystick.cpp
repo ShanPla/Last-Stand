@@ -9,15 +9,15 @@
 namespace ls::ui {
 
 namespace {
-constexpr float kStickMargin = 24.0f;       // From the safe area's corner, in design units.
+constexpr float kStickSideMargin = 38.0f;    // From the safe area's left edge, in design units. Thumbs reach in from the side.
+constexpr float kStickBottomMargin = 24.0f;  // From the safe area's bottom edge.
 constexpr float kStickIdleStrength = 0.55f;  // How visible the stick is with no thumb on it.
 }  // namespace
 
 Vec2 joystickHome() {
     const Layout& l = layout();
     const float radius = input::joystickRadius();
-    const float margin = kStickMargin * l.u;
-    return Vec2{l.left + margin + radius, l.bottom - margin - radius};
+    return Vec2{l.left + kStickSideMargin * l.u + radius, l.bottom - kStickBottomMargin * l.u - radius};
 }
 
 void drawVirtualJoystick(const input::Snapshot& snapshot) {
