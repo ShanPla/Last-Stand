@@ -96,7 +96,8 @@ Color wallTexel(const WallLook& look, int x, int y, bool showBrick) {
 // A wall running across the screen. We see its face, up to a ragged broken top.
 // heights[] gives the height of each column, and 0 means it has fallen there.
 void wallFace(Paint& p, TileRandom& random, const WallLook& look, int x0, int x1, int footY, int maxHeight, bool withWindows, bool shadowBelow) {
-    constexpr int kMaxColumns = 320;
+    // Room for the widest wall a chunk can hold, so a wall always reaches its corner.
+    constexpr int kMaxColumns = kChunkWidth;
     int heights[kMaxColumns];
     const int columns = std::min(kMaxColumns, x1 - x0);
 

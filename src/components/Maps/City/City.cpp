@@ -21,6 +21,17 @@ constexpr int kRoadHalfY = 28;  // A road running across the screen: half its he
 constexpr int kWalkX = 20;      // Sidewalks beside those roads.
 constexpr int kWalkY = 13;
 
+// A lot with no road on one side still keeps this far from that chunk edge. Its walls,
+// fences and rubble stand a little past the lot, and the next chunk never paints them, so
+// without this room they would be cut flat along the seam. Tall things rise upward, so the
+// top edge needs the most.
+constexpr int kLotEdgeTop = 24;
+constexpr int kLotEdge = 20;
+
+// A crack is a random walk, so it needs a fence. A road only gets painted by the chunks it
+// can reach, and this much room keeps a crack, its lit edge and any weed on it inside them.
+constexpr int kCrackSeamRoom = 6;
+
 // Salts that keep each kind of random choice independent of the others.
 enum Salt : uint32_t { kSaltVertical = 11, kSaltHorizontal = 23, kSaltLot = 37, kSaltVerticalProps = 41, kSaltHorizontalProps = 53, kSaltCorner = 67 };
 
@@ -133,7 +144,14 @@ void paintBase(Paint& p, const Roads& roads) {
     }
 }
 
-void crack(Paint& p, TileRandom& random, int x, int y, int steps, int bias) {
+// Where a crack may go, in whole-map texels. It is the same box for every chunk that paints
+// this road, so they all see the crack stop at the same spot and can't disagree at a seam.
+struct CrackBox {
+    int x0, y0, x1, y1;
+    bool holds(int x, int y) const { return x >= x0 && x < x1 && y >= y0 && y < y1; }
+};
+
+void crack(Paint& p, TileRandom& random, const CrackBox& box, int x, int y, int steps, int bias) {
     // A random walk with a preferred direction. Each step has a lit edge beside it,
     // which is what makes a thin dark line read as a split in the road.
     int cx = x;
@@ -147,12 +165,13 @@ void crack(Paint& p, TileRandom& random, int x, int y, int steps, int bias) {
         for (int j = 0; j < run; ++j) {
             cx += across ? (bias == 0 ? 1 : random.range(-1, 1)) : random.range(-1, 1);
             cy += across ? random.range(-1, 1) : 1;
+            if (!box.holds(cx, cy)) return;
             p.put(cx, cy, kAsphaltCrack);
             if (j % 2 == 0) p.put(cx + 1, cy + 1, kAsphaltCrackEdge);
         }
         if (branchesLeft > 0 && random.chance(12)) {
             --branchesLeft;
-            crack(p, random, cx, cy, steps / 3, 1 - bias);
+            crack(p, random, box, cx, cy, steps / 3, 1 - bias);
         }
         if (random.chance(10)) weedTuft(p, cx, cy, random);
     }
@@ -232,9 +251,11 @@ void paintVerticalRoad(Paint& p, uint64_t seed, int i, int j, LightList& lights)
         }
     }
 
-    // Wear and tear.
+    // Wear and tear. The row of chunks below this block doesn't paint its road, so a crack
+    // stops short of that seam. Both columns and the row above do paint it.
+    const CrackBox cracks{centerX - kChunkWidth, y0 - kChunkHeight, centerX + kChunkWidth, (j + 1) * kChunkHeight - kCrackSeamRoom};
     for (int n = random.range(3, 6); n > 0; --n) {
-        crack(p, random, centerX + random.range(-kRoadHalfX + 4, kRoadHalfX - 4), random.range(y0, y1), random.range(6, 18), 1);
+        crack(p, random, cracks, centerX + random.range(-kRoadHalfX + 4, kRoadHalfX - 4), random.range(y0, y1), random.range(6, 18), 1);
     }
     for (int n = random.range(1, 3); n > 0; --n) {
         pothole(p, random, centerX + random.range(-kRoadHalfX + 8, kRoadHalfX - 8), random.range(y0 + 8, y1 - 8));
@@ -304,8 +325,11 @@ void paintHorizontalRoad(Paint& p, uint64_t seed, int i, int j, LightList& light
         }
     }
 
+    // The columns on either side of this block don't paint its road, so a crack stops short
+    // of both seams. The rows above and below do paint it.
+    const CrackBox cracks{i * kChunkWidth + kCrackSeamRoom, centerY - kChunkHeight, (i + 1) * kChunkWidth - kCrackSeamRoom, centerY + kChunkHeight};
     for (int n = random.range(3, 6); n > 0; --n) {
-        crack(p, random, random.range(x0, x1), centerY + random.range(-kRoadHalfY + 4, kRoadHalfY - 4), random.range(6, 18), 0);
+        crack(p, random, cracks, random.range(x0, x1), centerY + random.range(-kRoadHalfY + 4, kRoadHalfY - 4), random.range(6, 18), 0);
     }
     for (int n = random.range(1, 3); n > 0; --n) {
         pothole(p, random, random.range(x0 + 10, x1 - 10), centerY + random.range(-kRoadHalfY + 6, kRoadHalfY - 6));
@@ -339,8 +363,10 @@ void paintCrossing(Paint& p, uint64_t seed, int i, int j) {
     const int centerY = j * kChunkHeight;
     if (!p.overlaps(centerX - kRoadHalfX - kWalkX - 4, centerY - kRoadHalfY - 40, centerX + kRoadHalfX + kWalkX + 4, centerY + kRoadHalfY + kWalkY + 4)) return;
     TileRandom random(seed, i, j, kSaltCorner);
+    // All four chunks around a crossing paint it, so these cracks can go anywhere near it.
+    const CrackBox cracks{centerX - kChunkWidth, centerY - kChunkHeight, centerX + kChunkWidth, centerY + kChunkHeight};
     for (int n = random.range(1, 3); n > 0; --n) {
-        crack(p, random, centerX + random.range(-kRoadHalfX + 6, kRoadHalfX - 6), centerY + random.range(-kRoadHalfY + 4, kRoadHalfY - 4), random.range(6, 14), random.range(0, 1));
+        crack(p, random, cracks, centerX + random.range(-kRoadHalfX + 6, kRoadHalfX - 6), centerY + random.range(-kRoadHalfY + 4, kRoadHalfY - 4), random.range(6, 14), random.range(0, 1));
     }
     if (random.chance(70)) {
         // A manhole cover, a little off center.
@@ -371,8 +397,8 @@ int renderChunk(uint64_t seed, int chunkX, int chunkY, Color* pixels, Light* out
     // Lots stay inside their own chunk, so each chunk paints only its own.
     {
         TileRandom random(seed, chunkX, chunkY, kSaltLot);
-        const LotArea lot{paint.left() + (roads.left ? kRoadHalfX + kWalkX : 6), paint.top() + (roads.top ? kRoadHalfY + kWalkY : 6),
-                          paint.right() - (roads.right ? kRoadHalfX + kWalkX : 6), paint.bottom() - (roads.bottom ? kRoadHalfY + kWalkY : 6)};
+        const LotArea lot{paint.left() + (roads.left ? kRoadHalfX + kWalkX : kLotEdge), paint.top() + (roads.top ? kRoadHalfY + kWalkY : kLotEdgeTop),
+                          paint.right() - (roads.right ? kRoadHalfX + kWalkX : kLotEdge), paint.bottom() - (roads.bottom ? kRoadHalfY + kWalkY : kLotEdge)};
         paintLot(paint, random, lot, lights);
     }
 
