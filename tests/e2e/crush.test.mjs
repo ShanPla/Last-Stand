@@ -176,6 +176,16 @@ for (const [name, map] of [['the city', kCity], ['the desert', kWasteland]]) {
   });
 }
 
+test('flattening a burning wreck puts its fire out, and adds no other light', async () => {
+  const { context, page, problems } = await openRun();
+  const report = await page.evaluate(() => JSON.parse(Module.ccall('ls_check_wreck_fires', 'string', ['number', 'number', 'number'], [1, 8, 8])));
+  assert.ok(report.fewer > 0, `no chunk in this search lost a fire, so nothing was checked: ${JSON.stringify(report)}`);
+  assert.equal(report.more, 0, `flat cars must not add lights: ${JSON.stringify(report)}`);
+  assert.ok(report.flat < report.whole);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
 test('a car over a chunk edge goes flat on both chunks in the same frame', async () => {
   const { context, page, problems } = await openRun();
   for (const map of [kCity, kWasteland]) {

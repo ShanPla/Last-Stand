@@ -328,8 +328,11 @@ void furnishRoad(Paint& p, const Desert& d, const Span& s, int slot, LightList& 
             default: carSide(p, decided.x, decided.y, random); break;
         }
     }
-    // One wreck in a while is still burning, which gives the night its few fires.
-    if (random.chance(9)) wreckFire(p, decided.x, decided.y, lights);
+    // One wreck in a while is still burning, which gives the night its few fires. The boss
+    // stamps out the fire when it flattens the car. The chance is still drawn, so that nothing
+    // painted after this changes.
+    const bool burning = random.chance(9);
+    if (burning && !p.crushed().holds(decided.x, decided.y)) wreckFire(p, decided.x, decided.y, lights);
 }
 
 void furnishSlot(Paint& p, const Desert& d, const Span& s, int slot, int layer, LightList& lights) {

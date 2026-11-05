@@ -769,6 +769,33 @@ EMSCRIPTEN_KEEPALIVE double ls_ground_slowest_ms() {
 // pixels left where only this car stood, which would mean it still covers figures; chunks
 // that started from a different private picture, which would mean a visible seam; and chunks
 // that should show the car but never painted it, which would cut the picture at an edge.
+// Test hook: paints each chunk whole, then with all its cars flat, and counts the lights.
+EMSCRIPTEN_KEEPALIVE const char* ls_check_wreck_fires(int map, int seed, int reach) {
+    using namespace ls;
+    static char json[96];
+    static Color pixels[maps::kChunkWidth * maps::kChunkHeight];
+    const maps::MapId id = maps::mapFromIndex(map);
+    worldview::g_job.active = false;
+    maps::Light lights[maps::kMaxLightsPerChunk];
+    int whole = 0, flat = 0, chunksWithFewer = 0, chunksWithMore = 0;
+    for (int y = -reach; y <= reach; ++y) {
+        for (int x = -reach; x <= reach; ++x) {
+            maps::Obstacle list[maps::kMaxObstaclesPerTile];
+            maps::CarId ids[maps::kMaxObstaclesPerTile];
+            const int count = maps::obstaclesInTile(id, static_cast<uint64_t>(seed), x, y, list, maps::kMaxObstaclesPerTile);
+            for (int n = 0; n < count; ++n) ids[n] = maps::CarId{list[n].texelX, list[n].texelY};
+            const int before = maps::renderChunk(id, static_cast<uint64_t>(seed), x, y, pixels, lights);
+            const int after = maps::renderChunk(id, static_cast<uint64_t>(seed), x, y, pixels, lights, maps::CrushedCars{ids, count});
+            whole += before;
+            flat += after;
+            if (after < before) chunksWithFewer++;
+            if (after > before) chunksWithMore++;
+        }
+    }
+    std::snprintf(json, sizeof(json), "{\"whole\":%d,\"flat\":%d,\"fewer\":%d,\"more\":%d}", whole, flat, chunksWithFewer, chunksWithMore);
+    return json;
+}
+
 EMSCRIPTEN_KEEPALIVE const char* ls_check_flat_cars(int map, int seed, int reach) {
     using namespace ls;
     static char json[192];
