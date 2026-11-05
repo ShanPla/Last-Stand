@@ -35,24 +35,49 @@ Vec2 behaviourVelocity(GameState& state, Enemy& enemy) {
     return Vec2{};
 }
 
-// Pushes overlapping enemies apart so crowds spread out instead of stacking.
+// The velocity that moves enemy out of neighbour, or zero if they don't overlap.
+Vec2 overlapPush(const Enemy& enemy, const Enemy& neighbour) {
+    const Vec2 delta = enemy.pos - neighbour.pos;
+    const float minDistance = enemy.radius + neighbour.radius;
+    const float distSq = lengthSq(delta);
+    if (distSq >= minDistance * minDistance || distSq <= 1e-4f) return Vec2{};
+    return delta * ((minDistance - std::sqrt(distSq)) / minDistance * balance::kSeparationStrength);
+}
+
+// Pushes overlapping enemies apart so crowds spread out instead of stacking. Each enemy
+// looks only a short way around itself, which keeps 2,000 of them cheap. That look can
+// miss the center of a wide neighbour, so pushCrowdOutOfWideEnemies handles those pairs.
 Vec2 separation(const GameState& state, const Enemy& enemy, int selfIndex) {
     Vec2 push{};
     int checked = 0;
-    const float reach = enemy.radius + 16.0f;
+    const float reach = enemy.radius + balance::kSeparationReach;
     state.enemyGrid.query(enemy.pos, reach, [&](int other) {
         if (other == selfIndex || other >= state.enemies.count) return false;
         const Enemy& neighbour = state.enemies[other];
-        const Vec2 delta = enemy.pos - neighbour.pos;
-        const float minDistance = enemy.radius + neighbour.radius;
-        const float distSq = lengthSq(delta);
-        if (distSq < minDistance * minDistance && distSq > 1e-4f) {
-            push += delta * ((minDistance - std::sqrt(distSq)) / minDistance);
-        }
-        // A cap keeps huge crowds cheap. The push only needs to look plausible.
-        return ++checked >= 8;
+        if (neighbour.radius > balance::kSeparationReach) return false;
+        push += overlapPush(enemy, neighbour);
+        // The push only needs to look plausible, so a few neighbours are enough.
+        return ++checked >= balance::kSeparationMaxChecks;
     });
-    return push * balance::kSeparationStrength;
+    return push;
+}
+
+// Wide enemies are few, so they can afford a longer look, and they push out everyone who
+// overlaps them. This way a push never depends on which grid cell a center falls in.
+void pushCrowdOutOfWideEnemies(GameState& state) {
+    const float widestNeighbour = balance::largestPushedEnemyRadius();
+    for (int i = 0; i < state.enemies.count; ++i) {
+        const Enemy& wide = state.enemies[i];
+        if (wide.radius <= balance::kSeparationReach) continue;
+        state.enemyGrid.query(wide.pos, wide.radius + widestNeighbour, [&](int other) {
+            if (other == i || other >= state.enemies.count) return false;
+            Enemy& neighbour = state.enemies[other];
+            // The crowd moves around the boss. It is never pushed by the crowd.
+            if (neighbour.type == EnemyType::Boss) return false;
+            neighbour.pos += overlapPush(neighbour, wide) * kDt;
+            return false;
+        });
+    }
 }
 
 // Enemies left far behind move to the opposite side of the player, so the
@@ -115,6 +140,7 @@ void update(GameState& state) {
             player::damage(state, enemy.contactDamage);
         }
     }
+    pushCrowdOutOfWideEnemies(state);
     // Rebuilt after moving, so weapons this step test against current positions.
     state.enemyGrid.build(state.enemies.items, state.enemies.count);
 }

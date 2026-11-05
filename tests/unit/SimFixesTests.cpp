@@ -151,3 +151,90 @@ TEST_CASE("a spitter in range keeps its normal rate of fire") {
     CHECK(static_cast<float>(state->enemyBullets.count) == doctest::Approx(expected).epsilon(0.1));
 }
 
+// --- Separation from wide neighbours ---------------------------------------------
+
+namespace {
+
+// How far one update moves a Walker at pos, once with the neighbour and once without.
+// The player is well away from both, and near enough that a boss just walks.
+Vec2 pushOnWalker(Vec2 walkerPos, EnemyType neighbourType, Vec2 neighbourPos, bool elite = false) {
+    Vec2 result[2];
+    for (int withNeighbour = 0; withNeighbour < 2; ++withNeighbour) {
+        auto state = makeRun();
+        state->player.pos = Vec2{300.0f, 300.0f};
+        REQUIRE(enemies::spawn(*state, EnemyType::Walker, walkerPos, false));
+        if (withNeighbour == 1) {
+            REQUIRE(enemies::spawn(*state, neighbourType, neighbourPos, elite));
+            // A Brute also gets pushed by the Walker and could step clear by itself. A
+            // second Walker on its far side cancels that, as in a crowd around a Brute.
+            if (neighbourType != EnemyType::Boss) {
+                REQUIRE(enemies::spawn(*state, EnemyType::Walker, neighbourPos + (neighbourPos - walkerPos), false));
+            }
+        }
+        enemies::update(*state);
+        result[withNeighbour] = state->enemies[0].pos;
+    }
+    return result[1] - result[0];
+}
+
+}  // namespace
+
+TEST_CASE("a zombie is pushed out of a wide neighbour whose center is in another grid cell") {
+    // A Walker's own short look covers only grid cell 0 here. Each neighbour's center is
+    // in cell 1, yet they overlap.
+    CHECK(pushOnWalker(Vec2{33.0f, 10.0f}, EnemyType::Brute, Vec2{68.0f, 10.0f}).x < -1.0f);
+    CHECK(pushOnWalker(Vec2{33.0f, 10.0f}, EnemyType::Brute, Vec2{78.0f, 10.0f}, true).x < -1.0f);
+    CHECK(pushOnWalker(Vec2{10.0f, 10.0f}, EnemyType::Boss, Vec2{70.0f, 10.0f}).x < -1.0f);
+}
+
+TEST_CASE("the push out of a wide neighbour doesn't depend on grid cells") {
+    const float expected = -60.0f * (71.0f - 60.0f) / 71.0f * balance::kSeparationStrength * kDt;
+    for (int offsetY = 0; offsetY < 64; offsetY += 8) {
+        for (int offsetX = 0; offsetX < 64; offsetX += 8) {
+            const Vec2 walker{static_cast<float>(offsetX), static_cast<float>(offsetY)};
+            const Vec2 push = pushOnWalker(walker, EnemyType::Boss, walker + Vec2{60.0f, 0.0f});
+            CHECK(push.x == doctest::Approx(expected).epsilon(0.25));
+        }
+    }
+}
+
+TEST_CASE("a wide neighbour that an enemy can see pushes it only once") {
+    // The two share a grid cell, so both of the push's code paths could reach this pair.
+    // One push is at most this much. It can be less, as the Brute moves away first.
+    const float onePush = 25.0f * (39.0f - 25.0f) / 39.0f * balance::kSeparationStrength * kDt;
+    const Vec2 push = pushOnWalker(Vec2{20.0f, 10.0f}, EnemyType::Brute, Vec2{45.0f, 10.0f});
+    CHECK(push.x < -1.0f);
+    CHECK(push.x > -onePush * 1.1f);
+}
+
+TEST_CASE("wide enemies push each other") {
+    const Vec2 push = [] {
+        auto state = makeRun();
+        state->player.pos = Vec2{600.0f, 600.0f};
+        REQUIRE(enemies::spawn(*state, EnemyType::Brute, Vec2{33.0f, 10.0f}, false));
+        const float startX = state->enemies[0].pos.x;
+        REQUIRE(enemies::spawn(*state, EnemyType::Brute, Vec2{75.0f, 10.0f}, false));
+        enemies::update(*state);
+        return Vec2{state->enemies[0].pos.x - startX, state->enemies[1].pos.x - 75.0f};
+    }();
+    CHECK(push.x < 0.0f);  // The left one moves left, even though the player is to the right.
+    CHECK(push.y > 0.0f);
+}
+
+TEST_CASE("the crowd doesn't push the boss") {
+    Vec2 bossMove[2];
+    for (int withCrowd = 0; withCrowd < 2; ++withCrowd) {
+        auto state = makeRun();
+        state->player.pos = Vec2{600.0f, 600.0f};
+        REQUIRE(enemies::spawn(*state, EnemyType::Boss, Vec2{0.0f, 0.0f}, false));
+        if (withCrowd == 1) {
+            REQUIRE(enemies::spawn(*state, EnemyType::Brute, Vec2{40.0f, 0.0f}, true));
+            REQUIRE(enemies::spawn(*state, EnemyType::Walker, Vec2{-40.0f, 0.0f}, false));
+        }
+        enemies::update(*state);
+        bossMove[withCrowd] = state->enemies[0].pos;
+    }
+    CHECK(bossMove[1].x == doctest::Approx(bossMove[0].x));
+    CHECK(bossMove[1].y == doctest::Approx(bossMove[0].y));
+}
+
