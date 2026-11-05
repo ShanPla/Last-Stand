@@ -231,6 +231,39 @@ void placeRewards(GameState& state, Layout& layout) {
     }
 }
 
+// Stands a zombie this many art pixels past the left edge of the picture, level with the
+// player. The zombie is outside by more than the renderer's culling margin, so anything
+// drawn for it can only come from the telegraph pass.
+Enemy* placeOffLeft(GameState& state, EnemyType type, float artPixels, Vec2 dir) {
+    const View& view = currentView();
+    const Vec2 world = unproject(view, -artPixels, view.anchorY) - Vec2{view.focusX, view.focusY};
+    Enemy* enemy = placeEnemy(state, type, world, false);
+    if (!enemy) return nullptr;
+    enemy->prevPos = world;
+    enemy->dir = dir;
+    return enemy;
+}
+
+void placeTestScene(GameState& state, int scene) {
+    const Vec2 right{1.0f, 0.0f};
+    if (scene == kSceneChargerOffLeft || scene == kSceneChargerAway) {
+        Enemy* charger = placeOffLeft(state, EnemyType::Charger, 120.0f, scene == kSceneChargerOffLeft ? right : Vec2{-1.0f, 0.0f});
+        if (charger) charger->state = enemies::kChargerTelegraph;
+    } else if (scene == kSceneBossOffLeft) {
+        Enemy* boss = placeOffLeft(state, EnemyType::Boss, 130.0f, right);
+        if (boss) {
+            boss->state = enemies::kBossDashCharge;
+            boss->timer = balance::kBossTelegraphSeconds;
+        }
+    } else if (scene == kSceneWalkerOffLeft) {
+        placeOffLeft(state, EnemyType::Walker, 30.0f, right);
+    } else if (scene == kSceneOnlyMines) {
+        state.player.weaponCount = 0;
+        weapons::grant(state, WeaponId::Landmines);
+        placeEnemy(state, EnemyType::Walker, Vec2{balance::kWeaponRange * 0.5f, 0.0f}, false);
+    }
+}
+
 }  // namespace
 
 // Debug only: lays out frames of the atlas, to judge the pixels of every figure.
@@ -352,7 +385,8 @@ void setupShowcase(GameState& state, int extraZombies) {
     player.weapons[0].level = 3;
 
     g_clockStopped = extraZombies < 0;
-    g_sheetPage = extraZombies <= -2 ? -2 - extraZombies : -1;
+    g_sheetPage = extraZombies <= -2 && extraZombies > kSceneChargerOffLeft ? -2 - extraZombies : -1;
+    if (extraZombies <= kSceneChargerOffLeft) placeTestScene(state, extraZombies);
     if (extraZombies < 0) return;
     if (extraZombies > 0) {
         addMixedCrowd(state, extraZombies);

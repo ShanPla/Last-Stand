@@ -29,7 +29,13 @@ void setFixedDayTime(float seconds);
 
 // Debug only: fills the pools with one of every world object, so every shape can be
 // seen. extraZombies adds a mixed crowd, for checking the cheap figures. A negative
-// value leaves the world empty and stops the clock, for checking the ground.
+// value leaves the world empty and stops the clock, for checking the ground. The values
+// below each set up one small scene instead, for the browser tests.
+inline constexpr int kSceneChargerOffLeft = -100;  // Off the left edge, aiming across the picture.
+inline constexpr int kSceneChargerAway = -101;     // The same, aiming out of the picture.
+inline constexpr int kSceneBossOffLeft = -102;     // A boss charging a dash from off the left edge.
+inline constexpr int kSceneOnlyMines = -103;       // Landmines as the only weapon, and one target.
+inline constexpr int kSceneWalkerOffLeft = -104;   // Just past the left edge, with only its shadow showing.
 void setupShowcase(GameState& state, int extraZombies);
 
 // Debug only: keeps the showcase animating while the simulation is held still.

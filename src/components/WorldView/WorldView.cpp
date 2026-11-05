@@ -15,6 +15,10 @@
 #include "raylib.h"
 #include "rlgl.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -285,6 +289,8 @@ void present(const DayLook& look) {
 
 }  // namespace
 
+const View& currentView() { return g_view; }
+
 void init() {
     if (g_ready) return;
     const double start = GetTime();
@@ -459,6 +465,21 @@ void draw(const GameState& state, float alpha) {
 
     EndTextureMode();
     present(look);
+    g_lastDrawnState = &state;
 }
 
 }  // namespace ls::worldview
+
+#ifdef __EMSCRIPTEN__
+extern "C" {
+// Test hook: what the renderer drew on its last frame, which the simulation can't report.
+EMSCRIPTEN_KEEPALIVE const char* ls_query_world() {
+    using namespace ls::worldview;
+    static char json[128];
+    const SoldierDebug soldier = g_lastDrawnState ? soldierDebug(*g_lastDrawnState) : SoldierDebug{};
+    std::snprintf(json, sizeof(json), "{\"telegraphing\":%d,\"telegraphsShown\":%d,\"heldGun\":%d,\"muzzleFrames\":%d,\"chunkPaints\":%d}", g_telegraphCount, g_telegraphsShown,
+                  soldier.heldGun, soldier.muzzleFrames, groundPaintCount());
+    return json;
+}
+}
+#endif
