@@ -233,6 +233,8 @@ for (const [name, options] of [['portrait phone', phone], ['landscape phone', ph
     await waitScreen(page, 'title');
     await page.waitForTimeout(150);
     await tapStartIfNeeded(page);
+    // The button list comes from the last frame drawn, which can still be the title screen's.
+    await findButton(page, 'Dash');
     const ui = await readUi(page);
     const dash = ui.buttons.find((b) => b.n === 'Dash');
     assert.ok(dash, 'a Dash button is on screen');

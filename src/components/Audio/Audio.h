@@ -8,10 +8,10 @@ namespace ls::audio {
 
 enum class UiSound { Move, Confirm, Back, CardPick, Reroll, Pause };
 
-// Prepares sound data. Plays nothing until unlock() is called.
+// Prepares sound data and opens the audio device. Plays nothing until unlock() is called.
 void init();
 
-// Opens the audio device and makes sure sound can be heard. Browsers block audio until
+// Makes sure sound can be heard, opening the device if that failed earlier. Browsers block audio until
 // the player has pressed something, and some presses (Esc, a gamepad button) do not count.
 // So call this every frame until it returns true, with pressed set on frames where a key,
 // button or tap went down. It only asks the browser to start sound on those frames.

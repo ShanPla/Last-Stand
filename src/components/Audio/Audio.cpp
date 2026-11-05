@@ -59,7 +59,7 @@ constexpr double kStallSeconds = 0.35;      // A frame gap this long means the t
 constexpr double kDeviceRetrySeconds = 2.0; // After the device fails to open, wait this long before trying again.
 
 bool g_inited = false;
-bool g_unlocked = false;  // The audio device is open.
+bool g_deviceOpen = false;  // The audio device is open, which alone makes no sound.
 bool g_running = false;   // Sound can really be heard: the browser's audio context is running.
 double g_nextDeviceTry = 0.0;
 bool g_musicReady = false;
@@ -187,6 +187,19 @@ void loadSomeSounds() {
     }
 }
 
+bool openDevice() {
+    InitAudioDevice();
+    if (!IsAudioDeviceReady()) {
+        g_nextDeviceTry = GetTime() + kDeviceRetrySeconds;
+        return false;
+    }
+    SetAudioStreamBufferSizeDefault(kStreamBlock);
+    g_stream = LoadAudioStream(music::kSampleRate, 16, 1);
+    AttachAudioMixedProcessor(limiterCallback);
+    g_deviceOpen = true;
+    return true;
+}
+
 }  // namespace
 
 void init() {
@@ -196,25 +209,20 @@ void init() {
     sfx::renderAll(g_sfxBank);
     g_renderer = new music::Renderer(g_musicBank);
     g_lastFrameTime = GetTime();
+    // Opening the device freezes the page for up to half a second. Done on the first press,
+    // that freeze landed right on the Play button. Here it only makes the loading screen
+    // stay a moment longer, and the browser keeps the device silent until a press anyway.
+    openDevice();
 }
 
 bool unlock(bool pressed) {
     if (!g_inited) return false;
     if (g_running) return true;
-    if (!g_unlocked) {
-        // Open the device. If there is none yet (no output, or the browser refused), try again
+    if (!g_deviceOpen) {
+        // There was no device at startup (no output, or the browser refused), so try again
         // on a later press, but not more than once in a while, instead of giving up for the
         // whole session. A failed attempt prints a warning, so it is never repeated every frame.
-        if (!pressed || GetTime() < g_nextDeviceTry) return false;
-        InitAudioDevice();
-        if (!IsAudioDeviceReady()) {
-            g_nextDeviceTry = GetTime() + kDeviceRetrySeconds;
-            return false;
-        }
-        SetAudioStreamBufferSizeDefault(kStreamBlock);
-        g_stream = LoadAudioStream(music::kSampleRate, 16, 1);
-        AttachAudioMixedProcessor(limiterCallback);
-        g_unlocked = true;
+        if (!pressed || GetTime() < g_nextDeviceTry || !openDevice()) return false;
     }
 #ifdef __EMSCRIPTEN__
     // An open device is not enough in a browser: the context starts suspended, and a press
@@ -243,7 +251,7 @@ void update(float dtReal, float intensity, bool boss) {
     g_boss = boss;
 
     pumpRender();
-    if (g_unlocked) loadSomeSounds();
+    if (g_deviceOpen) loadSomeSounds();
     if (!g_running || !g_musicReady) return;
 
     // After a long gap (hidden tab, or a stall) the stream has run dry. Restart it

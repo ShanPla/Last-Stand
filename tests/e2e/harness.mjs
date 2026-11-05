@@ -60,6 +60,9 @@ export async function launchChrome() {
 const KNOWN_WARNINGS = [
   // Chrome's own note that the audio output uses a ScriptProcessorNode. It is not our error.
   /^The ScriptProcessorNode is deprecated/,
+  // Chrome's note that sound waits for a press. The device opens during loading on purpose, so
+  // the press itself doesn't freeze the page, and it stays silent until then.
+  /^The AudioContext was not allowed to start/,
   // The renderer reports its view size and its start-up cost on purpose, once each.
   /^world view: target \d+x\d+, scale [\d.]+, sees \d+ of \d+$/,
   /^world renderer ready: /,
