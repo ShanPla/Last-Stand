@@ -1305,7 +1305,7 @@ The 6x rows are repeats at 390 by 844 on a quiet machine, because the first runs
 
 **Startup art painting.** Building the shaders, the sprite atlas and the palette took about 65 to 180 ms in the browser (the range over the project owner's runs; the debug log prints the time for each run).
 
-**Download size.** About **384 KB** gzip-compressed on a first visit, of which the WebAssembly and JavaScript are 368 KB, well under the 3 MB goal. A cached host answers the offline worker's second fetch of each file with a short "not modified" reply.
+**Download size.** About **391 KB** gzip-compressed on a first visit, measured on the live site, well under the 3 MB goal. A cached host answers the offline worker's second fetch of each file with a short "not modified" reply.
 
 **Startup.** From a cold start on a simulated 10 Mbps connection with 40 ms latency, the game is playable in 854 to 1409 ms at normal speed and 1552 to 2007 ms at 4x, against a goal of 3 seconds. These come from only 1 to 3 runs each.
 
