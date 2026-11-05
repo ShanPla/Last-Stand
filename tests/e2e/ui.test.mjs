@@ -4,6 +4,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   startServer, launchChrome, openGame, readState, readUi, debug, CMD, waitScreen, waitSelected, findButton, clickButton, tapButton, startGame,
+  installFakePad, padPress,
 } from './harness.mjs';
 
 let web;
@@ -112,12 +113,21 @@ test('tapping or clicking elsewhere on the title does not start a run', async ()
 test('title menu: keyboard moves the selection, and hover follows the mouse', async () => {
   const { context, page, problems } = await open();
   await waitScreen(page, 'title');
+  // The order is Play, Difficulty, Map, Settings, How to Play.
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(100);
+  await waitSelected(page, 'Difficulty');
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(100);
+  await waitSelected(page, 'Map');
   await page.keyboard.press('ArrowDown');
   await page.waitForTimeout(100);
   await waitSelected(page, 'Settings');
   await page.keyboard.press('ArrowDown');
   await page.waitForTimeout(100);
   await waitSelected(page, 'How to Play');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('ArrowUp');
   await page.waitForTimeout(100);
@@ -812,6 +822,8 @@ test('input works during a screen fade, and the first frame of a new screen', as
   await waitScreen(page, 'title');
   // Open settings and press Escape as fast as the browser allows: the fade must not eat it.
   await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await waitScreen(page, 'settings');
   await page.keyboard.press('Escape');
@@ -828,36 +840,23 @@ test('input works during a screen fade, and the first frame of a new screen', as
 
 // ---- Emulated gamepad ------------------------------------------------------------
 
-// A fake pad is installed in the page, so menu navigation with a gamepad is tested
-// without hardware. Buttons follow the standard layout: 0 is A, 1 is B, 9 is Start, 12-15 the D-pad.
-async function installFakePad(page) {
-  await page.evaluate(() => {
-    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
-    const pad = { id: 'Fake Pad (STANDARD GAMEPAD)', index: 0, connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons, timestamp: 0 };
-    window.__pad = pad;
-    navigator.getGamepads = () => [pad, null, null, null];
-    const event = new Event('gamepadconnected');
-    event.gamepad = pad;
-    window.dispatchEvent(event);
-  });
-}
-
-const padPress = async (page, index, holdMs = 90) => {
-  await page.evaluate((i) => { window.__pad.buttons[i].pressed = true; window.__pad.buttons[i].value = 1; window.__pad.timestamp++; }, index);
-  await page.waitForTimeout(holdMs);
-  await page.evaluate((i) => { window.__pad.buttons[i].pressed = false; window.__pad.buttons[i].value = 0; window.__pad.timestamp++; }, index);
-  await page.waitForTimeout(60);
-};
-
+// The fake pad (installFakePad, padPress) lives in harness.mjs. Buttons follow the standard layout:
+// 0 is A, 1 is B, 3 is Y, 5 is the right shoulder, 9 is Start, 12-15 the D-pad.
 test('a gamepad can navigate the title, start, pause, resume, and use the level-up cards', async () => {
   const { context, page, problems } = await open();
   await waitScreen(page, 'title');
   await installFakePad(page);
   await page.waitForTimeout(300);
   await padPress(page, 13);  // D-pad down.
-  await waitSelected(page, 'Settings');
+  await waitSelected(page, 'Difficulty');
   assert.equal((await readUi(page)).device, 'gamepad');
-  await padPress(page, 12);  // D-pad up.
+  await padPress(page, 13);
+  await waitSelected(page, 'Map');
+  await padPress(page, 13);
+  await waitSelected(page, 'Settings');
+  await padPress(page, 12);  // D-pad up, three times.
+  await padPress(page, 12);
+  await padPress(page, 12);
   await padPress(page, 0);   // A starts.
   await waitScreen(page, 'playing');
   await padPress(page, 9);   // Start pauses.

@@ -8,6 +8,9 @@ namespace ls::ui {
 
 const char* weaponName(WeaponId id);
 const char* passiveName(PassiveId id);
+// "Easy", "Normal" or "Hard". The same list feeds the title selector.
+const char* difficultyName(Difficulty level);
+const char* const* difficultyNames();
 
 // The weapon name, or the evolution name once it has evolved.
 const char* slotName(const WeaponSlot& slot);

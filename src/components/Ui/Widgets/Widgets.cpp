@@ -244,13 +244,15 @@ void pixelRing(float cx, float cy, float radius, float thickness, Color color) {
     }
 }
 
-void pixelArrow(float x, float cy, float size, Color color) {
+void pixelArrow(float x, float cy, float size, Color color, bool pointLeft) {
     if (g_fade <= 0.0f) return;
     const float p = std::max(px(), snapPx(size / 5.0f));
     const Color c = tint(color);
     for (int row = 0; row < 5; ++row) {
         const int width = std::min(row, 4 - row) + 1;
-        fillRect(std::round(x / px()) * px(), std::round((cy + (static_cast<float>(row) - 2.0f) * p) / px()) * px(), static_cast<float>(width) * p, p, c);
+        // A left-pointing arrow is the same rows, pushed against the right side of the box.
+        const float shift = pointLeft ? static_cast<float>(3 - width) * p : 0.0f;
+        fillRect(std::round((x + shift) / px()) * px(), std::round((cy + (static_cast<float>(row) - 2.0f) * p) / px()) * px(), static_cast<float>(width) * p, p, c);
     }
 }
 
@@ -348,6 +350,62 @@ bool button(Nav& nav, int index, Rectangle rect, const char* label, ButtonLook l
     const bool pressed = enabled && activated(nav, index, rect);
     if (pressed) audio::playUi(audio::UiSound::Confirm);
     return pressed;
+}
+
+bool selector(Nav& nav, int index, Rectangle rect, const char* label, const char* const* options, int count, int* value,
+              const Color* optionColors) {
+    if (count <= 0) return false;
+    const float u = g_layout.u;
+    const float p = g_layout.px;
+    *value = ((*value % count) + count) % count;
+
+    // The arrow cells are squares at each end. The middle shows the label and the choice.
+    const float cell = rect.height;
+    const Rectangle left{rect.x, rect.y, cell, rect.height};
+    const Rectangle right{rect.x + rect.width - cell, rect.y, cell, rect.height};
+    const Rectangle middle{rect.x + cell, rect.y, rect.width - cell * 2.0f, rect.height};
+    char name[24];
+    std::snprintf(name, sizeof(name), "%s <", label);
+    registerRect(name, left);
+    registerRect(label, middle);
+    std::snprintf(name, sizeof(name), "%s >", label);
+    registerRect(name, right);
+
+    hoverSelect(nav, index, rect);
+    if (nav.selected == index) markSelected(label);
+    const bool selected = nav.selected == index && showsSelection();
+    controlBox(rect, selected ? theme::kButtonHover : theme::kButtonFill, selected, false);
+
+    // Press on a part first, so a click on the left arrow can never also count as the middle.
+    int step = 0;
+    if (g_inputEnabled && g_input.pointerPressed) {
+        if (inside(g_input.pointer, left)) step = -1;
+        else if (inside(g_input.pointer, right) || inside(g_input.pointer, middle)) step = 1;
+    }
+    if (g_inputEnabled && nav.selected == index) {
+        if (g_input.stepX != 0) step = g_input.stepX < 0 ? -1 : 1;
+        else if (g_input.confirm) step = 1;
+    }
+
+    const float arrowSize = rect.height * 0.3f;
+    const Color arrowColor = selected ? theme::kUiAccent : theme::kUiText;
+    pixelArrow(left.x + (left.width - arrowSize * 0.6f) * 0.5f, left.y + left.height * 0.5f, arrowSize, arrowColor, true);
+    pixelArrow(right.x + (right.width - arrowSize * 0.6f) * 0.5f, right.y + right.height * 0.5f, arrowSize, arrowColor, false);
+    // Thin dividers, so the arrow cells read as parts of the row.
+    pixelRect(Rectangle{middle.x - p * 0.5f, rect.y + p * 3.0f, p, rect.height - p * 6.0f}, theme::kDivider);
+    pixelRect(Rectangle{middle.x + middle.width - p * 0.5f, rect.y + p * 3.0f, p, rect.height - p * 6.0f}, theme::kDivider);
+
+    const char* shown = options[*value];
+    const Color shownColor = optionColors ? optionColors[*value] : theme::kUiText;
+    const float labelSize = std::min(rect.height * 0.24f, 14.0f * u);
+    const float valueSize = font::fitSize(shown, std::min(rect.height * 0.42f, 28.0f * u), middle.width - 8.0f * u);
+    text(label, middle.x + middle.width * 0.5f, rect.y + rect.height * 0.12f, labelSize, theme::kUiTextDim, font::Align::Center, p);
+    textMiddle(shown, middle.x + middle.width * 0.5f, rect.y + rect.height * 0.66f, valueSize, shownColor, font::Align::Center);
+
+    if (step == 0) return false;
+    *value = ((*value + step) % count + count) % count;
+    audio::playUi(audio::UiSound::Move);
+    return true;
 }
 
 bool slider(Nav& nav, int index, Rectangle rect, const char* label, float* value, float step) {

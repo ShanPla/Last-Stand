@@ -82,7 +82,7 @@ void bar(Rectangle rect, float fraction, Color fill, Color back);
 void pixelRect(Rectangle rect, Color color);  // Plain square-cornered rectangle on the pixel grid.
 void pixelDisc(float cx, float cy, float radius, Color color);
 void pixelRing(float cx, float cy, float radius, float thickness, Color color);
-void pixelArrow(float x, float cy, float size, Color color);  // A small right-pointing arrow.
+void pixelArrow(float x, float cy, float size, Color color, bool pointLeft = false);  // A small arrow. x is the left edge of its box.
 void keyChip(const char* label, float x, float cy, float height, font::Align align = font::Align::Left);
 
 bool inside(Vec2 point, Rectangle rect);
@@ -108,6 +108,15 @@ bool slider(Nav& nav, int index, Rectangle rect, const char* label, float* value
 
 // An on or off row. Returns true when it changes.
 bool toggle(Nav& nav, int index, Rectangle rect, const char* label, bool* value);
+
+// A row of named choices with an arrow on each side, such as the difficulty or, later,
+// the map. Left and right (keys, D-pad, stick) change it while it has focus. A click or
+// tap on an arrow steps that way, and on the middle steps forward. Enter and A step
+// forward too. It wraps at both ends. optionColors may be null. Returns true when the
+// value changes. The three parts are recorded for tests as "<label> <", "<label>" and
+// "<label> >".
+bool selector(Nav& nav, int index, Rectangle rect, const char* label, const char* const* options, int count, int* value,
+              const Color* optionColors = nullptr);
 
 // ---- Layout record for tests ----------------------------------------------------
 

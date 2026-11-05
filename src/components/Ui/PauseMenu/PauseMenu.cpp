@@ -149,6 +149,14 @@ void drawBuild(const GameState& state, Rectangle r, bool showStats, float rowHei
     }
 }
 
+// The level this run is on, in its own color, so it is clear what the run counts towards.
+void drawLevelTag(Difficulty level, float x, float y, font::Align align) {
+    const float u = ui::u();
+    char label[24];
+    std::snprintf(label, sizeof(label), "%s difficulty", difficultyName(level));
+    text(label, x, y, 18.0f * u, theme::kDifficultyColors[static_cast<int>(level)], align, layout().px);
+}
+
 }  // namespace
 
 void resetPauseMenu() { g_nav = Nav{}; }
@@ -172,6 +180,7 @@ PauseAction drawPauseMenu(const GameState& state) {
         const float rowHeight = buildRowHeight(state.player, l.height());
         const float height = buildHeight(state.player, rowHeight);
         textShadowed("PAUSED", x, l.top + 4.0f * u, 46.0f * u, theme::kUiAccent, font::Align::Left, 4.0f * u);
+        drawLevelTag(state.run.difficulty, x, l.top + 56.0f * u, font::Align::Left);
         float y = l.top + 86.0f * u;
         const float buttonHeight = tall(56.0f * u);
         for (int i = 0; i < 4; ++i) {
@@ -188,7 +197,7 @@ PauseAction drawPauseMenu(const GameState& state) {
         const float buttonHeight = tall(52.0f * u);
         const float gap = 8.0f * u;
         const float buttonsHeight = buttonHeight * 4.0f + gap * 3.0f;
-        const float titleHeight = 54.0f * u;
+        const float titleHeight = 72.0f * u;
         const float between = 16.0f * u;
         // Title, build and buttons form one group, centered, so a tall phone has no big hole.
         const float availableTotal = l.height() - titleHeight - between - buttonsHeight;
@@ -196,6 +205,7 @@ PauseAction drawPauseMenu(const GameState& state) {
         const float panelHeight = std::min(availableTotal, buildHeight(state.player, rowHeight));
         const float groupTop = l.top + (l.height() - (titleHeight + panelHeight + between + buttonsHeight)) * 0.5f;
         textShadowed("PAUSED", l.centerX(), groupTop, 40.0f * u, theme::kUiAccent, font::Align::Center, 4.0f * u);
+        drawLevelTag(state.run.difficulty, l.centerX(), groupTop + 44.0f * u, font::Align::Center);
         const float buildTop = groupTop + titleHeight;
         const float buttonsTop = buildTop + panelHeight + between;
         drawBuild(state, Rectangle{x, buildTop, width, panelHeight}, false, rowHeight);

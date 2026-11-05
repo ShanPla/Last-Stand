@@ -7,9 +7,11 @@ namespace ls::ui {
 enum class TitleAction { None, Play, Settings, HowToPlay };
 
 // Draws the title menu over the running demo, and reads its input. Play is selected
-// first, so Enter, Space, gamepad A or a click on Play starts at once. Tapping
-// anywhere else does nothing.
-TitleAction drawTitleScreen(const BestRun& best);
+// first, so Enter, Space, gamepad A or a click on Play starts at once, with the level
+// the selector shows. Tapping anywhere else does nothing. The selector changes
+// data.difficulty itself, so the caller can see the change and save it. The best run
+// shown is the one for that level.
+TitleAction drawTitleScreen(SaveData& data);
 
 // Puts the selection back on Play. Call when the title opens.
 void resetTitleScreen();

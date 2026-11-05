@@ -7,6 +7,7 @@ namespace ls::ui {
 // What the end of a run shows. The app fills it in once, when the run ends.
 struct RunSummary {
     bool won = false;
+    Difficulty difficulty = Difficulty::Normal;  // New-best marks compare within this level only.
     float timeSeconds = 0.0f;
     int kills = 0;
     int level = 1;

@@ -93,7 +93,18 @@ GameOverAction drawGameOverScreen(const RunSummary& summary, float age) {
     float y = panelRect.y + pad * 0.7f;
     textShadowed(summary.won ? "VICTORY" : "YOU DIED", l.centerX(), y, headlineSize, accent, font::Align::Center, 6.0f * u);
     y += headlineSize + 2.0f * u;
-    text(summary.won ? "The boss is down. You survived." : "The horde got you.", l.centerX(), y, 20.0f * u, theme::kUiTextDim, font::Align::Center);
+    {
+        // The level in its own color, then the line under the headline.
+        const char* level = difficultyName(summary.difficulty);
+        const char* line = summary.won ? "The boss is down. You survived." : "The horde got you.";
+        const float lineSize = font::fitSize(line, 20.0f * u, panelWidth * 0.55f);
+        const float levelWidth = font::measure(level, lineSize, l.px) + 14.0f * u;
+        const float total = levelWidth + font::measure(line, lineSize);
+        float lx = l.centerX() - total * 0.5f;
+        text(level, lx, y, lineSize, theme::kDifficultyColors[static_cast<int>(summary.difficulty)], font::Align::Left, l.px);
+        lx += levelWidth;
+        text(line, lx, y, lineSize, theme::kUiTextDim, font::Align::Left);
+    }
     y += 34.0f * u;
 
     // The three headline numbers.

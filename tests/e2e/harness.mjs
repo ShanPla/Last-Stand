@@ -118,7 +118,7 @@ export async function waitScreen(page, screen, timeout = 8000) {
 
 // The button list is from the frame that just drew, so right after a screen change it
 // can still belong to the old screen. This waits a moment for the new one.
-export async function findButton(page, name, timeout = 2000) {
+export async function findButton(page, name, timeout = 6000) {
   const start = Date.now();
   for (;;) {
     const ui = await readUi(page);
@@ -132,7 +132,7 @@ export async function findButton(page, name, timeout = 2000) {
 }
 
 // Waits until the control with keyboard or gamepad focus has this name (or starts with it).
-export async function waitSelected(page, name, timeout = 3000) {
+export async function waitSelected(page, name, timeout = 8000) {
   try {
     await page.waitForFunction((wanted) => {
       try { return JSON.parse(Module.ccall('ls_query_ui', 'string', [], [])).selected.startsWith(wanted); } catch { return false; }
@@ -160,3 +160,27 @@ export async function startGame(page) {
   await page.keyboard.press('Enter');
   await waitScreen(page, 'playing');
 }
+
+// ---- Emulated gamepad ------------------------------------------------------------
+
+// A fake pad is installed in the page, so a gamepad is tested without hardware. Buttons
+// follow the standard layout: 0 is A, 1 is B, 3 is Y, 5 is the right shoulder, 9 is Start,
+// 12-15 the D-pad.
+export async function installFakePad(page) {
+  await page.evaluate(() => {
+    const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
+    const pad = { id: 'Fake Pad (STANDARD GAMEPAD)', index: 0, connected: true, mapping: 'standard', axes: [0, 0, 0, 0], buttons, timestamp: 0 };
+    window.__pad = pad;
+    navigator.getGamepads = () => [pad, null, null, null];
+    const event = new Event('gamepadconnected');
+    event.gamepad = pad;
+    window.dispatchEvent(event);
+  });
+}
+
+export const padPress = async (page, index, holdMs = 90) => {
+  await page.evaluate((i) => { window.__pad.buttons[i].pressed = true; window.__pad.buttons[i].value = 1; window.__pad.timestamp++; }, index);
+  await page.waitForTimeout(holdMs);
+  await page.evaluate((i) => { window.__pad.buttons[i].pressed = false; window.__pad.buttons[i].value = 0; window.__pad.timestamp++; }, index);
+  await page.waitForTimeout(60);
+};

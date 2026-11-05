@@ -1,9 +1,11 @@
 #pragma once
 
+#include "core/GameState.h"
+
 #include <string>
 #include <string_view>
 
-// Saved data: the player's settings and their best runs. This file has no raylib
+// Saved data: the player's settings, the chosen difficulty and their best runs. This file has no raylib
 // and no browser code, so unit tests can parse and serialize without a window.
 // Reading and writing the actual storage lives in Platform.
 namespace ls {
@@ -29,10 +31,19 @@ struct BestRun {
     int runs = 0;  // Finished runs, won or lost.
 };
 
+inline constexpr int kDifficultyCount = static_cast<int>(Difficulty::Count);
+
+// The format did not change in a way an older file can't be read in, so the version
+// stays 1. A file with no difficulty means Normal, and its single best run is Normal's.
 struct SaveData {
     int version = kSaveVersion;
     Settings settings;
-    BestRun best;
+    Difficulty difficulty = Difficulty::Normal;  // The level the title screen has selected.
+    int map = 0;  // The map the title screen has selected. A number, because maps are not part of this file's world.
+    BestRun best[kDifficultyCount];              // One best run per level, indexed by Difficulty.
+
+    BestRun& bestFor(Difficulty level) { return best[static_cast<int>(level)]; }
+    const BestRun& bestFor(Difficulty level) const { return best[static_cast<int>(level)]; }
 };
 
 namespace save {

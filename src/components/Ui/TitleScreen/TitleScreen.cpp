@@ -1,6 +1,8 @@
 #include "components/Ui/TitleScreen/TitleScreen.h"
 
+#include "components/Maps/Maps.h"
 #include "components/Ui/Icons/Icons.h"
+#include "components/Ui/Names/Names.h"
 #include "components/Ui/Widgets/Widgets.h"
 #include "data/Theme.h"
 
@@ -12,6 +14,11 @@ namespace ls::ui {
 namespace {
 
 Nav g_nav;
+
+// Focus order.
+enum Focus { kFocusPlay = 0, kFocusDifficulty, kFocusMap, kFocusSettings, kFocusHowTo, kFocusCount };
+constexpr int kSelectorRows = 2;     // Rows of selectors above Settings. The layout budgets for this many.
+constexpr float kLogoLeast = 56.0f;  // Smallest logo, in design units, before the best run makes way.
 
 // Chunky logo lettering: a stack of hard dark-red copies behind the letters, so the
 // word looks cut out of a block, like the title of an old arcade game.
@@ -33,12 +40,18 @@ void drawStat(float x, float y, float width, const char* value, const char* labe
     text(label, x + width * 0.5f, y + 34.0f * u, 16.0f * u, theme::kUiTextDim, font::Align::Center, layout().px);
 }
 
-void drawBest(const BestRun& best, float x, float y, float width) {
+void drawBest(const BestRun& best, Difficulty level, float x, float y, float width) {
     const float u = ui::u();
     const char* header = "BEST RUN";
-    text(header, x, y, 16.0f * u, theme::kUiAccent, font::Align::Left, layout().px);
+    const float headerSize = 16.0f * u;
+    text(header, x, y, headerSize, theme::kUiAccent, font::Align::Left, layout().px);
+    // Which level these figures are from, so a Hard best is never mistaken for an Easy one.
+    text(difficultyName(level), x + font::measure(header, headerSize, layout().px) + 10.0f * u, y, headerSize,
+         theme::kDifficultyColors[static_cast<int>(level)], font::Align::Left, layout().px);
     if (best.runs <= 0) {
-        text("No runs yet. Your best is saved here.", x, y + 24.0f * u, 20.0f * u, theme::kUiTextDim);
+        char none[48];
+        std::snprintf(none, sizeof(none), "No runs on %s yet.", difficultyName(level));
+        text(none, x, y + 24.0f * u, 20.0f * u, theme::kUiTextDim);
         return;
     }
     char timeText[16];
@@ -61,7 +74,7 @@ void drawBest(const BestRun& best, float x, float y, float width) {
 
 void resetTitleScreen() { g_nav = Nav{}; }
 
-TitleAction drawTitleScreen(const BestRun& best) {
+TitleAction drawTitleScreen(SaveData& data) {
     const Layout& l = layout();
     const float u = l.u;
     const bool wide = !l.portrait && l.width() >= 760.0f * u;
@@ -83,14 +96,27 @@ TitleAction drawTitleScreen(const BestRun& best) {
         pixelRect(Rectangle{0.0f, 0.0f, l.w, l.h}, withAlpha(theme::kTitleShade, 0.72f));
     }
 
-    // Heights of everything below the logo, so the logo can take what is left.
+    // Heights of everything below the logo, so the logo can take what is left. Each
+    // selector row (difficulty now, the map later) adds one row to the menu, and the
+    // logo and the best run give way, so a second row needs no other change.
     const float playHeight = tall(66.0f * u);
     const float smallHeight = tall(50.0f * u);
-    const float buttonsBlock = playHeight + 12.0f * u + smallHeight + 10.0f * u + smallHeight;
+    const float rowGap = 10.0f * u;
+    const float selectorsBlock = (smallHeight + rowGap) * static_cast<float>(kSelectorRows);
+    const float fullButtons = playHeight + 12.0f * u + selectorsBlock + smallHeight + rowGap + smallHeight;
     const float bestBlock = 26.0f * u + 76.0f * u;
     const float taglineBlock = 26.0f * u + 26.0f * u;
-    const float logoRoom = l.height() - buttonsBlock - bestBlock - taglineBlock - 8.0f * u;
-    const float wanted = wide ? std::min(110.0f * u, logoRoom / 1.85f) : 128.0f * u;
+    // On a very short window, Settings and How to Play share a row, so that every
+    // button stays on screen and inside the safe area.
+    const bool shareLastRow = l.height() - fullButtons - taglineBlock - (wide ? 0.0f : 28.0f * u) - 8.0f * u < kLogoLeast * u * 1.85f;
+    const float buttonsBlock = shareLastRow ? fullButtons - smallHeight - rowGap : fullButtons;
+    // The best run is dropped when keeping it would squeeze the logo too small.
+    // Without the side column, the credit line sits under the buttons and needs room too.
+    const float creditRoom = wide ? 0.0f : 28.0f * u;
+    const float roomWithoutBest = l.height() - buttonsBlock - taglineBlock - creditRoom - 8.0f * u;
+    const bool roomForBest = (roomWithoutBest - bestBlock) / 1.85f >= kLogoLeast * u;
+    const float logoRoom = roomForBest ? roomWithoutBest - bestBlock : roomWithoutBest;
+    const float wanted = std::min(wide ? 110.0f * u : 128.0f * u, logoRoom / 1.85f);
     const float logoSize = font::fitSize("STAND", font::snapSize(wanted * 0.95f), columnWidth - 5.0f * l.px, l.px);
 
     const float logoTop = wide ? l.top + 6.0f * u : l.top + 10.0f * u;
@@ -107,23 +133,45 @@ TitleAction drawTitleScreen(const BestRun& best) {
     const float taglineSize = font::fitSize(tagline, 22.0f * u, columnWidth);
     textShadowed(tagline, textX, taglineY, taglineSize, theme::kUiTextDim, align);
 
-    // Buttons.
+    // Buttons. The focus order is Play, the selectors, Settings, How to Play.
     const float buttonX = columnX;
     const float buttonWidth = columnWidth;
     float y = taglineY + taglineSize + 26.0f * u;
-    // Phones are tall, so the buttons sit lower, where a thumb can reach.
-    if (!wide) y = std::max(y, l.top + l.height() * 0.42f);
+    // Phones are tall, so the buttons sit lower, where a thumb can reach, but never so low
+    // that the last button runs into the credit line.
+    if (!wide) y = std::max(y, std::min(l.top + l.height() * 0.42f, l.bottom - creditRoom - buttonsBlock));
 
-    navigate(g_nav, 3);
-    if (button(g_nav, 0, Rectangle{buttonX, y, buttonWidth, playHeight}, "PLAY", ButtonLook::Primary, promptConfirm())) action = TitleAction::Play;
+    navigate(g_nav, kFocusCount);
+    if (button(g_nav, kFocusPlay, Rectangle{buttonX, y, buttonWidth, playHeight}, "PLAY", ButtonLook::Primary, promptConfirm())) action = TitleAction::Play;
     y += playHeight + 12.0f * u;
-    if (button(g_nav, 1, Rectangle{buttonX, y, buttonWidth, smallHeight}, "Settings")) action = TitleAction::Settings;
-    y += smallHeight + 10.0f * u;
-    if (button(g_nav, 2, Rectangle{buttonX, y, buttonWidth, smallHeight}, "How to Play")) action = TitleAction::HowToPlay;
+
+    int level = static_cast<int>(data.difficulty);
+    if (selector(g_nav, kFocusDifficulty, Rectangle{buttonX, y, buttonWidth, smallHeight}, "Difficulty", difficultyNames(), static_cast<int>(Difficulty::Count),
+                 &level, theme::kDifficultyColors)) {
+        data.difficulty = static_cast<Difficulty>(level);
+    }
+    y += smallHeight + rowGap;
+
+    static const char* const kMapNames[maps::kMapCount] = {maps::name(maps::MapId::City), maps::name(maps::MapId::Wasteland)};
+    int map = static_cast<int>(maps::mapFromIndex(data.map));
+    if (selector(g_nav, kFocusMap, Rectangle{buttonX, y, buttonWidth, smallHeight}, "Map", kMapNames, maps::kMapCount, &map, theme::kMapColors)) {
+        data.map = map;
+    }
+    y += smallHeight + rowGap;
+
+    if (shareLastRow) {
+        const float halfWidth = (buttonWidth - rowGap) * 0.5f;
+        if (button(g_nav, kFocusSettings, Rectangle{buttonX, y, halfWidth, smallHeight}, "Settings")) action = TitleAction::Settings;
+        if (button(g_nav, kFocusHowTo, Rectangle{buttonX + halfWidth + rowGap, y, halfWidth, smallHeight}, "How to Play")) action = TitleAction::HowToPlay;
+    } else {
+        if (button(g_nav, kFocusSettings, Rectangle{buttonX, y, buttonWidth, smallHeight}, "Settings")) action = TitleAction::Settings;
+        y += smallHeight + rowGap;
+        if (button(g_nav, kFocusHowTo, Rectangle{buttonX, y, buttonWidth, smallHeight}, "How to Play")) action = TitleAction::HowToPlay;
+    }
     y += smallHeight + 26.0f * u;
 
-    // Best run, as long as there is room under the buttons.
-    if (y + 76.0f * u < l.bottom) drawBest(best, buttonX, y, buttonWidth);
+    // Best run for the chosen level, as long as there is room under the buttons.
+    if (roomForBest && y + 76.0f * u < l.bottom) drawBest(data.bestFor(data.difficulty), data.difficulty, buttonX, y, buttonWidth);
 
     // Credit line in the corner.
     const char* credit = "C++20  -  raylib  -  WebAssembly";

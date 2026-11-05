@@ -168,7 +168,11 @@ void setScreen(Screen screen) {
 // The title screen runs the real simulation as a demo: fixed seed, a bot that walks
 // in circles, enemies kept topped up, and no way to be hurt. It is never saved and
 // never makes sound, because only a real run sends events to audio.
+// The title's choice of map shows in the demo behind it, and in the next run.
+void applySelectedMap() { maps::setCurrent(maps::mapFromIndex(save::current().map)); }
+
 void startDemo() {
+    applySelectedMap();
     worldview::setFixedDayTime(theme::kDuskSeconds);
     effects::reset();
     sim::newRun(*g_state, kDemoSeed);
@@ -186,19 +190,20 @@ void startDemo() {
 }
 
 void startRun(uint64_t seed) {
+    applySelectedMap();
     worldview::setFixedDayTime(-1.0f);
     effects::reset();
-    sim::newRun(*g_state, seed != 0 ? seed : pickSeed());
+    sim::newRun(*g_state, seed != 0 ? seed : pickSeed(), save::current().difficulty);
     g_inDemo = false;
     g_accumulator = 0.0f;
     g_pendingChoice = ui::LevelUpChoice{};
+    g_pendingDash = false;
+    g_holdSim = false;
     g_moveTime = 0.0f;
     g_runStartFade = 1.0f;
     g_lastPhase = RunPhase::Playing;
     g_phaseAge = 0.0f;
     ui::resetLevelUpCards();
-    g_pendingDash = false;
-    g_holdSim = false;
     setScreen(Screen::Playing);
 }
 
@@ -228,12 +233,14 @@ void finishRun() {
     const GameState& s = *g_state;
     g_summary = ui::RunSummary{};
     g_summary.won = s.run.phase == RunPhase::Won;
+    g_summary.difficulty = s.run.difficulty;
     g_summary.timeSeconds = s.timeSeconds();
     g_summary.kills = s.run.kills;
     g_summary.level = s.player.level;
     for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) g_summary.damageByWeapon[i] = s.run.damageByWeapon[i];
 
-    BestRun& best = save::current().best;
+    // Best runs are kept per level, so a new best only means something on the same level.
+    BestRun& best = save::current().bestFor(s.run.difficulty);
     g_summary.newBestTime = g_summary.timeSeconds > best.bestTimeSeconds;
     g_summary.newBestKills = g_summary.kills > best.mostKills;
     g_summary.newBestLevel = g_summary.level > best.highestLevel;
@@ -265,6 +272,9 @@ void runSimulation(float dtReal) {
         frameInput.chooseCard = static_cast<int8_t>(g_pendingChoice.card);
         frameInput.reroll = g_pendingChoice.reroll;
         g_pendingChoice = ui::LevelUpChoice{};
+        // One press is one dash: the first step of the frame takes it, the others don't.
+        frameInput.dash = g_pendingDash;
+        g_pendingDash = false;
         sim::step(*g_state, frameInput);
         g_accumulator -= kDt;
         steps++;
@@ -272,9 +282,6 @@ void runSimulation(float dtReal) {
     if (steps == kMaxStepsPerFrame) g_accumulator = 0.0f;
     g_lastSteps = steps;
     // Each step's time, not each frame's, so numbers compare across refresh rates.
-        // One press is one dash: the first step of the frame takes it, the others don't.
-        frameInput.dash = g_pendingDash;
-        g_pendingDash = false;
     if (steps > 0) g_simMs = smooth(g_simMs, static_cast<float>((GetTime() - start) * 1000.0) / static_cast<float>(steps));
 }
 
@@ -386,7 +393,12 @@ static void drawUiPass(float dtReal, bool playing) {
     switch (g_screen) {
         case Screen::Title: {
             ui::setFade(screenFade);
-            const ui::TitleAction action = ui::drawTitleScreen(save::current().best);
+            const Difficulty before = save::current().difficulty;
+            const int mapBefore = save::current().map;
+            const ui::TitleAction action = ui::drawTitleScreen(save::current());
+            // The choice is kept at once, so it is there next time even if the page closes now.
+            if (save::current().difficulty != before || save::current().map != mapBefore) persist();
+            if (save::current().map != mapBefore) applySelectedMap();
             if (action == ui::TitleAction::Play) startRun(0);
             else if (action == ui::TitleAction::Settings) openSettings(Screen::Title);
             else if (action == ui::TitleAction::HowToPlay) {
@@ -471,6 +483,11 @@ void frame() {
         g_audioUnlocked = true;
     }
 
+    // A dash press only counts while playing. Space is also confirm, so on a menu it must
+    // not leave a dash waiting for the first moment the game runs.
+    if (!playing) g_pendingDash = false;
+    else if (g_input.dash) g_pendingDash = true;
+
     // Leaving the tab or window pauses at once, so no damage is taken unseen.
     if (platform::consumeFocusLost()) pauseGame();
 
@@ -483,11 +500,6 @@ void frame() {
         } else if (g_screen == Screen::Settings) leaveSettings();
         else if (g_screen == Screen::HowToPlay) {
             audio::playUi(audio::UiSound::Back);
-    // A dash press only counts while playing. Space is also confirm, so on a menu it must
-    // not leave a dash waiting for the first moment the game runs.
-    if (!playing) g_pendingDash = false;
-    else if (g_input.dash) g_pendingDash = true;
-
             ui::resetTitleScreen();
             setScreen(Screen::Title);
         }
@@ -504,7 +516,7 @@ void frame() {
         if (demoRuns) runDemo(dtReal);
     } else if (g_screen == Screen::Playing) {
         if (g_showcase) worldview::tickShowcase(*g_state);
-        else runSimulation(simDt);
+        else if (!g_holdSim) runSimulation(simDt);
         if (playing && std::hypot(g_input.moveX, g_input.moveY) > 0.2f) g_moveTime += dtReal;
     }
 
@@ -556,7 +568,7 @@ void frame() {
 }
 
 const char* queryState() {
-    static char json[512];
+    static char json[640];
     const GameState& s = *g_state;
     std::snprintf(json, sizeof(json),
                   "{\"phase\":%d,\"tick\":%u,\"kills\":%d,\"level\":%d,\"hp\":%.1f,\"x\":%.1f,\"y\":%.1f,"
@@ -578,7 +590,8 @@ const char* queryState() {
 const char* queryUi() {
     static char json[4096];
     const Settings& st = save::current().settings;
-    const BestRun& best = save::current().best;
+    const SaveData& saved = save::current();
+    const BestRun& best = saved.bestFor(saved.difficulty);  // For the level the title has selected.
     const char* devices[] = {"keyboard", "gamepad", "touch", "mouse"};
     const platform::SafeInsets insets = platform::safeInsets();
     int n = std::snprintf(json, sizeof(json),
@@ -586,7 +599,8 @@ const char* queryUi() {
                           "\"music\":%.3f,\"effects\":%.3f,\"shake\":%.3f,\"flash\":%.3f,\"damageNumbers\":%d,\"reducedMotion\":%d,"
                           "\"bestTime\":%.1f,\"bestKills\":%d,\"bestLevel\":%d,\"wins\":%d,\"runs\":%d,"
                           "\"joystick\":%d,\"won\":%d,\"newBest\":%d,\"moveTime\":%.2f,\"safe\":[%.1f,%.1f,%.1f,%.1f],"
-                          "\"safeRect\":[%.1f,%.1f,%.1f,%.1f],\"selected\":\"%s\",\"buttons\":[",
+                          "\"safeRect\":[%.1f,%.1f,%.1f,%.1f],\"selected\":\"%s\",\"difficulty\":%d,\"map\":%d,\"summaryDifficulty\":%d,"
+                          "\"bests\":[[%.1f,%d,%d,%d,%d],[%.1f,%d,%d,%d,%d],[%.1f,%d,%d,%d,%d]],\"buttons\":[",
                           screenName(), g_inDemo ? 1 : 0, devices[static_cast<int>(g_input.lastDevice)], GetScreenWidth(), GetScreenHeight(),
                           static_cast<double>(ui::u()), static_cast<double>(st.musicVolume), static_cast<double>(st.effectsVolume),
                           static_cast<double>(st.screenShake), static_cast<double>(st.flashIntensity), st.damageNumbers ? 1 : 0,
@@ -595,7 +609,11 @@ const char* queryUi() {
                           (g_summary.newBestTime || g_summary.newBestKills || g_summary.newBestLevel) ? 1 : 0, static_cast<double>(g_moveTime),
                           static_cast<double>(insets.left), static_cast<double>(insets.top), static_cast<double>(insets.right),
                           static_cast<double>(insets.bottom), static_cast<double>(ui::layout().left), static_cast<double>(ui::layout().top),
-                          static_cast<double>(ui::layout().right), static_cast<double>(ui::layout().bottom), ui::selectedName());
+                          static_cast<double>(ui::layout().right), static_cast<double>(ui::layout().bottom), ui::selectedName(),
+                          static_cast<int>(saved.difficulty), saved.map, static_cast<int>(g_summary.difficulty),
+                          static_cast<double>(saved.best[0].bestTimeSeconds), saved.best[0].mostKills, saved.best[0].highestLevel, saved.best[0].wins, saved.best[0].runs,
+                          static_cast<double>(saved.best[1].bestTimeSeconds), saved.best[1].mostKills, saved.best[1].highestLevel, saved.best[1].wins, saved.best[1].runs,
+                          static_cast<double>(saved.best[2].bestTimeSeconds), saved.best[2].mostKills, saved.best[2].highestLevel, saved.best[2].wins, saved.best[2].runs);
     for (int i = 0; i < ui::registeredCount() && n < static_cast<int>(sizeof(json)) - 160; ++i) {
         const ui::Registered& r = ui::registered(i);
         n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "%s{\"n\":\"%s\",\"x\":%.1f,\"y\":%.1f,\"w\":%.1f,\"h\":%.1f}",
@@ -719,6 +737,9 @@ void debugCommand(int command, int value) {
                 s.run.damageByWeapon[i] = i < 7 ? static_cast<float>(value) * static_cast<float>((i * 7919) % 13 + 2) / 13.0f : 0.0f;
             }
             break;
+        case kDash: g_pendingDash = true; break;
+        case kHoldSim: g_holdSim = value != 0; break;
+        case kSetDashCooldown: s.player.dashCooldown = balance::kDashCooldownSeconds * static_cast<float>(value) / 100.0f; break;
         case kLevelUp:
             if (!g_inDemo) upgrades::addXp(s, std::max(1, s.player.xpToNext - s.player.xp));
             break;
@@ -736,6 +757,3 @@ EMSCRIPTEN_KEEPALIVE const char* ls_query_ui() { return ls::app::queryUi(); }
 EMSCRIPTEN_KEEPALIVE const char* ls_query_effects() { return ls::effects::debugJson(); }
 }
 #endif
-        case kDash: g_pendingDash = true; break;
-        case kHoldSim: g_holdSim = value != 0; break;
-        case kSetDashCooldown: s.player.dashCooldown = balance::kDashCooldownSeconds * static_cast<float>(value) / 100.0f; break;

@@ -20,6 +20,17 @@ const char* passiveName(PassiveId id) {
     return index >= 0 && index < static_cast<int>(PassiveId::Count) ? kPassiveNames[index] : "";
 }
 
+namespace {
+const char* const kDifficultyNames[static_cast<int>(Difficulty::Count)] = {"Easy", "Normal", "Hard"};
+}  // namespace
+
+const char* difficultyName(Difficulty level) {
+    const int index = static_cast<int>(level);
+    return index >= 0 && index < static_cast<int>(Difficulty::Count) ? kDifficultyNames[index] : "";
+}
+
+const char* const* difficultyNames() { return kDifficultyNames; }
+
 const char* slotName(const WeaponSlot& slot) {
     if (slot.evolved) {
         for (const balance::Evolution& evolution : balance::kEvolutions) {

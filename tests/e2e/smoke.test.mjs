@@ -29,7 +29,7 @@ test('page loads with no console errors, shows the title, and fits the desktop w
   assert.equal(size.height, 720);
   const ui = await readUi(page);
   assert.equal(ui.screen, 'title');
-  assert.deepEqual(ui.buttons.map((b) => b.n), ['PLAY', 'Settings', 'How to Play']);
+  assert.deepEqual(ui.buttons.map((b) => b.n), ['PLAY', 'Difficulty <', 'Difficulty', 'Difficulty >', 'Map <', 'Map', 'Map >', 'Settings', 'How to Play']);
   assert.deepEqual(problems, []);
   await context.close();
 });
