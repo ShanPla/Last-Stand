@@ -174,6 +174,7 @@ RunResult playGame(const BotProfile& profile, uint64_t seed, int favoriteWeapon,
         if (tick % sampleTicks == 0) {
             result.sampleZombies.push_back(static_cast<float>(state->enemies.count));
             result.sampleHp.push_back(std::max(0.0f, state->player.hp));
+            result.sampleLevel.push_back(static_cast<float>(state->player.level));
         }
     }
 

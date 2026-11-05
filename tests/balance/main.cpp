@@ -32,6 +32,7 @@ struct Options {
     bool listRuns = false;
     long long traceSeed = -1;  // Play one game and print what happens around the player.
     bool correlation = true;
+    Difficulty difficulty = Difficulty::Normal;
     std::string csvFolder;  // Empty means no CSV.
 };
 
@@ -40,7 +41,7 @@ void printHelp() {
         "ls_balance: bot games and a solo weapon test for tuning Last Stand.\n\n"
         "  --seeds N            games per profile (default 30)\n"
         "  --first-seed S       first seed; seeds run S, S+1, ... (default 1000)\n"
-        "  --difficulty D       easy, normal or hard (default normal)\n"
+        "  --difficulty D       easy, normal or hard (default normal), for games, wave tables and solo test\n"
         "  --profile NAME       novice, average, skilled or all (default all)\n"
         "  --threads N          worker threads (default: all cores)\n"
         "  --runs               list every run on one line\n"
@@ -65,7 +66,13 @@ bool parseArgs(int argc, char** argv, Options& options) {
             options.seeds = std::max(1, std::atoi(argv[++i]));
         } else if (arg == "--difficulty" && hasValue) {
             const std::string name = argv[++i];
-            setGameDifficulty(name == "easy" ? Difficulty::Easy : (name == "hard" ? Difficulty::Hard : Difficulty::Normal));
+            if (name == "easy") options.difficulty = Difficulty::Easy;
+            else if (name == "normal") options.difficulty = Difficulty::Normal;
+            else if (name == "hard") options.difficulty = Difficulty::Hard;
+            else {
+                std::fprintf(stderr, "Unknown difficulty: %s (use easy, normal or hard)\n", name.c_str());
+                return false;
+            }
         } else if (arg == "--first-seed" && hasValue) {
             options.firstSeed = std::strtoull(argv[++i], nullptr, 10);
         } else if (arg == "--threads" && hasValue) {
@@ -108,6 +115,7 @@ bool parseArgs(int argc, char** argv, Options& options) {
 int main(int argc, char** argv) {
     Options options;
     if (!parseArgs(argc, argv, options)) return 1;
+    setGameDifficulty(options.difficulty);
     if (options.threads == 0) options.threads = static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
     const auto started = std::chrono::steady_clock::now();
     const auto elapsed = [&]() {
@@ -141,15 +149,16 @@ int main(int argc, char** argv) {
 
         std::printf("Last Stand balance report: %d seeds per profile, first seed %llu\n", options.seeds,
                     static_cast<unsigned long long>(options.firstSeed));
-        printWaveAnalysis(stdout);
+        printDifficultyHeader(stdout, options.difficulty);
+        printWaveAnalysis(stdout, options.difficulty);
         for (const ProfileRuns& group : groups) {
             printProfileReport(stdout, group, options.correlation && group.profile == &skilled());
         }
-        printBreatherTable(stdout, groups);
+        printBreatherTable(stdout, groups, options.difficulty);
         if (options.listRuns) {
             for (const ProfileRuns& group : groups) printRunList(stdout, group);
         }
-        if (!options.csvFolder.empty()) writeCsv(options.csvFolder, groups);
+        if (!options.csvFolder.empty()) writeCsv(options.csvFolder, groups, options.difficulty);
     }
 
     if (options.focus) {
@@ -161,13 +170,14 @@ int main(int argc, char** argv) {
             byWeapon[static_cast<size_t>(weapon)][job % perWeapon] =
                 playGame(skilled(), options.firstSeed + job % perWeapon, weapon);
         });
+        printDifficultyHeader(stdout, options.difficulty);
         printFocusTable(stdout, skilled(), byWeapon);
         std::fprintf(stderr, "Focus games done after %.0f s.\n", elapsed());
     }
 
     if (options.solo) {
         std::fprintf(stderr, "Running the solo weapon test...\n");
-        runSoloTest(stdout, options.threads, options.csvFolder);
+        runSoloTest(stdout, options.threads, options.csvFolder, options.difficulty);
         std::fprintf(stderr, "Solo test done after %.0f s.\n", elapsed());
     }
     return 0;

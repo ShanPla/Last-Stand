@@ -183,22 +183,57 @@ void printAmmo(std::FILE* out, const std::vector<RunResult>& runs) {
                  availableCrates / n, totalPlayed > 0 ? 60.0 * crates / totalPlayed : 0.0);
 }
 
-void printTimeSeries(std::FILE* out, const std::vector<RunResult>& runs) {
+// A run is over at its end time, whether it died, won or hit the step limit. The small
+// tolerance is because the end time is a tick count times a float step.
+bool endedBy(const RunResult& run, double seconds) { return static_cast<double>(run.endSeconds) <= seconds + 0.01; }
+
+// What the runs looked like at one sample time. Runs that already ended have no sample
+// to give, so zombies, HP and level are taken from the runs still being played. Winners
+// are counted separately, so a win never looks like a death.
+struct SampleRow {
+    int notDead = 0;  // Not dead yet. A run that won counts as not dead.
+    int won = 0;
+    std::vector<double> zombies;
+    std::vector<double> hp;
+    std::vector<double> level;
+};
+
+SampleRow sampleRow(const std::vector<RunResult>& runs, size_t s) {
+    const double t = static_cast<double>(s + 1) * static_cast<double>(kSampleSeconds);
+    SampleRow row;
+    for (const RunResult& run : runs) {
+        const bool ended = endedBy(run, t);
+        if (!(ended && died(run))) ++row.notDead;
+        if (ended && won(run)) ++row.won;
+        if (ended || s >= run.sampleZombies.size()) continue;
+        row.zombies.push_back(static_cast<double>(run.sampleZombies[s]));
+        row.hp.push_back(static_cast<double>(run.sampleHp[s]));
+        row.level.push_back(static_cast<double>(run.sampleLevel[s]));
+    }
+    return row;
+}
+
+size_t longestSeries(const std::vector<RunResult>& runs) {
     size_t longest = 0;
     for (const RunResult& run : runs) longest = std::max(longest, run.sampleZombies.size());
-    std::fprintf(out, "\nEvery %.0f s: runs still alive, zombies on the map and player HP (alive runs only)\n", kSampleSeconds);
-    std::fprintf(out, "%-7s %7s %9s %9s %9s %9s\n", "time", "alive", "zombies", "HP mean", "HP p10", "level");
-    for (size_t s = 0; s < longest; ++s) {
-        std::vector<double> zombies;
-        std::vector<double> hp;
-        for (const RunResult& run : runs) {
-            if (s >= run.sampleZombies.size()) continue;
-            zombies.push_back(static_cast<double>(run.sampleZombies[s]));
-            hp.push_back(static_cast<double>(run.sampleHp[s]));
+    return longest;
+}
+
+void printTimeSeries(std::FILE* out, const std::vector<RunResult>& runs) {
+    std::fprintf(out, "\nEvery %.0f s. alive = runs not dead yet (a win counts as alive), won = runs already won.\n", kSampleSeconds);
+    std::fprintf(out, "zombies, HP and level are the mean over the runs still being played (HP p10 is their 10th percentile).\n");
+    std::fprintf(out, "%-7s %7s %7s %9s %9s %9s %7s\n", "time", "alive", "won", "zombies", "HP mean", "HP p10", "level");
+    const double total = static_cast<double>(runs.size());
+    for (size_t s = 0; s < longestSeries(runs); ++s) {
+        const SampleRow row = sampleRow(runs, s);
+        if (row.zombies.empty()) {
+            std::fprintf(out, "%-7s %6.0f%% %6.0f%% %9s %9s %9s %7s\n", mmss(static_cast<double>(s + 1) * kSampleSeconds).c_str(),
+                         100.0 * row.notDead / total, 100.0 * row.won / total, "-", "-", "-", "-");
+            continue;
         }
-        std::fprintf(out, "%-7s %6.0f%% %9.0f %9.0f %9.0f\n", mmss(static_cast<double>(s + 1) * kSampleSeconds).c_str(),
-                     100.0 * static_cast<double>(zombies.size()) / static_cast<double>(runs.size()), mean(zombies), mean(hp),
-                     percentile(hp, 10.0));
+        std::fprintf(out, "%-7s %6.0f%% %6.0f%% %9.0f %9.0f %9.0f %7.1f\n", mmss(static_cast<double>(s + 1) * kSampleSeconds).c_str(),
+                     100.0 * row.notDead / total, 100.0 * row.won / total, mean(row.zombies), mean(row.hp), percentile(row.hp, 10.0),
+                     mean(row.level));
     }
 }
 
@@ -273,16 +308,20 @@ BinAverage averageBin(const std::vector<RunResult>& runs, size_t bin) {
     return result;
 }
 
-// What the wave table spawns at one moment: enemies per second, and HP per second after scaling.
-void waveRates(float seconds, double& enemiesPerSecond, double& hpPerSecond) {
+// What the spawner makes at one moment on this difficulty: enemies per second, and HP per
+// second after scaling. The spawner multiplies the table's rates by the level's spawn rate,
+// and zombie HP by the level's HP, so this must as well to match the games it sits beside.
+void waveRates(float seconds, Difficulty difficulty, double& enemiesPerSecond, double& hpPerSecond) {
     enemiesPerSecond = 0.0;
     hpPerSecond = 0.0;
+    const balance::DifficultyTuning& tuning = balance::difficultyTuning(difficulty);
     const int rows = static_cast<int>(std::size(balance::kWaves));
     for (int i = 0; i < rows; ++i) {
-        const double spawned = static_cast<double>(waves::rowRate(i, seconds)) * balance::kWaves[i].groupSize;
+        const double spawned =
+            static_cast<double>(waves::rowRate(i, seconds)) * static_cast<double>(tuning.spawnRate) * balance::kWaves[i].groupSize;
         enemiesPerSecond += spawned;
         hpPerSecond += spawned * static_cast<double>(balance::kEnemyStats[static_cast<int>(balance::kWaves[i].type)].hp) *
-                       static_cast<double>(balance::enemyHpScale(seconds));
+                       static_cast<double>(balance::enemyHpScale(seconds)) * static_cast<double>(tuning.enemyHp);
     }
 }
 
@@ -346,20 +385,28 @@ void printFocusTable(std::FILE* out, const BotProfile& profile, const std::vecto
     std::fprintf(out, "(surv = run length: the time of death, or of the win. Rifle row has no extra weapon.)\n");
 }
 
-void printWaveAnalysis(std::FILE* out) {
-    std::fprintf(out, "\nWave table: what spawns (before kills), every 30 s\n");
+void printDifficultyHeader(std::FILE* out, Difficulty difficulty) {
+    const balance::DifficultyTuning& tuning = balance::difficultyTuning(difficulty);
+    std::fprintf(out, "Difficulty: %s (zombie HP x%.2f, zombie damage x%.2f, spawn rate x%.2f)\n", difficultyName(difficulty),
+                 static_cast<double>(tuning.enemyHp), static_cast<double>(tuning.enemyDamage), static_cast<double>(tuning.spawnRate));
+}
+
+void printWaveAnalysis(std::FILE* out, Difficulty difficulty) {
+    std::fprintf(out, "\nWave table: what spawns (before kills), every 30 s, on %s\n", difficultyName(difficulty));
     std::fprintf(out, "%-7s %10s %12s %10s\n", "time", "enemies/s", "HP to chew/s", "HP scale");
+    const double hpMultiplier = static_cast<double>(balance::difficultyTuning(difficulty).enemyHp);
     for (int t = 0; t <= 600; t += 30) {
         double enemies = 0.0;
         double hp = 0.0;
-        waveRates(static_cast<float>(t) + 0.5f, enemies, hp);
+        waveRates(static_cast<float>(t) + 0.5f, difficulty, enemies, hp);
         std::fprintf(out, "%-7s %10.1f %12.0f %10.2f\n", mmss(t).c_str(), enemies, hp,
-                     static_cast<double>(balance::enemyHpScale(static_cast<float>(t))));
+                     static_cast<double>(balance::enemyHpScale(static_cast<float>(t))) * hpMultiplier);
     }
 }
 
-void printBreatherTable(std::FILE* out, const std::vector<ProfileRuns>& groups) {
-    std::fprintf(out, "\nBreathers: wave table against measured play (5 s bins, 30 s either side of each gap)\n");
+void printBreatherTable(std::FILE* out, const std::vector<ProfileRuns>& groups, Difficulty difficulty) {
+    std::fprintf(out, "\nBreathers on %s: wave table against measured play (5 s bins, 30 s either side of each gap)\n",
+                 difficultyName(difficulty));
     std::fprintf(out, "%-7s %9s %10s", "time", "spawn/s", "HP/s");
     for (const ProfileRuns& group : groups) std::fprintf(out, " | %-7s zomb  dmg/s", group.profile->name);
     std::fprintf(out, "\n");
@@ -370,7 +417,7 @@ void printBreatherTable(std::FILE* out, const std::vector<ProfileRuns>& groups) 
             const float mid = (static_cast<float>(bin) + 0.5f) * kBinSeconds;
             double enemies = 0.0;
             double hp = 0.0;
-            waveRates(mid, enemies, hp);
+            waveRates(mid, difficulty, enemies, hp);
             const bool inGap = mid >= breather[0] && mid <= breather[1];
             std::fprintf(out, "%-7s %9.1f %10.0f", (mmss(bin * kBinSeconds) + (inGap ? " *" : "")).c_str(), enemies, hp);
             for (const ProfileRuns& group : groups) {
@@ -385,18 +432,19 @@ void printBreatherTable(std::FILE* out, const std::vector<ProfileRuns>& groups) 
     std::fprintf(out, "(* marks the gap itself)\n");
 }
 
-void writeCsv(const std::string& folder, const std::vector<ProfileRuns>& groups) {
+void writeCsv(const std::string& folder, const std::vector<ProfileRuns>& groups, Difficulty difficulty) {
+    const char* level = difficultyName(difficulty);  // First column of every file, so files of different levels never mix.
     std::filesystem::create_directories(folder);
 
     std::ofstream runsFile(folder + "/runs.csv");
-    runsFile << "profile,seed,outcome,end_seconds,level,kills,peak_zombies,damage_taken,boss_reached,boss_killed,"
+    runsFile << "difficulty,profile,seed,outcome,end_seconds,level,kills,peak_zombies,damage_taken,boss_reached,boss_killed,"
                 "boss_fight_seconds,boss_hp_left,crates,all_ammo_dry_seconds,fully_dry_seconds,first_evolution_seconds";
     for (int w = 0; w < kWeaponCount; ++w) runsFile << "," << weaponName(w) << "_damage," << weaponName(w) << "_held_s";
     runsFile << "\n";
     for (const ProfileRuns& group : groups) {
         for (const RunResult& run : group.runs) {
             const char* outcome = won(run) ? "won" : (died(run) ? "dead" : "timeout");
-            runsFile << group.profile->name << "," << run.seed << "," << outcome << "," << run.endSeconds << "," << run.level
+            runsFile << level << "," << group.profile->name << "," << run.seed << "," << outcome << "," << run.endSeconds << "," << run.level
                      << "," << run.kills << "," << run.peakZombies << "," << run.damageTaken << "," << run.bossReached << ","
                      << run.bossKilled << "," << run.bossFightSeconds << "," << run.bossHpLeft << "," << run.cratesCollected
                      << "," << run.allAmmoGunsDrySeconds << "," << run.fullyDrySeconds << "," << run.firstEvolutionSeconds;
@@ -406,25 +454,19 @@ void writeCsv(const std::string& folder, const std::vector<ProfileRuns>& groups)
     }
 
     std::ofstream seriesFile(folder + "/timeseries.csv");
-    seriesFile << "profile,seconds,alive_runs,mean_zombies,mean_hp\n";
+    // alive_runs counts runs not dead yet, so a win stays in it. The means are over playing_runs.
+    seriesFile << "difficulty,profile,seconds,alive_runs,won_runs,playing_runs,mean_zombies,mean_hp,mean_level\n";
     for (const ProfileRuns& group : groups) {
-        size_t longest = 0;
-        for (const RunResult& run : group.runs) longest = std::max(longest, run.sampleZombies.size());
-        for (size_t s = 0; s < longest; ++s) {
-            std::vector<double> zombies;
-            std::vector<double> hp;
-            for (const RunResult& run : group.runs) {
-                if (s >= run.sampleZombies.size()) continue;
-                zombies.push_back(static_cast<double>(run.sampleZombies[s]));
-                hp.push_back(static_cast<double>(run.sampleHp[s]));
-            }
-            seriesFile << group.profile->name << "," << (s + 1) * kSampleSeconds << "," << zombies.size() << "," << mean(zombies)
-                       << "," << mean(hp) << "\n";
+        for (size_t s = 0; s < longestSeries(group.runs); ++s) {
+            const SampleRow row = sampleRow(group.runs, s);
+            seriesFile << level << "," << group.profile->name << "," << (s + 1) * kSampleSeconds << "," << row.notDead << ","
+                       << row.won << "," << row.zombies.size() << "," << mean(row.zombies) << "," << mean(row.hp) << ","
+                       << mean(row.level) << "\n";
         }
     }
 
     std::ofstream binsFile(folder + "/pressure_bins.csv");
-    binsFile << "profile,seconds,runs,mean_zombies,damage_per_second,wave_enemies_per_second,wave_hp_per_second\n";
+    binsFile << "difficulty,profile,seconds,runs,mean_zombies,damage_per_second,wave_enemies_per_second,wave_hp_per_second\n";
     for (const ProfileRuns& group : groups) {
         size_t longest = 0;
         for (const RunResult& run : group.runs) longest = std::max(longest, run.bins.size());
@@ -432,8 +474,8 @@ void writeCsv(const std::string& folder, const std::vector<ProfileRuns>& groups)
             const BinAverage average = averageBin(group.runs, bin);
             double enemies = 0.0;
             double hp = 0.0;
-            waveRates((static_cast<float>(bin) + 0.5f) * kBinSeconds, enemies, hp);
-            binsFile << group.profile->name << "," << bin * kBinSeconds << "," << average.runs << "," << average.zombies << ","
+            waveRates((static_cast<float>(bin) + 0.5f) * kBinSeconds, difficulty, enemies, hp);
+            binsFile << level << "," << group.profile->name << "," << bin * kBinSeconds << "," << average.runs << "," << average.zombies << ","
                      << average.damagePerSecond << "," << enemies << "," << hp << "\n";
         }
     }

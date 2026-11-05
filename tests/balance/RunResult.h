@@ -66,6 +66,7 @@ struct RunResult {
 
     std::vector<float> sampleZombies;  // One entry every kSampleSeconds.
     std::vector<float> sampleHp;
+    std::vector<float> sampleLevel;
     std::vector<PressureBin> bins;     // One entry every kBinSeconds.
 };
 

@@ -20,4 +20,9 @@ inline const char* passiveName(PassiveId id) {
     return names[static_cast<int>(id)];
 }
 
+inline const char* difficultyName(Difficulty difficulty) {
+    static const char* const names[static_cast<int>(Difficulty::Count)] = {"easy", "normal", "hard"};
+    return names[static_cast<int>(difficulty)];
+}
+
 }  // namespace ls::tools
