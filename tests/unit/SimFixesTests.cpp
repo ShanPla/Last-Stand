@@ -366,3 +366,54 @@ TEST_CASE("a death later in a frame that opened with a bomb still sends its even
     CHECK(countEvents(*state, EventType::PlayerDied) == 1);
 }
 
+// --- The boss can't be outrun ----------------------------------------------------
+
+TEST_CASE("the fastest possible player can't outrun the boss in any phase") {
+    const float hpFractions[] = {1.0f, 0.5f, 0.2f};
+    for (const float hpFraction : hpFractions) {
+        auto state = makeRun();
+        state->run.tick = static_cast<uint32_t>(balance::kRunSeconds / kDt) - 1;
+        state->run.nextEliteEvent = 1000;
+        // Speed passive at its top level and no weapons, so nothing kills the boss or
+        // gives XP that would stop the run for a level-up.
+        state->player.weaponCount = 0;
+        state->player.passives[0] = PassiveSlot{PassiveId::MoveSpeed, kMaxLevelPerItem};
+        state->player.passiveCount = 1;
+        upgrades::recomputeStats(*state);
+        sim::step(*state, InputFrame{});
+        REQUIRE(findBoss(*state) != nullptr);
+
+        InputFrame flee;
+        flee.moveX = 1.0f;
+        flee.dash = true;  // Ignored while on cooldown, so this dashes whenever it can.
+
+        const int steps = 180 * 60;
+        float widestEarly = 0.0f;
+        float widestLate = 0.0f;
+        int stepsInRange = 0;
+        for (int i = 0; i < steps; ++i) {
+            state->player.hp = state->player.maxHp;
+            // Holding the boss's HP keeps it in the phase under test. Phase only goes up.
+            for (Enemy& enemy : state->enemies) {
+                if (enemy.type == EnemyType::Boss) enemy.hp = enemy.maxHp * hpFraction;
+            }
+            sim::step(*state, flee);
+            state->events.clear();
+            const Enemy* boss = findBoss(*state);
+            REQUIRE(boss != nullptr);
+            const float gap = distance(boss->pos, state->player.pos);
+            if (gap < balance::kWeaponRange) stepsInRange++;
+            if (i >= steps / 6) {  // The boss's walk in from its spawn point doesn't count.
+                float& widest = i < steps * 7 / 12 ? widestEarly : widestLate;
+                widest = std::max(widest, gap);
+            }
+        }
+        MESSAGE("phase at HP ", hpFraction, ": widest gap ", widestEarly, " then ", widestLate, ", in range ", stepsInRange, " of ", steps);
+        // The gap goes up and down with each attack, but must not grow over time. So the
+        // boss keeps coming back into range, and running can't stall the fight forever.
+        CHECK(widestLate <= widestEarly + 50.0f);
+        CHECK(widestLate < balance::kWeaponRange * 1.6f);
+        CHECK(stepsInRange > steps / 4);
+    }
+}
+

@@ -261,7 +261,11 @@ inline constexpr float kBossDashSeconds = 0.6f;
 inline constexpr float kBossCircleScatter = 260.0f;         // Extra circles land within this of the player.
 inline constexpr float kBossSecondLineRadians = 0.5f;       // Extra lines in the last phase, either side.
 inline constexpr float kBossLeashDistance = 560.0f;         // Further than this, the boss hurries to catch up.
-inline constexpr float kBossCatchUpSpeed = 340.0f;          // Faster than the fastest player, so it can't be outrun.
+// The boss stands still during telegraphs, so this must beat the player by a lot. Worst case
+// is its last phase: 6.4 s of walking in a 9 s cycle, plus a 288 unit dash, is 3040 units per
+// cycle. The fastest player (speed passive 5, dashing whenever allowed) averages 327 units per
+// second, or 2940 per cycle. So the boss always gains, and running away can't stall a run.
+inline constexpr float kBossCatchUpSpeed = 430.0f;
 inline constexpr float kBossAddsPerSecond = 0.2f;           // Walkers during the boss fight, which keep XP coming.
 inline constexpr float kBossAmmoCrateSeconds = 12.0f;       // A crate lands this often, so guns can't stay empty.
 inline constexpr float kBossAmmoCrateDistance = 50.0f;      // How far from the player it lands.
