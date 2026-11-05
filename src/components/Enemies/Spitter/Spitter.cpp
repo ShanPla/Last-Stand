@@ -3,6 +3,8 @@
 #include "components/Enemies/Enemies.h"
 #include "data/Balance.h"
 
+#include <algorithm>
+
 namespace ls::enemies {
 
 Vec2 spitterVelocity(GameState& state, Enemy& enemy) {
@@ -16,7 +18,9 @@ Vec2 spitterVelocity(GameState& state, Enemy& enemy) {
         enemy.state = 1;
         enemy.timer = balance::kSpitterFireInterval * static_cast<float>((enemy.id * 7u) % 16u) / 16.0f;
     }
-    enemy.timer -= kDt;
+    // While out of range it may bank at most one step of readiness, so it can't fire a
+    // burst of catch-up shots when it comes back into range. Guns work the same way.
+    enemy.timer = std::max(enemy.timer - kDt, -kDt);
 
     // A bullet can only reach so far, so shooting from beyond that wastes it.
     const float bulletReach = balance::kSpitterBulletSpeed * balance::kEnemyBulletLife;

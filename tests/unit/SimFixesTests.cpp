@@ -116,3 +116,38 @@ TEST_CASE("a card and a reroll in one step take the card on screen and keep the 
     CHECK(sim::stateHash(*both) == sim::stateHash(*cardOnly));
 }
 
+// --- Spitter fire timer ----------------------------------------------------------
+
+TEST_CASE("a spitter back in range fires one shot, not a catch-up burst") {
+    auto state = makeRun();
+    Enemy* spitter = enemies::spawn(*state, EnemyType::Spitter, Vec2{1400.0f, 0.0f}, false);
+    REQUIRE(spitter != nullptr);
+
+    // Thirty seconds beyond the reach of its bullets, held there so it can't walk in.
+    for (int i = 0; i < 1800; ++i) {
+        spitter->pos = Vec2{1400.0f, 0.0f};
+        enemies::update(*state);
+    }
+    REQUIRE(state->enemyBullets.count == 0);
+
+    spitter->pos = Vec2{800.0f, 0.0f};
+    for (int i = 0; i < 60; ++i) {
+        enemies::update(*state);
+        spitter->pos = Vec2{800.0f, 0.0f};
+    }
+    CHECK(state->enemyBullets.count == 1);
+}
+
+TEST_CASE("a spitter in range keeps its normal rate of fire") {
+    auto state = makeRun();
+    Enemy* spitter = enemies::spawn(*state, EnemyType::Spitter, Vec2{800.0f, 0.0f}, false);
+    REQUIRE(spitter != nullptr);
+    const int steps = 1800;
+    for (int i = 0; i < steps; ++i) {
+        enemies::update(*state);
+        spitter->pos = Vec2{800.0f, 0.0f};
+    }
+    const float expected = static_cast<float>(steps) * kDt / balance::kSpitterFireInterval;
+    CHECK(static_cast<float>(state->enemyBullets.count) == doctest::Approx(expected).epsilon(0.1));
+}
+
