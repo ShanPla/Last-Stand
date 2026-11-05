@@ -238,3 +238,57 @@ TEST_CASE("the crowd doesn't push the boss") {
     CHECK(bossMove[1].y == doctest::Approx(bossMove[0].y));
 }
 
+// --- Pickup pool eviction --------------------------------------------------------
+
+namespace {
+
+// Each pickup's x position is its drop number, far from the player.
+void dropNumbered(GameState& state, int number) {
+    pickups::spawnPickup(state, Vec2{5000.0f + static_cast<float>(number), 5000.0f}, PickupType::Heal);
+}
+
+bool holdsNumber(const GameState& state, int number) {
+    for (const Pickup& pickup : state.pickups) {
+        if (pickup.pos.x == 5000.0f + static_cast<float>(number)) return true;
+    }
+    return false;
+}
+
+}  // namespace
+
+TEST_CASE("a full pickup pool evicts the oldest drops, in order") {
+    auto state = makeRun();
+    for (int i = 0; i < kMaxPickups; ++i) dropNumbered(*state, i);
+    const int extra = 5;
+    for (int i = 0; i < extra; ++i) dropNumbered(*state, kMaxPickups + i);
+
+    CHECK(state->pickups.count == kMaxPickups);
+    for (int i = 0; i < extra; ++i) CHECK_FALSE(holdsNumber(*state, i));
+    for (int i = extra; i < kMaxPickups + extra; ++i) CHECK(holdsNumber(*state, i));
+}
+
+TEST_CASE("collecting a pickup doesn't change which one is the oldest") {
+    auto state = makeRun();
+    for (int i = 0; i < kMaxPickups; ++i) dropNumbered(*state, i);
+    // Only number 3 is left within reach, so the player collects it from mid-pool.
+    state->player.pos = Vec2{5003.0f, 5000.0f};
+    for (int i = 0; i < state->pickups.count; ++i) {
+        if (i != 3) state->pickups[i].pos.y = 9000.0f;
+    }
+    pickups::update(*state);
+    REQUIRE(state->pickups.count == kMaxPickups - 1);
+    CHECK_FALSE(holdsNumber(*state, 3));
+
+    // The gap is refilled by one drop, then the next two must evict numbers 0 and 1.
+    dropNumbered(*state, 100);
+    dropNumbered(*state, 101);
+    dropNumbered(*state, 102);
+    CHECK_FALSE(holdsNumber(*state, 0));
+    CHECK_FALSE(holdsNumber(*state, 1));
+    CHECK(holdsNumber(*state, 2));
+    CHECK(holdsNumber(*state, kMaxPickups - 1));
+    CHECK(holdsNumber(*state, 100));
+    CHECK(holdsNumber(*state, 101));
+    CHECK(holdsNumber(*state, 102));
+}
+

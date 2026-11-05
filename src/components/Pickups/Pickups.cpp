@@ -29,6 +29,14 @@ struct MergeSlot {
 // The three random drops. Ammo is not among them: crates drop on their own counter.
 constexpr PickupType kRandomDrops[] = {PickupType::Heal, PickupType::Magnet, PickupType::Bomb};
 
+// Removes a pickup and closes the gap, so the pool stays in drop order and slot 0 is
+// always the oldest. The pool's own removeAt swaps the last item in, which would break
+// that. Shifting is fine here, because the pool is tiny and this happens rarely.
+void removeKeepingOrder(GameState& state, int index) {
+    for (int i = index + 1; i < state.pickups.count; ++i) state.pickups[i - 1] = state.pickups[i];
+    state.pickups.count--;
+}
+
 void applyPickup(GameState& state, PickupType type, Vec2 pos) {
     switch (type) {
         case PickupType::Heal:
@@ -63,7 +71,7 @@ void collectPickups(GameState& state) {
     for (int i = state.pickups.count - 1; i >= 0; --i) {
         const Pickup pickup = state.pickups[i];
         if (distanceSq(pickup.pos, state.player.pos) > reachSq) continue;
-        state.pickups.removeAt(i);
+        removeKeepingOrder(state, i);
         applyPickup(state, pickup.type, pickup.pos);
         pushEvent(state, EventType::PickupCollected, pickup.pos, 0.0f, static_cast<uint8_t>(pickup.type));
     }
@@ -72,7 +80,7 @@ void collectPickups(GameState& state) {
 }  // namespace
 
 void spawnPickup(GameState& state, Vec2 pos, PickupType type) {
-    if (state.pickups.count >= state.pickups.capacity()) state.pickups.removeAt(0);
+    if (state.pickups.count >= state.pickups.capacity()) removeKeepingOrder(state, 0);
     Pickup* pickup = state.pickups.add();
     pickup->pos = pos;
     pickup->type = type;
