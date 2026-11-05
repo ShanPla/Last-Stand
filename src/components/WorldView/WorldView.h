@@ -47,6 +47,9 @@ inline constexpr int kSceneCarFront = -107;        // The same, with a zombie in
 inline constexpr int kSceneCarBoth = -108;         // The same, with both.
 inline constexpr int kSceneCarOfSprite = -120;     // The first car with sprite number N, at -120 - N, with the soldier beside it.
 inline constexpr int kSceneCarOverEdge = -130;     // The first car whose picture crosses a chunk's edge.
+inline constexpr int kSceneBossSpiral = -140;      // A boss charging its spiral from off the left edge.
+inline constexpr int kSceneBossCross = -141;       // A boss off the left edge has just cast its cross.
+inline constexpr int kSceneBossTrail = -142;       // A boss off the left edge has just started its trail.
 void setupShowcase(GameState& state, int extraZombies);
 
 // Debug only: flattens the car nearest the soldier, the way the boss's body would.

@@ -205,13 +205,14 @@ void placeShots(GameState& state, Layout& layout) {
 
 void placeZones(GameState& state, const Layout& layout) {
     const float blastLife = balance::kExplosionSeconds;
-    const float telegraph = balance::kBossTelegraphSeconds;
+    const balance::BossMoves& moves = balance::bossMoves(state.run.difficulty);
+    const float telegraph = moves.telegraphSeconds;
     placeZone(state, ZoneKind::Explosion, layout.blastA, Vec2{}, 58.0f, 90.0f, blastLife * 0.6f, blastLife, false, false);
     placeZone(state, ZoneKind::Explosion, layout.blastB, Vec2{}, 58.0f, 90.0f, blastLife * 0.6f, blastLife, false, true);
     placeZone(state, ZoneKind::SniperBeam, layout.beamFrom, layout.beamTo, 7.0f, 7.0f, 0.1f, 0.14f, false, false);
     placeZone(state, ZoneKind::TeslaLink, layout.teslaA, layout.teslaB, 0.0f, 0.0f, 0.16f, 0.18f, false, false);
     placeZone(state, ZoneKind::TeslaLink, layout.teslaB, layout.teslaC, 0.0f, 0.0f, 0.16f, 0.18f, false, true);
-    const float circleRadius = balance::kBossCircleRadius * 0.6f;
+    const float circleRadius = moves.circleRadius * 0.6f;
     placeZone(state, ZoneKind::BossCircle, layout.circle, layout.circle, circleRadius, circleRadius, telegraph * 0.5f, telegraph, true, false);
     placeZone(state, ZoneKind::BossLine, layout.lineFrom, layout.lineTo, balance::kBossLineHalfWidth, balance::kBossLineHalfWidth,
               telegraph * 0.5f, telegraph, true, false);
@@ -331,7 +332,17 @@ void placeTestScene(GameState& state, int scene) {
         Enemy* boss = placeOffLeft(state, EnemyType::Boss, 130.0f, right);
         if (boss) {
             boss->state = enemies::kBossDashCharge;
-            boss->timer = balance::kBossTelegraphSeconds;
+            boss->timer = balance::bossMoves(state.run.difficulty).telegraphSeconds;
+        }
+    } else if (scene == kSceneBossSpiral || scene == kSceneBossCross || scene == kSceneBossTrail) {
+        // The real attack code starts each one, so the test sees what play would show. Only
+        // Hell's move set has numbers for every attack, so these scenes play Hell.
+        state.run.difficulty = Difficulty::Hell;
+        static constexpr balance::BossAttack kAttack[] = {balance::BossAttack::Trail, balance::BossAttack::Cross, balance::BossAttack::Spiral};
+        Enemy* boss = placeOffLeft(state, EnemyType::Boss, 130.0f, right);
+        if (boss) {
+            state.run.bossSpawned = true;
+            enemies::startBossAttack(state, *boss, kAttack[scene - kSceneBossTrail]);
         }
     } else if (scene == kSceneWalkerOffLeft) {
         placeOffLeft(state, EnemyType::Walker, 30.0f, right);
@@ -545,7 +556,7 @@ void tickShowcase(GameState& state) {
     // Each phase of the boss gets its turn, and a charge-up in between.
     run.bossPhase = static_cast<uint8_t>((beat / 3u) % 3u);
     for (Enemy& enemy : state.enemies) {
-        if (enemy.type == EnemyType::Boss) enemy.state = beat % 4u == 3u ? enemies::kBossRingCharge : enemies::kBossNextCircles;
+        if (enemy.type == EnemyType::Boss) enemy.state = beat % 4u == 3u ? enemies::kBossRingCharge : enemies::kBossWalk;
     }
 }
 

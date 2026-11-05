@@ -46,6 +46,7 @@ inline constexpr Color kHostileFront{255, 214, 80, 255};
 inline constexpr Color kHostileDark{40, 8, 4, 255};
 inline constexpr Color kChargerLine{255, 150, 40, 255};
 inline constexpr Color kBossChargeRing{255, 170, 60, 255};
+inline constexpr Color kBossSpiralArm{255, 128, 44, 255};  // The spiral warning. Warm like every threat, and not the bullets' pink.
 inline constexpr Color kEliteBarBack{24, 10, 8, 235};
 inline constexpr Color kEliteBarFill{255, 214, 70, 255};
 

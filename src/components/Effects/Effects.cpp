@@ -559,7 +559,8 @@ void consumeEvents(const GameState& state, bool quiet) {
             case EventType::ZombieUnstuck: break;
             case EventType::CarCrushed: onCarCrushed(state, event, quiet); break;
             case EventType::ReloadStarted:
-            case EventType::WeaponDry: break;
+            case EventType::WeaponDry:
+            case EventType::BossAttack: break;  // Heard, not seen: the warning on the ground is the picture.
         }
     }
 }

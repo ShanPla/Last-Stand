@@ -17,7 +17,7 @@ enum class SfxId : uint8_t {
     PlayerHit, PlayerDied, PlayerDash, CarCrush,
     Gem0, Gem1, Gem2, Gem3, Gem4, Gem5, Gem6, Gem7, Gem8, Gem9,
     LevelUp, PickupHeal, PickupMagnet, PickupBomb, PickupAmmo,
-    BombBlast, Explosion, Evolution, BossSpawned, BossPhase, BossKilled,
+    BombBlast, Explosion, Evolution, BossSpawned, BossPhase, BossKilled, BossWarn,
     UiMove, UiConfirm, UiBack, UiCardPick, UiReroll, UiPause,
     Count
 };

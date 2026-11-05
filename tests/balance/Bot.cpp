@@ -142,7 +142,7 @@ void Bot::gatherThreats(const GameState& state) {
             } else if (boss && enemy.state == enemies::kBossDash) {
                 vel = enemy.dir * balance::kBossDashSpeed;
             } else if (enemy.type == EnemyType::Spitter || (charger && enemy.state != enemies::kChargerChase) ||
-                       (boss && enemy.state >= enemies::kBossRingCharge)) {
+                       (boss && enemies::bossCharging(enemy))) {
                 vel = Vec2{};
             } else {
                 vel = normalizedOr(pos - enemy.pos, Vec2{}) * enemy.speed;

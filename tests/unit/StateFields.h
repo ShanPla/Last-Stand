@@ -187,12 +187,13 @@ inline const StructInfo& playerInfo() {
 }
 
 inline const StructInfo& runStateInfo() {
-    static const StructInfo info{"RunState", sizeof(RunState), 11,
+    static const StructInfo info{"RunState", sizeof(RunState), 9,
         {LS_NUM(RunState, phase), LS_NUM(RunState, difficulty), LS_NUM(RunState, map), LS_NUM(RunState, seed), LS_NUM(RunState, tick),
          LS_NUM(RunState, nextId), LS_NUM(RunState, kills), LS_NUM(RunState, rerollsLeft), LS_NUM(RunState, pendingLevels),
          LS_NEST(RunState, offers), LS_NUM(RunState, offerCount), LS_FLT(RunState, damageByWeapon),
          LS_FLT(RunState, waveAccumulators), LS_NUM(RunState, nextEliteEvent), LS_NUM(RunState, nextPickupDropKills),
          LS_FLT(RunState, bladeAngle), LS_NUM(RunState, bossSpawned), LS_NUM(RunState, bossPhase),
+         LS_NUM(RunState, bossStep), LS_NUM(RunState, bossRepeat),
          LS_FLT(RunState, bossHpFraction), LS_NUM(RunState, debugEnemyTarget), LS_NUM(RunState, debugProjectileTarget),
          LS_NEST(RunState, crushed), LS_COUNT(RunState, crushedCount)}, &untouchedBytes<RunState>};
     return info;

@@ -223,7 +223,12 @@ Enemy* spawn(GameState& state, EnemyType type, Vec2 pos, bool elite) {
     enemy->speed = stats.speed;
     enemy->contactDamage = stats.contactDamage * damageScale * (elite ? balance::kElite_DamageMult : 1.0f);
     // The boss waits one full interval before its first attack, so it can walk in.
-    if (isBoss) enemy->timer = balance::kBossAttackInterval[0];
+    // Its attack cycle starts from the top, with the move set of the run's difficulty.
+    if (isBoss) {
+        enemy->timer = balance::bossMoves(state.run.difficulty).attackInterval[0];
+        state.run.bossStep = 0;
+        state.run.bossRepeat = 0;
+    }
     // Nothing spawns inside a car. The boss doesn't care, and arrives through them.
     if (!isBoss) obstacles::resolveCircle(state, enemy->pos, carRadius(*enemy));
     enemy->prevPos = enemy->pos;

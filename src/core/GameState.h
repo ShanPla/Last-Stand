@@ -202,6 +202,8 @@ struct RunState {
     float bladeAngle = 0.0f;
     bool bossSpawned = false;
     uint8_t bossPhase = 0;
+    uint8_t bossStep = 0;    // Which attack of the phase's cycle comes next. See balance::kBossMoves.
+    uint8_t bossRepeat = 0;  // Parts left of a many-part attack: dashes, trail bursts or spiral volleys.
     float bossHpFraction = 0.0f;  // Copied each step, for the HUD boss bar.
     int debugEnemyTarget = 0;     // Debug stress test only.
     int debugProjectileTarget = 0;
@@ -220,6 +222,7 @@ enum class EventType : uint8_t {
     PlayerDashed,  // At the spot the dash started. The direction is in player.dashDir.
     ZombieUnstuck,  // A zombie was stuck among cars and got moved. Only the balance tool counts these.
     CarCrushed,  // At the middle of the car. detail is its maps::CarSprite. value is how far away the player was.
+    BossAttack,  // A boss warning just started. detail is its balance::BossAttack. Only sound reads it.
 };
 
 struct SimEvent {

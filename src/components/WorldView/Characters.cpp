@@ -35,6 +35,11 @@ constexpr float kShadowLeanY = 0.26f;
 // How far a warning line's arrows and edges stick out beside the line, in art pixels.
 constexpr float kLineSideRoom = 12.0f;
 
+// The spiral warning's arms, in world units past the charge ring, and how many straight
+// pieces draw each bend.
+constexpr float kSpiralArmLength = 560.0f;
+constexpr int kSpiralArmPoints = 8;
+
 Figure figureOf(const GameState& state, const Enemy& enemy) {
     if (enemy.type == EnemyType::Boss) return static_cast<Figure>(static_cast<int>(Figure::Boss1) + std::min<int>(state.run.bossPhase, 2));
     return static_cast<Figure>(static_cast<int>(enemy.type));
@@ -111,7 +116,7 @@ ZombieLook lookOf(const GameState& state, const Enemy& enemy, const ScreenPoint&
             toward = enemy.dir;
         }
     } else if (enemy.type == EnemyType::Boss) {
-        if (enemy.state == enemies::kBossRingCharge || enemy.state == enemies::kBossDashCharge) {
+        if (enemies::bossCharging(enemy)) {
             pose = (tick >> 3) & 1u ? kPoseBraceA : kPoseBraceB;
             if (enemy.state == enemies::kBossDashCharge) toward = enemy.dir;
             flashing = !effects::flickerAllowed() || ((tick >> 2) & 1u) != 0u;
@@ -214,7 +219,7 @@ void drawEliteBar(const GameState& state, const Enemy& enemy, const ScreenPoint&
 
 bool isTelegraphing(const Enemy& enemy) {
     if (enemy.type == EnemyType::Charger) return enemy.state == enemies::kChargerTelegraph;
-    if (enemy.type == EnemyType::Boss) return enemy.state == enemies::kBossRingCharge || enemy.state == enemies::kBossDashCharge;
+    if (enemy.type == EnemyType::Boss) return enemies::bossCharging(enemy);
     return false;
 }
 
@@ -226,6 +231,48 @@ namespace {
 bool lineCouldShow(const View& view, const ScreenPoint& a, const ScreenPoint& b) {
     return std::max(a.x, b.x) > -kLineSideRoom && std::min(a.x, b.x) < static_cast<float>(view.width) + kLineSideRoom &&
            std::max(a.y, b.y) > -kLineSideRoom && std::min(a.y, b.y) < static_cast<float>(view.height) + kLineSideRoom;
+}
+
+// The spiral's warning: one bent arm for each bullet of a volley, shaped like the pinwheel
+// the bullets will make. The outer tip is where the first volley flies, and the inner end
+// is turned as far as the last volley will be. The arms grow out as the charge runs out,
+// so the moment it fires can be read. Each arm is tested on its own, so the warning
+// shows even when the boss stands outside the picture.
+bool drawSpiralArms(const View& view, const GameState& state, const Enemy& boss, Vec2 worldFeet, float timeLeft) {
+    const balance::BossMoves& moves = balance::bossMoves(state.run.difficulty);
+    const int phase = std::min<int>(state.run.bossPhase, 2);
+    const int arms = moves.spiralArms[phase];
+    const float reach = boss.radius * 1.4f + kSpiralArmLength * (1.0f - 0.4f * timeLeft);
+    // The curl is how far the whole spiral will turn, so the arm shows where the pattern goes.
+    const float curl = balance::spiralTurnRadians(moves, phase) * static_cast<float>(moves.spiralVolleys - 1);
+    const bool flash = !effects::flickerAllowed() || ((state.run.tick >> 2) & 1u) != 0u;
+    bool shown = false;
+    for (int arm = 0; arm < arms; ++arm) {
+        const float start = std::atan2(boss.dir.y, boss.dir.x) + kTau * static_cast<float>(arm) / static_cast<float>(arms);
+        Vec2 points[kSpiralArmPoints + 1];
+        bool visible = false;
+        for (int i = 0; i <= kSpiralArmPoints; ++i) {
+            const float along = static_cast<float>(i) / static_cast<float>(kSpiralArmPoints);
+            const Vec2 world = worldFeet + fromAngle(start + curl * (1.0f - along)) * (boss.radius * 1.4f + (reach - boss.radius * 1.4f) * along);
+            const ScreenPoint p = project(view, world);
+            points[i] = Vec2{p.x, p.y};
+            if (i > 0) {
+                const ScreenPoint from{points[i - 1].x, points[i - 1].y, p.scale};
+                if (lineCouldShow(view, from, p)) visible = true;
+            }
+        }
+        if (!visible) continue;
+        shown = true;
+        for (int i = 0; i < kSpiralArmPoints; ++i) thickLine(points[i], points[i + 1], 7.0f, fade(theme::kHostileDark, 0.75f));
+        for (int i = 0; i < kSpiralArmPoints; ++i) thickLine(points[i], points[i + 1], 4.0f, fade(theme::kBossSpiralArm, flash ? 1.0f : 0.65f));
+        // A sharp arrowhead, so the turn can't be misread, even with no color at all.
+        const Vec2 tip = points[kSpiralArmPoints];
+        const Vec2 ahead = normalizedOr(tip - points[kSpiralArmPoints - 1], Vec2{1.0f, 0.0f});
+        const Vec2 side = perpendicular(ahead);
+        thickLine(tip - ahead * 9.0f + side * 7.0f, tip, 3.0f, theme::kHostileFront);
+        thickLine(tip - ahead * 9.0f - side * 7.0f, tip, 3.0f, theme::kHostileFront);
+    }
+    return shown;
 }
 
 }  // namespace
@@ -259,9 +306,9 @@ bool drawTelegraph(const View& view, const GameState& state, const Enemy& enemy,
         }
     }
 
-    if (enemy.type == EnemyType::Boss && (enemy.state == enemies::kBossRingCharge || enemy.state == enemies::kBossDashCharge)) {
+    if (enemy.type == EnemyType::Boss && enemies::bossCharging(enemy)) {
         // The ring tightens as the timer runs out, so the moment of attack can be read.
-        const float t = clampf(enemy.timer / balance::kBossTelegraphSeconds, 0.0f, 1.0f);
+        const float t = clampf(enemy.timer / balance::bossMoves(state.run.difficulty).telegraphSeconds, 0.0f, 1.0f);
         const float radius = enemy.radius * (1.3f + 1.2f * t);
         const ScreenPoint a = project(view, worldFeet);
         // Generous, because perspective swells the near half of a ring.
@@ -279,6 +326,7 @@ bool drawTelegraph(const View& view, const GameState& state, const Enemy& enemy,
                 thickLine(Vec2{a.x, a.y}, Vec2{b.x, b.y}, 5.0f, fade(theme::kChargerLine, flash ? 1.0f : 0.65f));
             }
         }
+        if (enemy.state == enemies::kBossSpiralCharge && drawSpiralArms(view, state, enemy, worldFeet, t)) shown = true;
     }
     return shown;
 }

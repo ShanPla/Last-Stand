@@ -174,6 +174,8 @@ uint64_t stateHash(const GameState& state) {
     mix(run.bladeAngle);
     mix(run.bossSpawned);
     mix(run.bossPhase);
+    mix(run.bossStep);
+    mix(run.bossRepeat);
     mix(run.bossHpFraction);
     mix(run.debugEnemyTarget);
     mix(run.debugProjectileTarget);

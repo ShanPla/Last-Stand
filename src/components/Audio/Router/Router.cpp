@@ -95,6 +95,19 @@ bool Router::route(const SimEvent& event, float now, PlayRequest& out) {
         case EventType::BossSpawned: return start(SfxId::BossSpawned, SfxId::BossSpawned, now, 1.0f, 0.0f, out);
         case EventType::BossPhaseChanged: return start(SfxId::BossPhase, SfxId::BossPhase, now, 1.0f, 0.0f, out);
         case EventType::BossKilled: return start(SfxId::BossKilled, SfxId::BossKilled, now, 1.0f, 0.0f, out);
+        case EventType::BossAttack: {
+            // One warning sound, pitched apart for each attack, so they can be told apart by ear.
+            float pitch = 1.0f;
+            switch (static_cast<balance::BossAttack>(event.detail)) {
+                case balance::BossAttack::Cross: pitch = 1.0f; break;
+                case balance::BossAttack::Trail: pitch = 1.25f; break;
+                case balance::BossAttack::Spiral: pitch = 0.8f; break;
+                default: return false;  // The older attacks have no sound of their own.
+            }
+            if (!start(SfxId::BossWarn, SfxId::BossWarn, now, 1.0f, 0.0f, out)) return false;
+            out.pitch = pitch;
+            return true;
+        }
     }
     return false;
 }

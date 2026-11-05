@@ -526,6 +526,24 @@ Samples bossKilled() {
     return out;
 }
 
+// The warning for the boss's newer attacks: a short horn call under a rising growl, so it
+// reads as a threat building up. Router plays it at a different pitch for each attack.
+Samples bossWarn() {
+    Samples out = horn(73.4f, 0.55f, 0.08f, 900.0f);
+    for (float& v : out) v *= 0.5f;
+    Samples growl = render(0.5f, [&](float t, size_t) {
+        const float w = std::sin(kPi * std::min(1.0f, t / 0.5f));
+        return glideSaw(t, 110.0f, 220.0f, 0.25f) * w;
+    });
+    OnePole lp;
+    lp.setCutoff(1200.0f);
+    for (float& v : growl) v = lp.low(v);
+    saturate(growl, 2.0f);
+    mixInto(out, growl, 0.0f, 0.45f);
+    liftMids(out, 300.0f, 1.0f);
+    return out;
+}
+
 Samples uiMove() { return render(0.07f, [&](float t, size_t) { return sine(frac(760.0f * t)) * env(t, 0.002f, 0.04f); }); }
 
 Samples uiConfirm() {
@@ -586,6 +604,7 @@ const Entry kEntries[kSfxCount] = {
     {{"pickup_magnet", 1, 0.3f}, 0.24f},   {{"pickup_bomb", 1, 0.3f}, 0.42f},   {{"pickup_ammo", 1, 0.1f}, 0.40f},
     {{"bomb_blast", 2, 0.3f}, 0.95f},      {{"explosion", 3, 0.07f}, 0.70f},    {{"evolution", 1, 1.0f}, 0.65f},
     {{"boss_spawned", 1, 2.0f}, 0.50f},    {{"boss_phase", 1, 1.0f}, 0.60f},    {{"boss_killed", 1, 5.0f}, 0.95f},
+    {{"boss_warn", 1, 0.3f}, 0.50f},
     {{"ui_move", 1, 0.04f}, 0.22f},        {{"ui_confirm", 1, 0.06f}, 0.32f},   {{"ui_back", 1, 0.06f}, 0.30f},
     {{"ui_card_pick", 1, 0.06f}, 0.34f},   {{"ui_reroll", 1, 0.1f}, 0.32f},     {{"ui_pause", 1, 0.1f}, 0.32f},
 };
@@ -629,6 +648,7 @@ Samples renderSfx(SfxId id) {
         case SfxId::BossSpawned: out = bossSpawned(); break;
         case SfxId::BossPhase: out = bossPhase(); break;
         case SfxId::BossKilled: out = bossKilled(); break;
+        case SfxId::BossWarn: out = bossWarn(); break;
         case SfxId::UiMove: out = uiMove(); break;
         case SfxId::UiConfirm: out = uiConfirm(); break;
         case SfxId::UiBack: out = uiBack(); break;

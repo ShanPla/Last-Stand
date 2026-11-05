@@ -354,18 +354,156 @@ static_assert(kBossDamageShare[static_cast<int>(WeaponId::Count) - 1] > 0.0f, "a
 // --- Boss --------------------------------------------------------------------
 inline constexpr float kBossPhase2HpFraction = 0.66f;
 inline constexpr float kBossPhase3HpFraction = 0.33f;
-inline constexpr float kBossAttackInterval[3] = {2.8f, 2.2f, 1.6f};
-inline constexpr float kBossTelegraphSeconds = 1.0f;
-inline constexpr float kBossCircleRadius = 165.0f;
-inline constexpr float kBossCircleDamage = 34.0f;
-inline constexpr int kBossCircleCount[3] = {2, 4, 6};
+// The same on every difficulty.
 inline constexpr float kBossLineHalfWidth = 42.0f;
-inline constexpr float kBossLineLength = 1500.0f;
-inline constexpr float kBossLineDamage = 38.0f;
-inline constexpr int kBossBulletRing[3] = {16, 24, 32};
-inline constexpr float kBossBulletSpeed = 210.0f;
-inline constexpr float kBossBulletDamage = 16.0f;
+inline constexpr float kBossLineLength = 1500.0f;          // Long enough to cross the whole picture.
+inline constexpr int kBossCrossArms = 4;                   // A plus. Its gaps are wide enough to step into in time.
+inline constexpr float kBossCrossArmLength = 900.0f;       // Each arm of the cross, from the middle.
 inline constexpr float kBossDashSpeed = 480.0f;
+// A warning shorter than this is hard to read at all, so Hell stops here.
+inline constexpr float kBossShortestTelegraph = 0.5f;
+// What a player needs to notice a warning and start moving. Fairness rules leave this much.
+inline constexpr float kBossReactionSeconds = 0.25f;
+
+// Every attack the boss knows. Each has one function in Boss.cpp. To add one: a name
+// here, its function, its numbers in BossMoves, and the cycles that should use it.
+enum class BossAttack : uint8_t {
+    Circles,  // Circles on the ground around the player. The first lands right on them.
+    Line,     // Strips from the boss toward the player.
+    Ring,     // Stands still, then fires a ring of bullets.
+    Dash,     // Stands still aiming, then charges along that line.
+    Cross,    // Strips crossing at the player's feet. Step toward, away or sideways from the boss.
+    Trail,    // Circles dropped where the player stands, one after another. Keep moving.
+    Spiral,   // Stands still, then fires a turning pinwheel of bullets while walking. Step into a gap.
+    Count
+};
+inline constexpr int kBossMaxCycle = 8;
+
+// The attacks of one phase, in order. The boss loops through them.
+struct BossCycle {
+    int count;
+    BossAttack attacks[kBossMaxCycle];
+};
+
+// One difficulty's move set. Damage is multiplied by the difficulty's enemyDamage as well,
+// like every hit on the player. Arrays of 3 are per phase. An attack that no cycle of a
+// row uses can leave its numbers out.
+struct BossMoves {
+    float telegraphSeconds;    // How long every warning shows before it can hurt.
+    float attackInterval[3];   // Walking time between attacks.
+    BossCycle cycles[3];
+    int circleCount[3];
+    float circleRadius;        // The first circle lands on the player, so this must be walkable in time.
+    float circleDamage;
+    int lineCount[3];          // 1, 3 or 5: the middle one, plus pairs turned kBossSecondLineRadians each way.
+    float lineDamage;
+    int ringBullets[3];
+    float bulletSpeed;         // For the ring and the spiral.
+    float bulletDamage;
+    int dashCount[3];          // Dashes in a row, each aimed again with its own full warning.
+    float crossDamage;
+    int trailBursts[3];
+    float trailInterval;       // Seconds between bursts.
+    float trailRadius;
+    float trailDamage;
+    int spiralArms[3];         // Bullets in each volley, spread evenly around.
+    int spiralVolleys;
+    float spiralVolleySeconds;
+};
+
+using enum BossAttack;
+inline constexpr BossMoves kBossMoves[static_cast<int>(Difficulty::Count)] = {
+    // Easy: the Normal set, but gentler. Fewer circles and bullets, slower bullets, longer warnings.
+    {.telegraphSeconds = 1.3f, .attackInterval = {3.4f, 2.8f, 2.2f},
+     .cycles = {{3, {Circles, Line, Ring}}, {4, {Circles, Line, Ring, Dash}}, {4, {Circles, Line, Ring, Dash}}},
+     .circleCount = {1, 2, 4}, .circleRadius = 150.0f, .circleDamage = 34.0f,
+     .lineCount = {1, 1, 3}, .lineDamage = 38.0f,
+     .ringBullets = {10, 14, 20}, .bulletSpeed = 150.0f, .bulletDamage = 16.0f,
+     .dashCount = {1, 1, 1}},
+    // Normal: the balanced default.
+    {.telegraphSeconds = 1.0f, .attackInterval = {2.8f, 2.2f, 1.6f},
+     .cycles = {{3, {Circles, Line, Ring}}, {4, {Circles, Line, Ring, Dash}}, {4, {Circles, Line, Ring, Dash}}},
+     .circleCount = {2, 4, 6}, .circleRadius = 165.0f, .circleDamage = 34.0f,
+     .lineCount = {1, 1, 3}, .lineDamage = 38.0f,
+     .ringBullets = {16, 24, 32}, .bulletSpeed = 210.0f, .bulletDamage = 16.0f,
+     .dashCount = {1, 1, 1}},
+    // Hard: adds the cross and double dashes. Shorter warnings, so circles are smaller to stay
+    // walkable, but there are more of them, coming faster and hitting harder.
+    {.telegraphSeconds = 0.8f, .attackInterval = {2.4f, 1.9f, 1.4f},
+     .cycles = {{4, {Circles, Line, Ring, Cross}}, {5, {Circles, Line, Ring, Dash, Cross}}, {5, {Circles, Line, Ring, Dash, Cross}}},
+     .circleCount = {3, 5, 7}, .circleRadius = 125.0f, .circleDamage = 40.0f,
+     .lineCount = {1, 3, 3}, .lineDamage = 44.0f,
+     .ringBullets = {22, 30, 36}, .bulletSpeed = 235.0f, .bulletDamage = 18.0f,
+     .dashCount = {1, 2, 2},
+     .crossDamage = 42.0f},
+    // Hell: Hard's set plus the trail and the spiral, the shortest warnings, and more of everything.
+    {.telegraphSeconds = 0.6f, .attackInterval = {2.1f, 1.6f, 1.2f},
+     .cycles = {{5, {Circles, Line, Ring, Cross, Trail}},
+                {7, {Circles, Line, Ring, Dash, Cross, Trail, Spiral}},
+                {7, {Circles, Line, Ring, Dash, Cross, Trail, Spiral}}},
+     .circleCount = {4, 5, 7}, .circleRadius = 80.0f, .circleDamage = 46.0f,
+     .lineCount = {3, 3, 5}, .lineDamage = 50.0f,
+     .ringBullets = {28, 34, 40}, .bulletSpeed = 245.0f, .bulletDamage = 20.0f,
+     .dashCount = {2, 2, 3},
+     .crossDamage = 48.0f,
+     .trailBursts = {4, 5, 6}, .trailInterval = 0.3f, .trailRadius = 70.0f, .trailDamage = 40.0f,
+     .spiralArms = {4, 5, 6}, .spiralVolleys = 6, .spiralVolleySeconds = 0.22f},
+};
+
+inline constexpr const BossMoves& bossMoves(Difficulty difficulty) {
+    return kBossMoves[static_cast<int>(difficulty)];
+}
+
+// Each spiral volley turns by an even share of the gap between arms, so the bullets of the
+// whole spiral fan out evenly and leave even gaps, like a ring spread out over time.
+inline constexpr float spiralTurnRadians(const BossMoves& moves, int phase) {
+    return 6.28318531f / static_cast<float>(moves.spiralArms[phase] * moves.spiralVolleys);
+}
+
+inline constexpr bool bossCycleUses(const BossMoves& moves, int phase, BossAttack attack) {
+    const BossCycle& cycle = moves.cycles[phase];
+    for (int i = 0; i < cycle.count; ++i) {
+        if (cycle.attacks[i] == attack) return true;
+    }
+    return false;
+}
+
+// Rules every row must keep, checked when the game is compiled.
+inline constexpr bool bossMovesAreFair(const BossMoves& moves) {
+    if (moves.telegraphSeconds < kBossShortestTelegraph) return false;
+    // A circle that lands on the player must be possible to walk out of before it hurts,
+    // after the time it takes to react.
+    const float walkable = kPlayerSpeed * (moves.telegraphSeconds - kBossReactionSeconds);
+    for (int phase = 0; phase < 3; ++phase) {
+        const BossCycle& cycle = moves.cycles[phase];
+        if (cycle.count < 1 || cycle.count > kBossMaxCycle) return false;
+        for (int i = 0; i < cycle.count; ++i) {
+            if (cycle.attacks[i] >= BossAttack::Count) return false;
+        }
+        if (moves.attackInterval[phase] <= 0.0f) return false;
+        if (bossCycleUses(moves, phase, Circles) && (moves.circleCount[phase] < 1 || moves.circleRadius > walkable)) return false;
+        if (bossCycleUses(moves, phase, Line) && (moves.lineCount[phase] % 2 == 0 || moves.lineCount[phase] > 5)) return false;
+        if (bossCycleUses(moves, phase, Ring) && (moves.ringBullets[phase] < 1 || moves.bulletSpeed <= 0.0f)) return false;
+        if (bossCycleUses(moves, phase, Dash) && moves.dashCount[phase] < 1) return false;
+        if (bossCycleUses(moves, phase, Cross) && moves.crossDamage <= 0.0f) return false;
+        if (bossCycleUses(moves, phase, Trail) &&
+            (moves.trailBursts[phase] < 1 || moves.trailInterval <= 0.0f || moves.trailRadius <= 0.0f || moves.trailRadius > walkable)) {
+            return false;
+        }
+        // The spiral must never be denser than a ring, so its gaps are at least as wide.
+        if (bossCycleUses(moves, phase, Spiral) &&
+            (moves.spiralArms[phase] < 1 || moves.spiralVolleys < 1 || moves.spiralVolleySeconds <= 0.0f ||
+             moves.bulletSpeed <= 0.0f || moves.spiralArms[phase] * moves.spiralVolleys > moves.ringBullets[phase])) {
+            return false;
+        }
+    }
+    return true;
+}
+static_assert(static_cast<int>(Difficulty::Count) == 4, "every difficulty needs a row in kBossMoves");
+static_assert(bossMovesAreFair(kBossMoves[0]) && bossMovesAreFair(kBossMoves[1]) && bossMovesAreFair(kBossMoves[2]) &&
+                  bossMovesAreFair(kBossMoves[3]),
+              "a boss move set breaks a fairness rule");
+
 
 // --- Waves -------------------------------------------------------------------
 // Each row spawns one enemy type over a time window. The rate moves from

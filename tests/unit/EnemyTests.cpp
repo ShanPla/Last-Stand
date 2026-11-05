@@ -47,6 +47,9 @@ void kill(GameState& state, int index) {
     enemies::removeDead(state);
 }
 
+// makeRun plays Normal, so the boss uses Normal's move set.
+const balance::BossMoves& kNormalBoss = balance::bossMoves(Difficulty::Normal);
+
 Enemy* spawnBoss(GameState& state, Vec2 pos) {
     Enemy* boss = enemies::spawn(state, EnemyType::Boss, pos, false);
     REQUIRE(boss != nullptr);
@@ -464,22 +467,23 @@ TEST_CASE("boss circles: the first lands on the player, the rest nearby, all hos
         state->player.pos = Vec2{500.0f, 200.0f};
         Enemy* boss = spawnBoss(*state, Vec2{0.0f, 0.0f});
         state->run.bossPhase = static_cast<uint8_t>(phase);
-        boss->state = enemies::kBossNextCircles;
+        boss->state = enemies::kBossWalk;
+        state->run.bossStep = 0;  // Circles.
         boss->timer = 0.0f;
         enemies::update(*state);
-        REQUIRE(state->zones.count == balance::kBossCircleCount[phase]);
+        REQUIRE(state->zones.count == kNormalBoss.circleCount[phase]);
         CHECK(state->zones[0].a.x == doctest::Approx(500.0f));
         CHECK(state->zones[0].a.y == doctest::Approx(200.0f));
         for (const Zone& zone : state->zones) {
             CHECK(zone.kind == ZoneKind::BossCircle);
             CHECK(zone.hostile);
-            CHECK(zone.radius == doctest::Approx(balance::kBossCircleRadius));
-            CHECK(zone.life == doctest::Approx(balance::kBossTelegraphSeconds));
-            CHECK(zone.maxLife == doctest::Approx(balance::kBossTelegraphSeconds));
-            CHECK(zone.damage == doctest::Approx(balance::kBossCircleDamage));
+            CHECK(zone.radius == doctest::Approx(kNormalBoss.circleRadius));
+            CHECK(zone.life == doctest::Approx(kNormalBoss.telegraphSeconds));
+            CHECK(zone.maxLife == doctest::Approx(kNormalBoss.telegraphSeconds));
+            CHECK(zone.damage == doctest::Approx(kNormalBoss.circleDamage));
             CHECK(distance(zone.a, state->player.pos) <= balance::kBossCircleScatter + 0.01f);
         }
-        CHECK(state->enemies[0].state == enemies::kBossNextLine);
+        CHECK(enemies::nextBossAttack(*state) == balance::BossAttack::Line);
     }
 }
 
@@ -487,7 +491,8 @@ TEST_CASE("boss line points from the boss at the player, with two more lines in 
     auto state = makeRun();
     state->player.pos = Vec2{0.0f, 600.0f};
     Enemy* boss = spawnBoss(*state, Vec2{0.0f, 0.0f});
-    boss->state = enemies::kBossNextLine;
+    boss->state = enemies::kBossWalk;
+    state->run.bossStep = 1;  // Line.
     boss->timer = 0.0f;
     enemies::update(*state);
     REQUIRE(state->zones.count == 1);
@@ -499,12 +504,13 @@ TEST_CASE("boss line points from the boss at the player, with two more lines in 
     CHECK(line.b.x == doctest::Approx(line.a.x).epsilon(0.001));
     CHECK(line.b.y == doctest::Approx(line.a.y + balance::kBossLineLength));
     CHECK(line.radius == doctest::Approx(balance::kBossLineHalfWidth));
-    CHECK(line.damage == doctest::Approx(balance::kBossLineDamage));
-    CHECK(line.life == doctest::Approx(balance::kBossTelegraphSeconds));
+    CHECK(line.damage == doctest::Approx(kNormalBoss.lineDamage));
+    CHECK(line.life == doctest::Approx(kNormalBoss.telegraphSeconds));
 
     state->zones.clear();
     state->run.bossPhase = 2;
-    state->enemies[0].state = enemies::kBossNextLine;
+    state->enemies[0].state = enemies::kBossWalk;
+    state->run.bossStep = 1;
     state->enemies[0].timer = 0.0f;
     state->enemies[0].hp = state->enemies[0].maxHp * 0.1f;
     enemies::update(*state);
@@ -519,7 +525,8 @@ TEST_CASE("boss bullet ring stands still to charge, then fires an even ring") {
     auto state = makeRun();
     state->player.pos = Vec2{3000.0f, 0.0f};
     Enemy* boss = spawnBoss(*state, Vec2{0.0f, 0.0f});
-    boss->state = enemies::kBossNextRing;
+    boss->state = enemies::kBossWalk;
+    state->run.bossStep = 2;  // Ring.
     boss->timer = 0.0f;
 
     enemies::update(*state);
@@ -532,17 +539,17 @@ TEST_CASE("boss bullet ring stands still to charge, then fires an even ring") {
         enemies::update(*state);
         chargeSteps++;
     }
-    CHECK(static_cast<float>(chargeSteps) * kDt == doctest::Approx(balance::kBossTelegraphSeconds).epsilon(0.05));
-    REQUIRE(state->enemyBullets.count == balance::kBossBulletRing[0]);
+    CHECK(static_cast<float>(chargeSteps) * kDt == doctest::Approx(kNormalBoss.telegraphSeconds).epsilon(0.05));
+    REQUIRE(state->enemyBullets.count == kNormalBoss.ringBullets[0]);
 
     Vec2 sum{};
     for (const EnemyBullet& bullet : state->enemyBullets) {
-        CHECK(length(bullet.vel) == doctest::Approx(balance::kBossBulletSpeed).epsilon(0.001));
-        CHECK(bullet.damage == doctest::Approx(balance::kBossBulletDamage));
+        CHECK(length(bullet.vel) == doctest::Approx(kNormalBoss.bulletSpeed).epsilon(0.001));
+        CHECK(bullet.damage == doctest::Approx(kNormalBoss.bulletDamage));
         sum += bullet.vel;
     }
     // Evenly spaced directions cancel out.
-    CHECK(length(sum) < 0.01f * balance::kBossBulletSpeed * static_cast<float>(balance::kBossBulletRing[0]));
+    CHECK(length(sum) < 0.01f * kNormalBoss.bulletSpeed * static_cast<float>(kNormalBoss.ringBullets[0]));
     CHECK(state->enemies[0].state != enemies::kBossRingCharge);
 }
 
@@ -551,7 +558,8 @@ TEST_CASE("boss dash telegraphs standing still, then dashes along a locked direc
     state->player.pos = Vec2{0.0f, 2000.0f};
     Enemy* boss = spawnBoss(*state, Vec2{0.0f, 0.0f});
     state->enemies[0].hp = boss->maxHp * 0.5f;  // Phase 1.
-    boss->state = enemies::kBossNextDash;
+    boss->state = enemies::kBossWalk;
+    state->run.bossStep = 3;  // Dash, which only phase 1 and later have.
     boss->timer = 0.0f;
 
     enemies::update(*state);
@@ -566,7 +574,7 @@ TEST_CASE("boss dash telegraphs standing still, then dashes along a locked direc
         enemies::update(*state);
         chargeSteps++;
     }
-    CHECK(static_cast<float>(chargeSteps) * kDt == doctest::Approx(balance::kBossTelegraphSeconds).epsilon(0.05));
+    CHECK(static_cast<float>(chargeSteps) * kDt == doctest::Approx(kNormalBoss.telegraphSeconds).epsilon(0.05));
     REQUIRE(state->enemies[0].state == enemies::kBossDash);
 
     const float startY = state->enemies[0].pos.y;
@@ -602,7 +610,7 @@ TEST_CASE("the boss cycles through every attack, and only dashes from phase 1") 
                 if (zone.kind == ZoneKind::BossCircle) { sawCircle = true; circleCount = std::max(circleCount, state->zones.count); }
                 if (zone.kind == ZoneKind::BossLine) { sawLine = true; lineCount = std::max(lineCount, state->zones.count); }
             }
-            if (state->enemyBullets.count >= balance::kBossBulletRing[phase]) {
+            if (state->enemyBullets.count >= kNormalBoss.ringBullets[phase]) {
                 sawRing = true;
                 ringCount = state->enemyBullets.count;
             }
@@ -616,8 +624,8 @@ TEST_CASE("the boss cycles through every attack, and only dashes from phase 1") 
         CHECK(sawCircle);
         CHECK(sawLine);
         CHECK(sawRing);
-        CHECK(ringCount == balance::kBossBulletRing[phase]);
-        CHECK(circleCount == balance::kBossCircleCount[phase]);
+        CHECK(ringCount == kNormalBoss.ringBullets[phase]);
+        CHECK(circleCount == kNormalBoss.circleCount[phase]);
         CHECK(lineCount == (phase == 2 ? 3 : 1));
         CHECK(sawDash == (phase >= 1));
     }
