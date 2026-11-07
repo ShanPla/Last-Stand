@@ -138,6 +138,12 @@ bool inputEnabled() { return g_inputEnabled; }
 
 bool showPrompts() { return g_input.lastDevice != input::Device::Touch; }
 
+void formatClock(char* out, size_t size, float seconds) {
+    const int total = std::max(0, static_cast<int>(seconds));
+    if (total >= 3600) std::snprintf(out, size, "%d:%02d:%02d", total / 3600, total / 60 % 60, total % 60);
+    else std::snprintf(out, size, "%d:%02d", total / 60, total % 60);
+}
+
 const char* promptConfirm() { return g_input.lastDevice == input::Device::Gamepad ? "A" : "Enter"; }
 const char* promptBack() { return g_input.lastDevice == input::Device::Gamepad ? "B" : "Esc"; }
 const char* promptReroll() { return g_input.lastDevice == input::Device::Gamepad ? "Y" : "R"; }

@@ -207,7 +207,7 @@ void placeShots(GameState& state, Layout& layout) {
 
 void placeZones(GameState& state, const Layout& layout) {
     const float blastLife = balance::kExplosionSeconds;
-    const balance::BossMoves& moves = balance::bossMoves(state.run.difficulty);
+    const balance::BossMoves& moves = balance::bossMovesFor(state.run);
     const float telegraph = moves.telegraphSeconds;
     placeZone(state, ZoneKind::Explosion, layout.blastA, Vec2{}, 58.0f, 90.0f, blastLife * 0.6f, blastLife, false, false);
     placeZone(state, ZoneKind::Explosion, layout.blastB, Vec2{}, 58.0f, 90.0f, blastLife * 0.6f, blastLife, false, true);
@@ -360,7 +360,7 @@ void placeTestScene(GameState& state, int scene) {
         Enemy* boss = placeOffLeft(state, EnemyType::Boss, 130.0f, right);
         if (boss) {
             boss->state = enemies::kBossDashCharge;
-            boss->timer = balance::bossMoves(state.run.difficulty).telegraphSeconds;
+            boss->timer = balance::bossMovesFor(state.run).telegraphSeconds;
         }
     } else if (scene == kSceneBossSpiral || scene == kSceneBossCross || scene == kSceneBossTrail) {
         // The real attack code starts each one, so the test sees what play would show. Only

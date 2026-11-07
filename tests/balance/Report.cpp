@@ -362,6 +362,31 @@ void printProfileReport(std::FILE* out, const ProfileRuns& group, bool withCorre
     if (withCorrelation) printCorrelation(out, group.runs);
 }
 
+void printEndlessReport(std::FILE* out, const std::vector<ProfileRuns>& groups) {
+    std::fprintf(out, "\nEndless: survival time and bosses killed. Only death ends a run; 'limit' runs hit the step limit.\n");
+    std::fprintf(out, "%-9s %5s %8s %8s %8s %8s %8s %6s %5s %5s %5s %5s %6s %6s\n", "Profile", "runs", "surv p10", "surv med", "surv p90",
+                 "surv max", "bosses", "max", "0", "1", "2", "3+", "level", "limit");
+    for (const ProfileRuns& group : groups) {
+        const auto ends = collect(group.runs, [](const RunResult& r) { return static_cast<double>(r.endSeconds); });
+        const auto levels = collect(group.runs, [](const RunResult& r) { return static_cast<double>(r.level); });
+        int byBosses[4] = {};
+        int most = 0;
+        double bosses = 0.0;
+        int limit = 0;
+        for (const RunResult& run : group.runs) {
+            byBosses[std::min(run.bossesKilled, 3)]++;
+            most = std::max(most, run.bossesKilled);
+            bosses += static_cast<double>(run.bossesKilled);
+            if (run.outcome != RunPhase::Dead) ++limit;
+        }
+        const double count = static_cast<double>(std::max<size_t>(1, group.runs.size()));
+        std::fprintf(out, "%-9s %5zu %8s %8s %8s %8s %8.2f %6d %5d %5d %5d %5d %6.0f %6d\n", group.profile->name, group.runs.size(),
+                     mmss(percentile(ends, 10.0)).c_str(), mmss(median(ends)).c_str(), mmss(percentile(ends, 90.0)).c_str(),
+                     mmss(percentile(ends, 100.0)).c_str(), bosses / count, most, byBosses[0], byBosses[1], byBosses[2], byBosses[3],
+                     median(levels), limit);
+    }
+}
+
 void printFocusTable(std::FILE* out, const BotProfile& profile, const std::vector<std::vector<RunResult>>& byWeapon) {
     std::fprintf(out, "\n==============================================================================\n");
     std::fprintf(out, " Focus runs, %s bot: each row starts with the Rifle plus that weapon and builds toward it\n", profile.name);

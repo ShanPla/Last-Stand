@@ -17,7 +17,8 @@ struct InputFrame {
 
 namespace sim {
 
-void newRun(GameState& state, uint64_t seed, Difficulty difficulty = Difficulty::Normal, maps::MapId map = maps::kDefaultMap);
+void newRun(GameState& state, uint64_t seed, Difficulty difficulty = Difficulty::Normal, maps::MapId map = maps::kDefaultMap,
+            RunMode mode = RunMode::Story);
 
 // Changes the map under a run in progress, as the title screen's picker does behind its demo.
 void setMap(GameState& state, maps::MapId map);

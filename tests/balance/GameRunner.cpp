@@ -14,6 +14,7 @@ namespace {
 
 Difficulty g_difficulty = Difficulty::Normal;
 maps::MapId g_map = maps::kDefaultMap;
+RunMode g_mode = RunMode::Story;
 
 constexpr float kCarHugDistance = 60.0f;
 
@@ -78,7 +79,10 @@ void readEvents(const GameState& state, RunResult& result, int hitSource) {
                     }
                 }
                 break;
-            case EventType::BossKilled: result.bossKilled = true; break;
+            case EventType::BossKilled:
+                result.bossKilled = true;
+                ++result.bossesKilled;
+                break;
             case EventType::PlayerDashed: ++result.dashes; break;
             case EventType::ZombieUnstuck: ++result.zombiesUnstuck; break;
             case EventType::CarCrushed: ++result.carsCrushed; break;
@@ -129,10 +133,12 @@ void traceLine(std::FILE* out, const GameState& state) {
 void setGameDifficulty(Difficulty difficulty) { g_difficulty = difficulty; }
 void setGameMap(maps::MapId map) { g_map = map; }
 maps::MapId gameMap() { return g_map; }
+void setGameMode(RunMode mode) { g_mode = mode; }
 
 RunResult playGame(const BotProfile& profile, uint64_t seed, int favoriteWeapon, std::FILE* trace) {
     auto state = std::make_unique<GameState>();
-    sim::newRun(*state, seed, g_difficulty, g_map);
+    sim::newRun(*state, seed, g_difficulty, g_map, g_mode);
+    const int stepLimit = g_mode == RunMode::Endless ? kEndlessStepLimit : kStepLimit;
     // A focus run starts with the favorite next to the Rifle, so every weapon gets the same head start.
     if (favoriteWeapon >= 0) weapons::grant(*state, static_cast<WeaponId>(favoriteWeapon));
     Bot bot(profile, seed, favoriteWeapon);
@@ -145,7 +151,7 @@ RunResult playGame(const BotProfile& profile, uint64_t seed, int favoriteWeapon,
     int previousRerolls = state->run.rerollsLeft;
 
     while (state->run.phase != RunPhase::Won && state->run.phase != RunPhase::Dead &&
-           static_cast<int>(state->run.tick) < kStepLimit) {
+           static_cast<int>(state->run.tick) < stepLimit) {
         const bool wasPlaying = state->run.phase == RunPhase::Playing;
         const int killsBefore = result.kills;
         const float damageBefore = result.damageTaken;

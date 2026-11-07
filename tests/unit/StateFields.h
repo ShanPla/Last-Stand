@@ -187,14 +187,15 @@ inline const StructInfo& playerInfo() {
 }
 
 inline const StructInfo& runStateInfo() {
-    static const StructInfo info{"RunState", sizeof(RunState), 9,
-        {LS_NUM(RunState, phase), LS_NUM(RunState, difficulty), LS_NUM(RunState, map), LS_NUM(RunState, seed), LS_NUM(RunState, tick),
+    static const StructInfo info{"RunState", sizeof(RunState), 8,
+        {LS_NUM(RunState, phase), LS_NUM(RunState, difficulty), LS_NUM(RunState, mode), LS_NUM(RunState, map), LS_NUM(RunState, seed), LS_NUM(RunState, tick),
          LS_NUM(RunState, nextId), LS_NUM(RunState, kills), LS_NUM(RunState, rerollsLeft), LS_NUM(RunState, pendingLevels),
          LS_NEST(RunState, offers), LS_NUM(RunState, offerCount), LS_FLT(RunState, damageByWeapon),
          LS_FLT(RunState, waveAccumulators), LS_NUM(RunState, nextEliteEvent), LS_NUM(RunState, nextPickupDropKills),
          LS_FLT(RunState, bladeAngle), LS_NUM(RunState, bossSpawned), LS_NUM(RunState, bossPhase),
          LS_NUM(RunState, bossStep), LS_NUM(RunState, bossRepeat),
-         LS_FLT(RunState, bossHpFraction), LS_NUM(RunState, debugEnemyTarget), LS_NUM(RunState, debugProjectileTarget),
+         LS_FLT(RunState, bossHpFraction), LS_NUM(RunState, bossesKilled), LS_NUM(RunState, lastBossKillTick),
+         LS_NUM(RunState, debugEnemyTarget), LS_NUM(RunState, debugProjectileTarget),
          LS_NEST(RunState, crushed), LS_COUNT(RunState, crushedCount)}, &untouchedBytes<RunState>};
     return info;
 }
@@ -270,6 +271,11 @@ inline std::unique_ptr<GameState> makeBusyState(uint64_t seed = 31) {
     state->player.passiveCount = 1;
     state->run.crushed[0] = maps::CarId{1234, 567};
     state->run.crushedCount = 1;
+    // Endless, so its fields are hashed too and every flip of them shows. A Story run leaves
+    // them out of the hash (see sim::stateHash), and the mode byte itself still shows here.
+    state->run.mode = RunMode::Endless;
+    state->run.bossesKilled = 2;
+    state->run.lastBossKillTick = 777;
     enemies::spawn(*state, EnemyType::Charger, Vec2{500.0f, 100.0f}, false);
     state->projectiles.add()->life = 1.0f;
     state->enemyBullets.add()->life = 1.0f;

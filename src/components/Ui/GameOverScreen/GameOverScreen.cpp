@@ -38,10 +38,12 @@ void drawNewBest(float cx, float y) {
     textMiddle("NEW BEST", cx, y + 10.0f * u, size, theme::kTextOnPrimary, font::Align::Center, 1.2f * u);
 }
 
-void drawStat(float cx, float y, const char* value, const char* label, bool best) {
+// One headline figure, shrunk to fit its column. Endless shows four of these, which is
+// tight on a phone.
+void drawStat(float cx, float y, float width, const char* value, const char* label, bool best) {
     const float u = ui::u();
-    textShadowed(value, cx, y, 42.0f * u, theme::kUiText, font::Align::Center);
-    text(label, cx, y + 44.0f * u, 14.0f * u, theme::kUiTextDim, font::Align::Center, 2.0f * u);
+    textShadowed(value, cx, y, font::fitSize(value, 42.0f * u, width - 8.0f * u), theme::kUiText, font::Align::Center);
+    text(label, cx, y + 44.0f * u, font::fitSize(label, 14.0f * u, width - 4.0f * u, 2.0f * u), theme::kUiTextDim, font::Align::Center, 2.0f * u);
     if (best) drawNewBest(cx, y + 64.0f * u);
 }
 
@@ -94,30 +96,42 @@ GameOverAction drawGameOverScreen(const RunSummary& summary, float age) {
     textShadowed(summary.won ? "VICTORY" : "YOU DIED", l.centerX(), y, headlineSize, accent, font::Align::Center, 6.0f * u);
     y += headlineSize + 2.0f * u;
     {
-        // The level in its own color, then the line under the headline.
+        // The level and the mode in their own colors, then the line under the headline.
         const char* level = difficultyName(summary.difficulty);
+        const char* mode = modeName(summary.mode);
         const char* line = summary.won ? "The boss is down. You survived." : "The horde got you.";
-        const float lineSize = font::fitSize(line, 20.0f * u, panelWidth * 0.55f);
+        const float lineSize = font::fitSize(line, 20.0f * u, panelWidth * 0.5f);
         const float levelWidth = font::measure(level, lineSize, l.px) + 14.0f * u;
-        const float total = levelWidth + font::measure(line, lineSize);
+        const float modeWidth = font::measure(mode, lineSize, l.px) + 14.0f * u;
+        const float total = levelWidth + modeWidth + font::measure(line, lineSize);
         float lx = l.centerX() - total * 0.5f;
         text(level, lx, y, lineSize, theme::kDifficultyColors[static_cast<int>(summary.difficulty)], font::Align::Left, l.px);
         lx += levelWidth;
+        text(mode, lx, y, lineSize, theme::kModeColors[static_cast<int>(summary.mode)], font::Align::Left, l.px);
+        lx += modeWidth;
         text(line, lx, y, lineSize, theme::kUiTextDim, font::Align::Left);
     }
     y += 34.0f * u;
 
-    // The three headline numbers.
+    // The headline numbers. Endless adds the bosses killed, after the time it is scored by.
     char value[24];
-    const float columnWidth = (panelWidth - pad * 2.0f) / 3.0f;
-    const float firstX = x + pad + columnWidth * 0.5f;
-    const int seconds = static_cast<int>(summary.timeSeconds);
-    std::snprintf(value, sizeof(value), "%d:%02d", seconds / 60, seconds % 60);
-    drawStat(firstX, y, value, "TIME SURVIVED", summary.newBestTime);
+    const bool endless = summary.mode == RunMode::Endless;
+    const int columns = endless ? 4 : 3;
+    const float columnWidth = (panelWidth - pad * 2.0f) / static_cast<float>(columns);
+    float cx = x + pad + columnWidth * 0.5f;
+    formatClock(value, sizeof(value), summary.timeSeconds);
+    drawStat(cx, y, columnWidth, value, "TIME SURVIVED", summary.newBestTime);
+    if (endless) {
+        cx += columnWidth;
+        std::snprintf(value, sizeof(value), "%d", summary.bossesKilled);
+        drawStat(cx, y, columnWidth, value, "BOSSES", false);
+    }
+    cx += columnWidth;
     std::snprintf(value, sizeof(value), "%d", summary.kills);
-    drawStat(firstX + columnWidth, y, value, "KILLS", summary.newBestKills);
+    drawStat(cx, y, columnWidth, value, "KILLS", summary.newBestKills);
+    cx += columnWidth;
     std::snprintf(value, sizeof(value), "%d", summary.level);
-    drawStat(firstX + columnWidth * 2.0f, y, value, "LEVEL", summary.newBestLevel);
+    drawStat(cx, y, columnWidth, value, "LEVEL", summary.newBestLevel);
     y += statsHeight + 6.0f * u;
 
     // Damage per weapon, as bars.

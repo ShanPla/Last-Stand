@@ -44,6 +44,7 @@ struct RunResult {
     float bossMaxHp = 0.0f;
     float bossSpawnSeconds = 0.0f;
     bool bossKilled = false;
+    int bossesKilled = 0;           // Endless can have many. Story has at most one.
     float bossFightSeconds = 0.0f;  // From the boss arriving to the run ending.
     float bossHpLeft = 1.0f;        // Share of the boss's HP left when the run ended.
     float bossDamageTaken = 0.0f;   // Damage the player took while the boss was alive.

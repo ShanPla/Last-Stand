@@ -163,7 +163,11 @@ void drawBossBar(const Layout& l, const RunState& run) {
         if (x + width > dash.x - 12.0f * l.u) width = std::max(120.0f * l.u, dash.x - 12.0f * l.u - x);
     }
     const float y = l.bottom - height - 4.0f * l.u;
-    textShadowed(kBossName, l.centerX(), y - 26.0f * l.u, 20.0f * l.u, theme::kBossBar, font::Align::Center, 3.0f * l.u);
+    // An Endless return shows its number, so the player can tell this one is stronger.
+    char name[48];
+    if (run.bossesKilled > 0) std::snprintf(name, sizeof(name), "%s  #%d", kBossName, run.bossesKilled + 1);
+    else std::snprintf(name, sizeof(name), "%s", kBossName);
+    textShadowed(name, l.centerX(), y - 26.0f * l.u, 20.0f * l.u, theme::kBossBar, font::Align::Center, 3.0f * l.u);
     bar(Rectangle{x, y, width, height}, run.bossHpFraction, theme::kBossBar, theme::kBossBarBack);
     // Notches where the boss changes its attacks.
     const float notches[2] = {balance::kBossPhase2HpFraction, balance::kBossPhase3HpFraction};
@@ -231,8 +235,7 @@ HudPresses drawHud(const GameState& state, float hintAlpha, bool playing) {
     drawPassiveSlots(state, l.left, weaponY + weaponSlotsHeight(weaponSlot) + 6.0f * u, passiveSlot);
 
     // Timer, top center.
-    const int seconds = static_cast<int>(state.timeSeconds());
-    std::snprintf(buffer, sizeof(buffer), "%d:%02d", seconds / 60, seconds % 60);
+    formatClock(buffer, sizeof(buffer), state.timeSeconds());
     textShadowed(buffer, l.centerX(), rowY - 6.0f * u, 34.0f * u, theme::kUiText, font::Align::Center);
 
     // Pause button and kills, top right.

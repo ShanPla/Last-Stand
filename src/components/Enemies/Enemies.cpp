@@ -253,7 +253,7 @@ Enemy* spawn(GameState& state, EnemyType type, Vec2 pos, bool elite) {
     // The boss waits one full interval before its first attack, so it can walk in.
     // Its attack cycle starts from the top, with the move set of the run's difficulty.
     if (isBoss) {
-        enemy->timer = balance::bossMoves(state.run.difficulty).attackInterval[0];
+        enemy->timer = balance::bossMovesFor(state.run).attackInterval[0];
         state.run.bossStep = 0;
         state.run.bossRepeat = 0;
     }
@@ -369,10 +369,8 @@ void removeDead(GameState& state) {
         const balance::EnemyStats& stats = balance::kEnemyStats[static_cast<int>(dead.type)];
         pickups::dropGem(state, dead.pos, stats.xp * (dead.elite ? balance::kElite_XpMult : 1));
         if (dead.type == EnemyType::Boss) {
-            // Killing the boss wins the run, unless the player also died in this step
-            // (see sim::step). It drops no pickup, because the run is over.
-            state.run.bossHpFraction = 0.0f;
-            state.run.phase = RunPhase::Won;
+            // A win in Story, the run goes on in Endless. It drops no pickup either way.
+            onBossKilled(state);
             pushEvent(state, EventType::BossKilled, dead.pos, dead.radius, static_cast<uint8_t>(dead.type));
             continue;
         }

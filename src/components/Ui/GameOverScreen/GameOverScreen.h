@@ -8,7 +8,9 @@ namespace ls::ui {
 struct RunSummary {
     bool won = false;
     Difficulty difficulty = Difficulty::Normal;  // New-best marks compare within this level only.
+    RunMode mode = RunMode::Story;               // And within this mode.
     float timeSeconds = 0.0f;
+    int bossesKilled = 0;  // Shown for Endless only.
     int kills = 0;
     int level = 1;
     float damageByWeapon[static_cast<int>(WeaponId::Count)] = {};

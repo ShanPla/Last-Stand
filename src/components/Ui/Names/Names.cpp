@@ -31,6 +31,17 @@ const char* difficultyName(Difficulty level) {
 
 const char* const* difficultyNames() { return kDifficultyNames; }
 
+namespace {
+const char* const kModeNames[static_cast<int>(RunMode::Count)] = {"Story", "Endless"};
+}  // namespace
+
+const char* modeName(RunMode mode) {
+    const int index = static_cast<int>(mode);
+    return index >= 0 && index < static_cast<int>(RunMode::Count) ? kModeNames[index] : "";
+}
+
+const char* const* modeNames() { return kModeNames; }
+
 const char* slotName(const WeaponSlot& slot) {
     if (slot.evolved) {
         for (const balance::Evolution& evolution : balance::kEvolutions) {

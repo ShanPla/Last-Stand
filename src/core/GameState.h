@@ -182,10 +182,14 @@ struct Card {
 
 enum class RunPhase : uint8_t { Playing, LevelUp, Won, Dead };
 enum class Difficulty : uint8_t { Easy, Normal, Hard, Hell, Count };
+// Story ends with the boss at 10:00. Endless brings the boss back every 10 minutes and
+// only ends when the player dies.
+enum class RunMode : uint8_t { Story, Endless, Count };
 
 struct RunState {
     RunPhase phase = RunPhase::Playing;
     Difficulty difficulty = Difficulty::Normal;
+    RunMode mode = RunMode::Story;
     maps::MapId map = maps::kDefaultMap;  // Decides where the solid cars stand.
     uint64_t seed = 0;
     uint32_t tick = 0;       // Steps played. Does not advance during level-up.
@@ -200,11 +204,14 @@ struct RunState {
     int nextEliteEvent = 0;
     int nextPickupDropKills = 0;
     float bladeAngle = 0.0f;
-    bool bossSpawned = false;
+    bool bossSpawned = false;  // A boss is in the fight now. In Endless it goes back to false when the boss dies.
     uint8_t bossPhase = 0;
     uint8_t bossStep = 0;    // Which attack of the phase's cycle comes next. See balance::kBossMoves.
     uint8_t bossRepeat = 0;  // Parts left of a many-part attack: dashes, trail bursts or spiral volleys.
     float bossHpFraction = 0.0f;  // Copied each step, for the HUD boss bar.
+    // Endless only. A Story run never changes or reads these, so they stay 0 there.
+    int bossesKilled = 0;          // Also says how strong the next boss is: 0 is the first one.
+    uint32_t lastBossKillTick = 0;  // The waves start their loop again from here.
     int debugEnemyTarget = 0;     // Debug stress test only.
     int debugProjectileTarget = 0;
     // Cars the boss has flattened, oldest first. It only grows during a run, so anyone who

@@ -5,6 +5,8 @@
 
 #include "raylib.h"
 
+#include <cstddef>
+
 // Shared building blocks for every screen: sizes that scale with the window,
 // buttons, sliders, bars, and keyboard, gamepad and pointer navigation.
 //
@@ -55,6 +57,9 @@ void consumePresses();
 // When false, no button reacts. Used for the short delay that stops accidental presses.
 void setInputEnabled(bool enabled);
 bool inputEnabled();
+
+// A run clock: M:SS, and H:MM:SS from one hour on, so a long Endless run never shows 75:00.
+void formatClock(char* out, size_t size, float seconds);
 
 // Prompts for whichever device was used last. Empty for touch.
 bool showPrompts();

@@ -11,7 +11,8 @@ namespace {
 
 using balance::BossAttack;
 
-const balance::BossMoves& movesOf(const GameState& state) { return balance::bossMoves(state.run.difficulty); }
+// Story uses the run's difficulty. An Endless return may use a harder set. See balance::bossMoveSet.
+const balance::BossMoves& movesOf(const GameState& state) { return balance::bossMovesFor(state.run); }
 
 // Phase follows the boss's HP. It only ever goes up, and moves one step at a
 // time, so a big hit that skips a phase still sends every phase event.
@@ -166,6 +167,25 @@ Vec2 walk(const GameState& state, const Enemy& boss) {
 }
 
 }  // namespace
+
+void onBossKilled(GameState& state) {
+    RunState& run = state.run;
+    run.bossHpFraction = 0.0f;
+    if (run.mode != RunMode::Endless) {
+        // Killing the boss wins a Story run, unless the player also died in this step (see sim::step).
+        run.phase = RunPhase::Won;
+        return;
+    }
+    // Endless goes on. The waves start their loop again from now, and the next boss is
+    // one step stronger. See waves::update for when it comes.
+    run.bossSpawned = false;
+    run.bossPhase = 0;
+    run.bossStep = 0;
+    run.bossRepeat = 0;
+    run.bossesKilled++;
+    run.lastBossKillTick = run.tick;
+    run.nextEliteEvent = balance::firstLoopElite();
+}
 
 balance::BossAttack nextBossAttack(const GameState& state) {
     const balance::BossCycle& cycle = movesOf(state).cycles[state.run.bossPhase];

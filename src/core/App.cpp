@@ -76,6 +76,7 @@ enum DebugCommand {
     kCarCover = 44,      // 0 stops cars hiding what stands behind them, for comparing pictures.
     kCrushNearestCar = 45,  // Flattens the car nearest the soldier.
     kBossBesideCar = 46,    // The boss about to walk over a car, with the simulation running.
+    kKillBoss = 47,         // Takes the boss's HP away, so the next step kills it as a last hit would.
 };
 
 // Which screen is showing. Level-up is not here: it is a phase of a running game.
@@ -205,7 +206,7 @@ void startDemo() {
 void startRun(uint64_t seed) {
     worldview::setFixedDayTime(-1.0f);
     effects::reset();
-    sim::newRun(*g_state, seed != 0 ? seed : pickSeed(), save::current().difficulty, selectedMap());
+    sim::newRun(*g_state, seed != 0 ? seed : pickSeed(), save::current().difficulty, selectedMap(), save::current().mode);
     g_inDemo = false;
     g_accumulator = 0.0f;
     g_pendingChoice = ui::LevelUpChoice{};
@@ -246,21 +247,27 @@ void finishRun() {
     g_summary = ui::RunSummary{};
     g_summary.won = s.run.phase == RunPhase::Won;
     g_summary.difficulty = s.run.difficulty;
+    g_summary.mode = s.run.mode;
     g_summary.timeSeconds = s.timeSeconds();
+    g_summary.bossesKilled = s.run.bossesKilled;
     g_summary.kills = s.run.kills;
     g_summary.level = s.player.level;
     for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) g_summary.damageByWeapon[i] = s.run.damageByWeapon[i];
 
-    // Best runs are kept per level, so a new best only means something on the same level.
-    BestRun& best = save::current().bestFor(s.run.difficulty);
-    g_summary.newBestTime = g_summary.timeSeconds > best.bestTimeSeconds;
-    g_summary.newBestKills = g_summary.kills > best.mostKills;
-    g_summary.newBestLevel = g_summary.level > best.highestLevel;
-    best.bestTimeSeconds = std::max(best.bestTimeSeconds, g_summary.timeSeconds);
-    best.mostKills = std::max(best.mostKills, g_summary.kills);
-    best.highestLevel = std::max(best.highestLevel, g_summary.level);
-    if (g_summary.won) best.wins++;
-    best.runs++;
+    // Best runs are kept per level and mode, so a new best only means something on the same
+    // level and mode.
+    save::FinishedRun finished;
+    finished.mode = s.run.mode;
+    finished.difficulty = s.run.difficulty;
+    finished.timeSeconds = g_summary.timeSeconds;
+    finished.kills = g_summary.kills;
+    finished.level = g_summary.level;
+    finished.bossesKilled = g_summary.bossesKilled;
+    finished.won = g_summary.won;
+    const save::NewBests beaten = save::recordRun(save::current(), finished);
+    g_summary.newBestTime = beaten.time;
+    g_summary.newBestKills = beaten.kills;
+    g_summary.newBestLevel = beaten.level;
     persist();
 
     ui::resetGameOverScreen();
@@ -403,9 +410,10 @@ static void drawUiPass(float dtReal, bool playing) {
             ui::setFade(screenFade);
             const Difficulty before = save::current().difficulty;
             const int mapBefore = save::current().map;
+            const RunMode modeBefore = save::current().mode;
             const ui::TitleAction action = ui::drawTitleScreen(save::current());
             // The choice is kept at once, so it is there next time even if the page closes now.
-            if (save::current().difficulty != before || save::current().map != mapBefore) persist();
+            if (save::current().difficulty != before || save::current().map != mapBefore || save::current().mode != modeBefore) persist();
             if (save::current().map != mapBefore) sim::setMap(*g_state, selectedMap());
             if (action == ui::TitleAction::Play) startRun(0);
             else if (action == ui::TitleAction::Settings) openSettings(Screen::Title);
@@ -592,13 +600,15 @@ const char* queryState() {
                   "{\"phase\":%d,\"tick\":%u,\"kills\":%d,\"level\":%d,\"hp\":%.1f,\"x\":%.1f,\"y\":%.1f,"
                   "\"enemies\":%d,\"shots\":%d,\"bullets\":%d,\"gems\":%d,\"offers\":%d,\"rerolls\":%d,"
                   "\"fps\":%d,\"frameMs\":%.2f,\"simMs\":%.3f,\"drawMs\":%.3f,\"width\":%d,\"height\":%d,\"dashLeft\":%.3f,\"dashCooldown\":%.2f,"
-                  "\"dashX\":%.3f,\"dashY\":%.3f,\"difficulty\":%d,\"hash\":\"%llx\"}",
+                  "\"dashX\":%.3f,\"dashY\":%.3f,\"difficulty\":%d,\"mode\":%d,\"bossesKilled\":%d,\"bossSpawned\":%d,"
+                  "\"bossHp\":%.3f,\"hash\":\"%llx\"}",
                   static_cast<int>(s.run.phase), s.run.tick, s.run.kills, s.player.level, static_cast<double>(s.player.hp),
                   static_cast<double>(s.player.pos.x), static_cast<double>(s.player.pos.y), s.enemies.count, s.projectiles.count,
                   s.enemyBullets.count, s.gems.count, s.run.offerCount, s.run.rerollsLeft, GetFPS(),
                   static_cast<double>(g_frameMs), static_cast<double>(g_simMs), static_cast<double>(g_drawMs),
                   GetScreenWidth(), GetScreenHeight(), static_cast<double>(s.player.dashLeft), static_cast<double>(s.player.dashCooldown),
                   static_cast<double>(s.player.dashDir.x), static_cast<double>(s.player.dashDir.y), static_cast<int>(s.run.difficulty),
+                  static_cast<int>(s.run.mode), s.run.bossesKilled, s.run.bossSpawned ? 1 : 0, static_cast<double>(s.run.bossHpFraction),
                   static_cast<unsigned long long>(sim::stateHash(s)));
     return json;
 }
@@ -609,7 +619,7 @@ const char* queryUi() {
     static char json[8192];
     const Settings& st = save::current().settings;
     const SaveData& saved = save::current();
-    const BestRun& best = saved.bestFor(saved.difficulty);  // For the level the title has selected.
+    const BestRun& best = saved.bestFor(saved.mode, saved.difficulty);  // For the level and mode the title has selected.
     const char* devices[] = {"keyboard", "gamepad", "touch", "mouse"};
     const platform::SafeInsets insets = platform::safeInsets();
     int n = std::snprintf(json, sizeof(json),
@@ -618,7 +628,9 @@ const char* queryUi() {
                           "\"bestTime\":%.1f,\"bestKills\":%d,\"bestLevel\":%d,\"wins\":%d,\"runs\":%d,"
                           "\"joystick\":%d,\"won\":%d,\"newBest\":%d,\"moveTime\":%.2f,\"safe\":[%.1f,%.1f,%.1f,%.1f],"
                           "\"safeRect\":[%.1f,%.1f,%.1f,%.1f],\"selected\":\"%s\",\"difficulty\":%d,\"map\":%d,\"summaryDifficulty\":%d,"
-                          "\"audio\":%d,\"duck\":%.3f,\"fontBytes\":%d,"
+                          "\"audio\":%d,\"duck\":%.3f,\"fontBytes\":%d,\"mode\":%d,\"summaryMode\":%d,\"summaryBosses\":%d,"
+                          "\"summaryTime\":%.1f,\"newBestTime\":%d,\"newBestKills\":%d,\"newBestLevel\":%d,"
+                          "\"endlessBests\":[[%.1f,%d,%d,%d,%d],[%.1f,%d,%d,%d,%d],[%.1f,%d,%d,%d,%d],[%.1f,%d,%d,%d,%d]],"
                           "\"bests\":[[%.1f,%d,%d,%d,%d],[%.1f,%d,%d,%d,%d],[%.1f,%d,%d,%d,%d],[%.1f,%d,%d,%d,%d]],\"buttons\":[",
                           screenName(), g_inDemo ? 1 : 0, devices[static_cast<int>(g_input.lastDevice)], GetScreenWidth(), GetScreenHeight(),
                           static_cast<double>(ui::u()), static_cast<double>(st.musicVolume), static_cast<double>(st.effectsVolume),
@@ -631,6 +643,13 @@ const char* queryUi() {
                           static_cast<double>(ui::layout().right), static_cast<double>(ui::layout().bottom), ui::selectedName(),
                           static_cast<int>(saved.difficulty), saved.map, static_cast<int>(g_summary.difficulty),
                           audio::isRunning() ? 1 : 0, static_cast<double>(audio::duckLevel()), font::memoryBytes(),
+                          static_cast<int>(saved.mode), static_cast<int>(g_summary.mode), g_summary.bossesKilled,
+                          static_cast<double>(g_summary.timeSeconds), g_summary.newBestTime ? 1 : 0, g_summary.newBestKills ? 1 : 0,
+                          g_summary.newBestLevel ? 1 : 0,
+                          static_cast<double>(saved.endlessBest[0].bestTimeSeconds), saved.endlessBest[0].mostKills, saved.endlessBest[0].highestLevel, saved.endlessBest[0].mostBosses, saved.endlessBest[0].runs,
+                          static_cast<double>(saved.endlessBest[1].bestTimeSeconds), saved.endlessBest[1].mostKills, saved.endlessBest[1].highestLevel, saved.endlessBest[1].mostBosses, saved.endlessBest[1].runs,
+                          static_cast<double>(saved.endlessBest[2].bestTimeSeconds), saved.endlessBest[2].mostKills, saved.endlessBest[2].highestLevel, saved.endlessBest[2].mostBosses, saved.endlessBest[2].runs,
+                          static_cast<double>(saved.endlessBest[3].bestTimeSeconds), saved.endlessBest[3].mostKills, saved.endlessBest[3].highestLevel, saved.endlessBest[3].mostBosses, saved.endlessBest[3].runs,
                           static_cast<double>(saved.best[0].bestTimeSeconds), saved.best[0].mostKills, saved.best[0].highestLevel, saved.best[0].wins, saved.best[0].runs,
                           static_cast<double>(saved.best[1].bestTimeSeconds), saved.best[1].mostKills, saved.best[1].highestLevel, saved.best[1].wins, saved.best[1].runs,
                           static_cast<double>(saved.best[2].bestTimeSeconds), saved.best[2].mostKills, saved.best[2].highestLevel, saved.best[2].wins, saved.best[2].runs,
@@ -774,6 +793,11 @@ void debugCommand(int command, int value) {
         case kCarCover: worldview::setCarCover(value != 0); break;
         case kCrushNearestCar: worldview::crushNearestCar(s); break;
         case kBossBesideCar: worldview::placeBossBesideCar(s); break;
+        case kKillBoss:
+            for (Enemy& enemy : s.enemies) {
+                if (enemy.type == EnemyType::Boss) enemy.hp = 0.0f;
+            }
+            break;
         case kSetDashCooldown: s.player.dashCooldown = balance::kDashCooldownSeconds * static_cast<float>(value) / 100.0f; break;
         case kLevelUp:
             if (!g_inDemo) upgrades::addXp(s, std::max(1, s.player.xpToNext - s.player.xp));

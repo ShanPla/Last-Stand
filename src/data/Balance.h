@@ -2,6 +2,8 @@
 
 #include "core/GameState.h"
 
+#include <cmath>
+
 // Every balance number in the game lives in this file, so tuning never needs a
 // logic change. Times are seconds, distances are world units, and speeds are
 // world units per second. The camera shows about 1280 world units on the long
@@ -554,6 +556,50 @@ inline constexpr EliteEvent kEliteEvents[] = {
     {330, EnemyType::Brute},  {390, EnemyType::Charger},  {450, EnemyType::Bloater}, {510, EnemyType::Brute},
     {555, EnemyType::Charger}, {585, EnemyType::Brute},
 };
+
+// --- Endless -----------------------------------------------------------------
+// Endless plays exactly the Story run up to the first boss, then keeps going. Between
+// bosses the waves replay the table's 6:00 to 10:00 stretch over and over. That stretch
+// has its own breather at 8:00, and the jump from its peak back to 6:00 is a calmer
+// moment too. What stops a run lasting forever is growth: every minute past 10:00 makes
+// zombies tougher, harder hitting and more frequent, and each boss return is stronger.
+inline constexpr float kEndlessBossEverySeconds = kRunSeconds;  // The boss returns at 20:00, 30:00 and so on.
+inline constexpr float kEndlessBreakSeconds = 60.0f;  // At least this long from a boss dying to the next one.
+inline constexpr float kEndlessLoopStartSec = 360.0f;  // The part of kWaves replayed between bosses.
+inline constexpr float kEndlessLoopEndSec = kRunSeconds;
+inline constexpr float kEndlessBossHpGrowth = 1.5f;     // Each return has this many times the HP of the one before.
+inline constexpr int kEndlessMoveSetStep = 1;           // Each return uses this many harder move sets, up to Hell's.
+inline constexpr float kEndlessHpGrowthPerMinute = 1.08f;     // Zombie HP is multiplied by this for each minute past 10:00.
+inline constexpr float kEndlessDamagePerMinute = 0.04f;       // Zombie hits grow by this share of their 10:00 value each minute.
+inline constexpr float kEndlessSpawnPerMinute = 0.04f;        // Spawn rates grow by this share each minute past 10:00.
+
+// Minutes past the first boss's arrival. Growth is 0 before it, so Endless matches Story there.
+inline constexpr float endlessMinutes(float seconds) { return seconds > kRunSeconds ? (seconds - kRunSeconds) / 60.0f : 0.0f; }
+// Exponential, so no build can keep up for ever, however strong.
+inline float endlessHpGrowth(float seconds) { return std::pow(kEndlessHpGrowthPerMinute, endlessMinutes(seconds)); }
+inline constexpr float endlessDamageGrowth(float seconds) { return 1.0f + kEndlessDamagePerMinute * endlessMinutes(seconds); }
+inline constexpr float endlessSpawnGrowth(float seconds) { return 1.0f + kEndlessSpawnPerMinute * endlessMinutes(seconds); }
+inline float endlessBossHpGrowth(int bossesKilled) { return std::pow(kEndlessBossHpGrowth, static_cast<float>(bossesKilled)); }
+
+// The first elite of the replayed stretch. Each pass of the loop starts its elites from here.
+inline constexpr int firstLoopElite() {
+    int index = 0;
+    while (index < static_cast<int>(sizeof(kEliteEvents) / sizeof(kEliteEvents[0])) && kEliteEvents[index].timeSec < kEndlessLoopStartSec) ++index;
+    return index;
+}
+
+// Which move set the boss fights with. Story always uses the run's difficulty. In Endless
+// each return steps up, and Hell's set is the hardest there is.
+inline constexpr Difficulty bossMoveSet(Difficulty difficulty, RunMode mode, int bossesKilled) {
+    if (mode != RunMode::Endless) return difficulty;
+    const int set = static_cast<int>(difficulty) + bossesKilled * kEndlessMoveSetStep;
+    const int hardest = static_cast<int>(Difficulty::Hell);
+    return static_cast<Difficulty>(set < hardest ? set : hardest);
+}
+inline constexpr const BossMoves& bossMovesFor(const RunState& run) { return bossMoves(bossMoveSet(run.difficulty, run.mode, run.bossesKilled)); }
+
+static_assert(kEndlessLoopStartSec < kEndlessLoopEndSec && kEndlessLoopEndSec <= kRunSeconds, "the Endless loop must lie inside the wave table");
+static_assert(kEndlessBossHpGrowth >= 1.0f && kEndlessHpGrowthPerMinute > 1.0f, "Endless must get harder, or a run could last for ever");
 
 // --- Pickups and gems ---------------------------------------------------------
 inline constexpr float kGemAttractSpeed = 520.0f;

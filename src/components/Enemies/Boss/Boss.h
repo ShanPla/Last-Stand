@@ -25,6 +25,9 @@ inline bool bossCharging(const Enemy& boss) {
 // Updates the boss phase and HP bar, walks, and starts or runs its attacks.
 Vec2 bossVelocity(GameState& state, Enemy& enemy);
 
+// What the boss's death means for the run: a win in Story, the next stretch of waves in Endless.
+void onBossKilled(GameState& state);
+
 // Starts this attack at once, as if the cycle had reached it. For tests and debug scenes.
 void startBossAttack(GameState& state, Enemy& boss, balance::BossAttack attack);
 

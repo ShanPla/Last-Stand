@@ -120,8 +120,9 @@ void drawBuild(const GameState& state, Rectangle r, bool showStats, float rowHei
 
     // Run summary line.
     char buffer[96];
-    const int seconds = static_cast<int>(state.timeSeconds());
-    std::snprintf(buffer, sizeof(buffer), "%d:%02d    %d kills    LV %d    HP %d/%d", seconds / 60, seconds % 60, state.run.kills, player.level,
+    char clock[16];
+    formatClock(clock, sizeof(clock), state.timeSeconds());
+    std::snprintf(buffer, sizeof(buffer), "%s    %d kills    LV %d    HP %d/%d", clock, state.run.kills, player.level,
                   static_cast<int>(std::ceil(std::max(0.0f, player.hp))), static_cast<int>(player.maxHp));
     const float summarySize = font::fitSize(buffer, 20.0f * u, r.width - pad * 2.0f);
     text(buffer, r.x + pad, y, summarySize, theme::kUiText);

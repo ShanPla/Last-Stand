@@ -65,7 +65,8 @@ test('the title starts on Play with Normal chosen, and the selector sits second 
   const names = ui.buttons.map((b) => b.n);
   const top = (name) => ui.buttons.find((b) => b.n === name).y;
   assert.ok(names.includes('Difficulty') && names.includes('Difficulty <') && names.includes('Difficulty >'));
-  assert.ok(top('PLAY') < top('Difficulty') && top('Difficulty') < top('Settings') && top('Settings') < top('How to Play'));
+  // With three selector rows, Settings and How to Play may share the last row.
+  assert.ok(top('PLAY') < top('Difficulty') && top('Difficulty') < top('Settings') && top('Settings') <= top('How to Play'));
   // Left and right do nothing while Play has the focus.
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowLeft');
@@ -103,6 +104,8 @@ test('keyboard: left and right change the level while the selector has focus, an
   // The focus moves on as normal.
   await page.keyboard.press('ArrowDown');
   await waitSelected(page, 'Map');
+  await page.keyboard.press('ArrowDown');
+  await waitSelected(page, 'Mode');
   await page.keyboard.press('ArrowDown');
   await waitSelected(page, 'Settings');
   await page.keyboard.press('ArrowRight');

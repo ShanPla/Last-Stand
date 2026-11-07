@@ -602,4 +602,8 @@ inline constexpr Color kDifficultyColors[4] = {kDifficultyEasy, kDifficultyNorma
 // --- Map selector ---
 inline constexpr Color kMapColors[2] = {Color{176, 170, 190, 255}, Color{226, 178, 104, 255}};
 
+// --- Mode selector (title, game over) ---
+// Story keeps the plain text color. Endless is a cool violet: a reward color, never a threat.
+inline constexpr Color kModeColors[2] = {kDifficultyNormal, Color{176, 150, 255, 255}};  // Indexed by RunMode.
+
 }  // namespace ls::theme

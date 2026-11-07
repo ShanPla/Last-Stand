@@ -44,13 +44,14 @@ void applyStressTargets(GameState& state) {
 
 }  // namespace
 
-void newRun(GameState& state, uint64_t seed, Difficulty difficulty, maps::MapId map) {
+void newRun(GameState& state, uint64_t seed, Difficulty difficulty, maps::MapId map, RunMode mode) {
     state.rng = Rng{};
     state.rng.seed(seed);
     state.run = RunState{};
     state.run.seed = seed;
     state.run.difficulty = difficulty;
     state.run.map = map;
+    state.run.mode = mode;
     state.run.rerollsLeft = balance::kStartingRerolls;
     state.run.nextPickupDropKills = balance::kKillsPerPickupDrop;
     state.enemies.clear();
@@ -184,6 +185,14 @@ uint64_t stateHash(const GameState& state) {
     for (int i = 0; i < run.crushedCount; ++i) {
         mix(run.crushed[i].texelX);
         mix(run.crushed[i].texelY);
+    }
+    // The Endless fields are only mixed in for an Endless run. A Story run never reads them,
+    // and leaving them out keeps every Story fingerprint exactly what it was before Endless
+    // existed, so a test can compare Story runs with hashes recorded back then.
+    if (run.mode != RunMode::Story) {
+        mix(run.mode);
+        mix(run.bossesKilled);
+        mix(run.lastBossKillTick);
     }
 
     const Player& player = state.player;

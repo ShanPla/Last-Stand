@@ -245,7 +245,7 @@ bool lineCouldShow(const View& view, const ScreenPoint& a, const ScreenPoint& b)
 // so the moment it fires can be read. Each arm is tested on its own, so the warning
 // shows even when the boss stands outside the picture.
 bool drawSpiralArms(const View& view, const GameState& state, const Enemy& boss, Vec2 worldFeet, float timeLeft) {
-    const balance::BossMoves& moves = balance::bossMoves(state.run.difficulty);
+    const balance::BossMoves& moves = balance::bossMovesFor(state.run);
     const int phase = std::min<int>(state.run.bossPhase, 2);
     const int arms = moves.spiralArms[phase];
     const float reach = boss.radius * 1.4f + kSpiralArmLength * (1.0f - 0.4f * timeLeft);
@@ -314,7 +314,7 @@ bool drawTelegraph(const View& view, const GameState& state, const Enemy& enemy,
 
     if (enemy.type == EnemyType::Boss && enemies::bossCharging(enemy)) {
         // The ring tightens as the timer runs out, so the moment of attack can be read.
-        const float t = clampf(enemy.timer / balance::bossMoves(state.run.difficulty).telegraphSeconds, 0.0f, 1.0f);
+        const float t = clampf(enemy.timer / balance::bossMovesFor(state.run).telegraphSeconds, 0.0f, 1.0f);
         const float radius = enemy.radius * (1.3f + 1.2f * t);
         const ScreenPoint a = project(view, worldFeet);
         // Generous, because perspective swells the near half of a ring.

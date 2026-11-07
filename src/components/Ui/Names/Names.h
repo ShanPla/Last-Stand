@@ -11,6 +11,9 @@ const char* passiveName(PassiveId id);
 // "Easy", "Normal", "Hard" or "Hell". The same list feeds the title selector.
 const char* difficultyName(Difficulty level);
 const char* const* difficultyNames();
+// "Story" or "Endless". The same list feeds the title selector.
+const char* modeName(RunMode mode);
+const char* const* modeNames();
 
 // The weapon name, or the evolution name once it has evolved.
 const char* slotName(const WeaponSlot& slot);

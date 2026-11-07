@@ -25,6 +25,9 @@ static_assert(static_cast<int>(Difficulty::Easy) == 0 && static_cast<int>(Diffic
 constexpr std::string_view kEasyPrefix = "easy.";
 constexpr std::string_view kHardPrefix = "hard.";
 constexpr std::string_view kHellPrefix = "hell.";
+// Endless best runs put this in front of the level prefix, so "endless.hard.bestTime". An
+// older save has no such keys, and its runs all stay Story's.
+constexpr std::string_view kEndlessPrefix = "endless.";
 
 // Parses a whole token as a finite number. Rejects NaN, infinity, and trailing junk.
 bool parseNumber(std::string_view token, double* out) {
@@ -76,9 +79,20 @@ void applyBestKey(BestRun& best, std::string_view key, std::string_view value) {
     else if (key == "highestLevel") readInt(value, 0, kMaxLevel, &best.highestLevel);
     else if (key == "wins") readInt(value, 0, kMaxCount, &best.wins);
     else if (key == "runs") readInt(value, 0, kMaxCount, &best.runs);
+    else if (key == "bosses") readInt(value, 0, kMaxCount, &best.mostBosses);
 }
 
 bool startsWith(std::string_view text, std::string_view prefix) { return text.substr(0, prefix.size()) == prefix; }
+
+// A best-run key into one table of levels. Normal keeps the plain names an older save
+// already uses. The other levels add a prefix.
+void applyLevelKey(BestRun* table, std::string_view key, std::string_view value) {
+    const auto at = [table](Difficulty level) -> BestRun& { return table[static_cast<int>(level)]; };
+    if (startsWith(key, kEasyPrefix)) applyBestKey(at(Difficulty::Easy), key.substr(kEasyPrefix.size()), value);
+    else if (startsWith(key, kHellPrefix)) applyBestKey(at(Difficulty::Hell), key.substr(kHellPrefix.size()), value);
+    else if (startsWith(key, kHardPrefix)) applyBestKey(at(Difficulty::Hard), key.substr(kHardPrefix.size()), value);
+    else applyBestKey(at(Difficulty::Normal), key, value);
+}
 
 void applyKey(SaveData& data, std::string_view key, std::string_view value) {
     if (key == "music") readFloat(value, 0.0f, 1.0f, &data.settings.musicVolume);
@@ -95,23 +109,26 @@ void applyKey(SaveData& data, std::string_view key, std::string_view value) {
     // The map list can grow, so only the range of a byte is checked here. The app turns
     // the number into a real map, with an unknown one falling back to the default.
     else if (key == "map") readInt(value, 0, 255, &data.map);
-    // Normal keeps the plain names an older save already uses. The other levels add a prefix.
-    else if (startsWith(key, kEasyPrefix)) applyBestKey(data.bestFor(Difficulty::Easy), key.substr(kEasyPrefix.size()), value);
-    else if (startsWith(key, kHellPrefix)) applyBestKey(data.bestFor(Difficulty::Hell), key.substr(kHellPrefix.size()), value);
-    else if (startsWith(key, kHardPrefix)) applyBestKey(data.bestFor(Difficulty::Hard), key.substr(kHardPrefix.size()), value);
-    else applyBestKey(data.bestFor(Difficulty::Normal), key, value);
+    else if (key == "mode") {
+        int mode = static_cast<int>(data.mode);
+        readInt(value, 0, static_cast<int>(RunMode::Count) - 1, &mode);
+        data.mode = static_cast<RunMode>(mode);
+    }
+    else if (startsWith(key, kEndlessPrefix)) applyLevelKey(data.endlessBest, key.substr(kEndlessPrefix.size()), value);
+    else applyLevelKey(data.best, key, value);
     // Unknown keys are ignored, so a save from a newer version still loads.
 }
 
 }  // namespace
 
 std::string serialize(const SaveData& data) {
-    char buffer[1024];
+    char buffer[2048];
     int n = std::snprintf(buffer, sizeof(buffer),
-                          "version=%d\nmusic=%.3f\neffects=%.3f\nshake=%.3f\nflash=%.3f\ndamageNumbers=%d\nreducedMotion=%d\ndifficulty=%d\nmap=%d\n",
+                          "version=%d\nmusic=%.3f\neffects=%.3f\nshake=%.3f\nflash=%.3f\ndamageNumbers=%d\nreducedMotion=%d\ndifficulty=%d\nmap=%d\nmode=%d\n",
                           kSaveVersion, static_cast<double>(data.settings.musicVolume), static_cast<double>(data.settings.effectsVolume),
                           static_cast<double>(data.settings.screenShake), static_cast<double>(data.settings.flashIntensity),
-                          data.settings.damageNumbers ? 1 : 0, data.settings.reducedMotion ? 1 : 0, static_cast<int>(data.difficulty), data.map);
+                          data.settings.damageNumbers ? 1 : 0, data.settings.reducedMotion ? 1 : 0, static_cast<int>(data.difficulty), data.map,
+                          static_cast<int>(data.mode));
     const char* const prefixes[kDifficultyCount] = {"easy.", "", "hard.", "hell."};
     for (int level = 0; level < kDifficultyCount && n > 0 && n < static_cast<int>(sizeof(buffer)); ++level) {
         const BestRun& best = data.best[level];
@@ -119,6 +136,14 @@ std::string serialize(const SaveData& data) {
         n += std::snprintf(buffer + n, sizeof(buffer) - static_cast<size_t>(n),
                            "%sbestTime=%.2f\n%smostKills=%d\n%shighestLevel=%d\n%swins=%d\n%sruns=%d\n", p, static_cast<double>(best.bestTimeSeconds), p,
                            best.mostKills, p, best.highestLevel, p, best.wins, p, best.runs);
+    }
+    // Endless has no wins, so it stores the bosses killed instead.
+    for (int level = 0; level < kDifficultyCount && n > 0 && n < static_cast<int>(sizeof(buffer)); ++level) {
+        const BestRun& best = data.endlessBest[level];
+        const char* p = prefixes[level];
+        n += std::snprintf(buffer + n, sizeof(buffer) - static_cast<size_t>(n),
+                           "endless.%sbestTime=%.2f\nendless.%smostKills=%d\nendless.%shighestLevel=%d\nendless.%sbosses=%d\nendless.%sruns=%d\n", p,
+                           static_cast<double>(best.bestTimeSeconds), p, best.mostKills, p, best.highestLevel, p, best.mostBosses, p, best.runs);
     }
     return std::string(buffer);
 }
@@ -146,15 +171,34 @@ SaveData parse(std::string_view text, const SaveData& fallback) {
 }
 
 void mergeBestRuns(SaveData& mine, const SaveData& stored) {
-    for (int level = 0; level < kDifficultyCount; ++level) {
-        BestRun& best = mine.best[level];
-        const BestRun& other = stored.best[level];
+    const auto merge = [](BestRun& best, const BestRun& other) {
         best.bestTimeSeconds = std::max(best.bestTimeSeconds, other.bestTimeSeconds);
         best.mostKills = std::max(best.mostKills, other.mostKills);
         best.highestLevel = std::max(best.highestLevel, other.highestLevel);
         best.wins = std::max(best.wins, other.wins);
         best.runs = std::max(best.runs, other.runs);
+        best.mostBosses = std::max(best.mostBosses, other.mostBosses);
+    };
+    for (int level = 0; level < kDifficultyCount; ++level) {
+        merge(mine.best[level], stored.best[level]);
+        merge(mine.endlessBest[level], stored.endlessBest[level]);
     }
+}
+
+NewBests recordRun(SaveData& data, const FinishedRun& run) {
+    BestRun& best = data.bestFor(run.mode, run.difficulty);
+    const bool endless = run.mode == RunMode::Endless;
+    NewBests beaten;
+    beaten.time = run.timeSeconds > best.bestTimeSeconds;
+    beaten.kills = !endless && run.kills > best.mostKills;
+    beaten.level = !endless && run.level > best.highestLevel;
+    best.bestTimeSeconds = std::max(best.bestTimeSeconds, run.timeSeconds);
+    best.mostKills = std::max(best.mostKills, run.kills);
+    best.highestLevel = std::max(best.highestLevel, run.level);
+    best.mostBosses = std::max(best.mostBosses, run.bossesKilled);
+    if (run.won) best.wins++;
+    best.runs++;
+    return beaten;
 }
 
 SaveData& current() {
