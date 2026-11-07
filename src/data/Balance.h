@@ -244,7 +244,9 @@ inline constexpr EnemyStats kEnemyStats[static_cast<int>(EnemyType::Count)] = {
     /* Bloater  */ {55, 62, 19, 10, 3, 0.7f},
     /* Crawler  */ {12, 115, 9, 5, 1, 1.2f},
     /* Charger  */ {60, 75, 16, 14, 4, 0.5f},
-    /* Boss     */ {65000, 72, 58, 30, 0, 0.0f},  // HP is replaced at spawn. See kBossHpAtReferenceDps.
+    // The boss HP below is only used when a test or debug scene spawns the boss directly. In a
+    // real run, waves::bossHpForBuild replaces it with a value fitted to the build.
+    /* Boss     */ {65000, 72, 58, 30, 0, 0.0f},
 };
 
 // Enemy HP grows with time, so upgrades do not make the late game trivial.
