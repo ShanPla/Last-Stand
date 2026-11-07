@@ -4,7 +4,8 @@
 
 namespace ls::enemies {
 
-// Returns nullptr when the pool is full.
+// Returns nullptr when the pool is full, except that an elite or the boss always gets a place:
+// the ordinary zombie farthest from the player is removed to make room for it.
 Enemy* spawn(GameState& state, EnemyType type, Vec2 pos, bool elite);
 
 // Moves every enemy, applies contact damage, and rebuilds the spatial hash.

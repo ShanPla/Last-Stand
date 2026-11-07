@@ -204,9 +204,37 @@ void settleAgainstCars(GameState& state) {
 
 }  // namespace
 
+// When the pool is full, an elite or the boss still has to arrive: an elite carries a
+// guaranteed reward and the boss ends the run. So the ordinary zombie farthest from the
+// player is removed to make room. It is the one least likely to matter, and its removal is
+// not a kill, so it gives no drop and no count. Equal distances go to the lower id, so the
+// choice never depends on where the pool happens to have put anyone. This is one pass over
+// the pool and runs only when the pool is full and one of these spawns, which is rare.
+static bool makeRoomFor(GameState& state) {
+    int victim = -1;
+    float victimDistSq = -1.0f;
+    for (int i = 0; i < state.enemies.count; ++i) {
+        const Enemy& candidate = state.enemies[i];
+        if (candidate.elite || candidate.type == EnemyType::Boss) continue;
+        const float distSq = distanceSq(candidate.pos, state.player.pos);
+        if (distSq > victimDistSq || (distSq == victimDistSq && candidate.id < state.enemies[victim].id)) {
+            victim = i;
+            victimDistSq = distSq;
+        }
+    }
+    if (victim < 0) return false;
+    state.enemies.removeAt(victim);
+    return true;
+}
+
 Enemy* spawn(GameState& state, EnemyType type, Vec2 pos, bool elite) {
     Enemy* enemy = state.enemies.add();
-    if (!enemy) return nullptr;
+    if (!enemy) {
+        // Ordinary spawns are dropped when full. That acts as a soft ceiling on the crowd.
+        if (!elite && type != EnemyType::Boss) return nullptr;
+        if (!makeRoomFor(state)) return nullptr;
+        enemy = state.enemies.add();
+    }
     const balance::EnemyStats& stats = balance::kEnemyStats[static_cast<int>(type)];
     const float seconds = state.timeSeconds();
     const bool isBoss = type == EnemyType::Boss;
