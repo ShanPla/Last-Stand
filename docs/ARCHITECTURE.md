@@ -823,9 +823,17 @@ inline constexpr DifficultyTuning kDifficulties[static_cast<int>(Difficulty::Cou
 };
 ```
 
-Hell spawns about twice as many zombies, so its crowds often reach the pool's limit of 2,400. When the pool is full, new spawns are simply skipped. That holds frame time steady, but it also means a scheduled elite can be lost then. With the processor slowed 4x at phone size, a full crowd averages 6.6 ms per frame, but about 5 percent of frames take longer than 16.7 ms.
+Hell spawns about twice as many zombies, so its crowds often reach the pool's limit of 2,400. When the pool is full, an ordinary new zombie is simply skipped, which holds frame time steady. An elite or the boss is never skipped: the ordinary zombie farthest from the player makes room for it, with ties going to the lower id so a replay stays the same.
+
+Hell is still the heaviest case for a weak phone. With the processor slowed 4x at phone size, a full crowd averages 6 to 8 ms of work per frame, but the slowest 1 percent take 15 to 18 ms. Measuring each part showed the cost is the simulation step at 2,400 zombies, about 7 ms there, not the drawing, so lowering visual quality would not help. A change that skipped music work on busy frames was tried and measured, showed no real gain, and was taken back out.
 
 The three numbers multiply zombie health (the boss included, through `bossHpForBuild`), the damage of every hit on the player (before armor), and the spawn rates in the wave table. The level is stored in `run.difficulty` when `sim::newRun` starts the run, and it is part of the state hash. The title screen has a selector for it, next to the map selector, under the Play button. Both are saved and start from the last choice, so Play is still one press. The best-run panel on the title screen shows the best run for the level that is selected.
+
+### Endless mode
+
+A third selector on the title screen picks Story or Endless, saved like the others, so Play stays one press. In Story nothing changed: a unit test compares run fingerprints with ones recorded before Endless existed. In Endless the boss arrives at every 10 minute mark, never sooner than 60 seconds after the last one died, and killing it is not a win. Each return has 1.5 times the health of the one before, and steps its move set up one level, capped at Hell's. Between bosses the waves loop the 6:00 to 10:00 stretch of the table, while zombie health grows 8 percent a minute, compounding, so every run ends eventually. All of these numbers are in the Endless section of [`Balance.h`](../src/data/Balance.h). The run state holds the mode, the bosses killed and when the last one died, and these are part of the state hash. A best Endless run is kept apart from Story, scored by time survived, and the game over screen shows time, bosses killed, kills and level.
+
+In bot runs on Normal, the Skilled bot gets past the first return in about 1 in 7 games, and no bot has reached the third boss at 30:00.
 
 ### The player's dash
 
@@ -1219,7 +1227,7 @@ The tests use [doctest](https://github.com/doctest/doctest) and run natively, wi
 | [`AudioTests.cpp`](../tests/unit/AudioTests.cpp) | 16 | Every sound is clean and ends in silence, music loops join without a click, layers, router limits |
 | [`TestMain.cpp`](../tests/unit/TestMain.cpp) | 2 | Random number generator |
 
-**Measured result.** The last full run passed **265 of 265** unit test cases.
+**Measured result.** The last full run passed **284 of 284** unit test cases.
 
 ### The determinism test
 
@@ -1288,7 +1296,7 @@ The tests also take a **real pixel check** ([`countColorNearCenter`](../tests/e2
 
 The functional tests run Chrome with a software renderer, so they check behavior, not speed. [`perf.mjs`](../tests/e2e/perf.mjs) is run by hand and uses the machine's real GPU.
 
-**Measured result.** The last full browser run passed **278 of 278** tests, with none skipped.
+**Measured result.** The last full browser run passed **288 of 288** tests, with none skipped.
 
 ### Performance
 
