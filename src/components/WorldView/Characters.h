@@ -8,7 +8,7 @@
 // projected, so these functions only care about which frame to show and where.
 namespace ls::worldview {
 
-void drawZombieShadow(const Enemy& enemy, const ScreenPoint& feet);
+void drawZombieShadow(const GameState& state, const Enemy& enemy, const ScreenPoint& feet);
 // A long sun shadow in the shape of the figure. Costs one more quad per figure.
 void drawZombieLongShadow(const GameState& state, const Enemy& enemy, const ScreenPoint& feet, const DayLook& look);
 void drawZombie(const GameState& state, const Enemy& enemy, const ScreenPoint& feet);

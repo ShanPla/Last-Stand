@@ -533,7 +533,7 @@ void draw(const GameState& state, float alpha) {
         const float away = std::abs(figure.feet.x - playerFigure.feet.x) + std::abs(figure.feet.y - playerFigure.feet.y);
         const bool wanted = zombies <= shadowBudget || away < kLongShadowNear || enemy.type == EnemyType::Boss;
         if (longShadows && wanted) drawZombieLongShadow(state, enemy, figure.feet, look);
-        drawZombieShadow(enemy, figure.feet);
+        drawZombieShadow(state, enemy, figure.feet);
     }
 
     setSpriteDepth(kDepthNearest);

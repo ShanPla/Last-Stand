@@ -177,8 +177,14 @@ bool figureTouchesTarget(const View& view, const GameState& state, const Enemy& 
     return left < view.width && left + zombie.sprite->w > 0 && top < view.height && top + zombie.sprite->h > 0;
 }
 
-void drawZombieShadow(const Enemy& enemy, const ScreenPoint& feet) {
+void drawZombieShadow(const GameState& state, const Enemy& enemy, const ScreenPoint& feet) {
     const SpriteRef& shadow = itemSprite(enemy.elite ? Item::ShadowHuge : shadowFor(enemy));
+    // Harder levels draw the boss bigger, so its shadow grows by the same amount. Otherwise
+    // the Hell boss looks like it floats over a shadow made for a smaller body.
+    if (enemy.type == EnemyType::Boss) {
+        spriteQuadScaled(shadow, roundToInt(feet.x), roundToInt(feet.y), bossArtScale(state.run.difficulty), kRowShadow, 0);
+        return;
+    }
     spriteQuad(shadow, roundToInt(feet.x), roundToInt(feet.y), false, kRowShadow, 0);
 }
 

@@ -111,6 +111,28 @@ inline void spriteQuad(const SpriteRef& ref, int x, int y, bool mirror, uint8_t 
     rlVertex3f(r, t, g_spriteZ);
 }
 
+// A sprite drawn larger or smaller around its own feet, which stay where they are. Used for
+// a shadow that must grow with a figure drawn bigger than its sprite.
+inline void spriteQuadScaled(const SpriteRef& ref, int x, int y, float scale, uint8_t row, uint8_t grade = 255, uint8_t alpha = 255) {
+    const float u0 = static_cast<float>(ref.x) * kAtlasTexel;
+    const float v0 = static_cast<float>(ref.y) * kAtlasTexel;
+    const float u1 = static_cast<float>(ref.x + ref.w) * kAtlasTexel;
+    const float v1 = static_cast<float>(ref.y + ref.h) * kAtlasTexel;
+    const float l = static_cast<float>(x) - static_cast<float>(ref.footX) * scale;
+    const float t = static_cast<float>(y) - static_cast<float>(ref.footY) * scale;
+    const float r = l + static_cast<float>(ref.w) * scale;
+    const float b = t + static_cast<float>(ref.h) * scale;
+    rlColor4ub(row, grade, 0, alpha);
+    rlTexCoord2f(u0, v0);
+    rlVertex3f(l, t, g_spriteZ);
+    rlTexCoord2f(u0, v1);
+    rlVertex3f(l, b, g_spriteZ);
+    rlTexCoord2f(u1, v1);
+    rlVertex3f(r, b, g_spriteZ);
+    rlTexCoord2f(u1, v0);
+    rlVertex3f(r, t, g_spriteZ);
+}
+
 // The same sprite, showing only the part inside a rectangle of the picture. That keeps a
 // figure's silhouette to the car it stands behind.
 inline void spriteQuadCropped(const SpriteRef& ref, int x, int y, bool mirror, uint8_t row, uint8_t grade, uint8_t alpha, uint8_t flash, float cropLeft, float cropTop, float cropRight, float cropBottom) {
