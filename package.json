@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "test:e2e": "node --test --test-concurrency=1 --test-timeout=300000 tests/e2e/*.test.mjs",
+    "test:server": "npm test --prefix server",
     "serve": "node tests/e2e/serve.mjs"
   },
   "devDependencies": {
