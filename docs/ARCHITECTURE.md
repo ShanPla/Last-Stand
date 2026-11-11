@@ -1247,7 +1247,7 @@ The tests use [doctest](https://github.com/doctest/doctest) and run natively, wi
 | [`AudioTests.cpp`](../tests/unit/AudioTests.cpp) | 16 | Every sound is clean and ends in silence, music loops join without a click, layers, router limits |
 | [`TestMain.cpp`](../tests/unit/TestMain.cpp) | 2 | Random number generator |
 
-**Measured result.** The last full run passed **342 of 342** unit test cases.
+**Measured result.** The last full run passed **361 of 361** unit test cases.
 
 ### The determinism test
 
@@ -1317,7 +1317,7 @@ The tests also take a **real pixel check** ([`countColorNearCenter`](../tests/e2
 
 The functional tests run Chrome with a software renderer, so they check behavior, not speed. [`perf.mjs`](../tests/e2e/perf.mjs) is run by hand and uses the machine's real GPU.
 
-**Measured result.** The last full browser run passed **326 of 326** tests, with none skipped. The 8 real-lobby tests in `coopreal.test.mjs` were added after it, and passed in their own run.
+**Measured result.** The last full browser run passed **340 of 340** tests, with none skipped, including the real-lobby and co-op run tests.
 
 ### Performance
 
@@ -1618,7 +1618,7 @@ Links are relative to this document.
 
 ## 11. Online co-op
 
-Up to four players can share one run. This section covers what is built and what is only planned. The split matters, so here it is first.
+Up to four players can share one run. This section covers what is built and what is not yet done.
 
 **Built:**
 
@@ -1627,8 +1627,10 @@ Up to four players can share one run. This section covers what is built and what
 - A C++ lobby interface, [`Net`](../src/components/Net), with a fake backend for tests and a real one for the browser.
 - The co-op screens: Co-op on the title, a menu, a host or guest lobby, and a join screen.
 - A simulation that runs 2 to 4 players.
+- The game itself over the network, in [`NetGame`](../src/components/NetGame): the host sends the world, the guests send their inputs, each guest predicts its own movement, and every player is drawn with a team color and a name tag. See [running the game over the network](#running-the-game-over-the-network).
+- A network overlay and a signal indicator, in [`CoopHud`](../src/components/Ui/CoopHud).
 
-**Planned (not in the code yet):** running the game itself over the network. That means sending the world from the host to the other players, sending their inputs back, predicting your own movement, and drawing the other players. Pressing Start in a lobby does not start a run yet: the lobby shows "Starting the run..." and stops there. The design for the planned part is in [the end of this section](#planned-running-the-game-over-the-network).
+**Not done yet:** the relay is not deployed, so the live site has no server address (see below). Co-op has only been tested on one computer, with two browser windows, and only with 2 players in a browser.
 
 ### The message flow
 
@@ -1671,12 +1673,12 @@ The steps in order:
 3. **Signaling.** When the host presses Start, the room is marked started. The host makes a WebRTC offer for each guest, and the two sides trade the offer, the answer and network candidates through the server. The server passes these along without reading them.
 4. **Game messages.** If the pair's data channels open, messages go straight from browser to browser (4a). If they do not open within 8 seconds, or they fail later, that pair switches to the relay (4b).
 
-The browsers form a star, not a mesh. Every guest talks to the host, and guests do not talk to each other. This matches the planned design below, where the host is the authority.
+The browsers form a star, not a mesh. Every guest talks to the host, and guests do not talk to each other. This matches the design below, where the host is the authority.
 
 ### The choices
 
 **Host-authoritative, not lockstep and not peer-to-peer with no host.**
-- Chosen: one player's browser (the host) runs the real simulation. The others send it their inputs and get back what to draw. (This is the planned part. The star shape of the connections is built.)
+- Chosen: one player's browser (the host) runs the real simulation. The others send it their inputs and get back what to draw.
 - Rejected: lockstep. In lockstep every player runs the same simulation and only inputs are sent. The simulation here is deterministic, so it would be possible. It was not chosen because a lockstep step cannot advance until the inputs from every player have arrived, so the whole group runs at the pace of the slowest connection. Every player would also need to run the full simulation, with up to 2,000 zombies, which is the heaviest thing the game does. And a single difference between two browsers' floating-point results would split the runs apart for good. Determinism is only tested inside one build ([section 3](#seeded-random-numbers-and-determinism)), not across browsers.
 - Rejected: peer-to-peer with no host, where each player owns part of the world. Zombies, loot and the boss are shared, and there would be no single answer when two players hit the same zombie.
 - Why: with one host, there is one truth. A guest with a slow phone only has to draw. The cost is that the host's connection decides how good the game is for everyone, and there is no host migration: if the host leaves, the room closes.
@@ -1729,7 +1731,7 @@ The browsers form a star, not a mesh. Every guest talks to the host, and guests 
 
 [`NetClient.js`](../web/components/NetClient/NetClient.js) is a plain script that adds one global, `LastStandNet`, to the page. Its top comment explains how the game uses it. It never reads game data: the game gives it bytes, and gets bytes back.
 
-- **Two channels for each pair.** Channel 0 is unordered and never resent, like UDP. It is for data where a late copy is useless (planned: world snapshots and inputs). Channel 1 is ordered and reliable, for rare things that must arrive (planned: run settings, game over, level-up choices). Both channels are created with fixed ids on both sides, so neither side has to wait for the other to announce them. A game message has a flag that picks the channel.
+- **Two channels for each pair.** Channel 0 is unordered and never resent, like UDP. It is for data where a late copy is useless: world snapshots and inputs. Channel 1 is ordered and reliable, for rare things that must arrive: run settings, game over, level-up choices, pauses and flattened cars. Both channels are created with fixed ids on both sides, so neither side has to wait for the other to announce them. A game message has a flag that picks the channel.
 - **Fallback is per pair.** Each pair of players has its own transport: `pending`, `webrtc` or `relay`. A pair that has no open channel after 8 seconds, or whose connection fails, moves to `relay`. If a channel opens late, it moves back. A pair on WebRTC and a pair on the relay can exist in the same room. Both paths end in the same function, so one side can use WebRTC while the other uses the relay, and they still hear each other.
 - **Only the host makes offers.** So two sides never offer at once.
 - **Wake.** `wake()` calls the health check again and again, up to a time budget, and reports `waking`, `awake` or `unreachable`.
@@ -1782,17 +1784,41 @@ void step(GameState& state, const InputFrame inputs[], int inputCount);
 
 **How the golden runs prove it.** [`SoloGoldenTests.cpp`](../tests/unit/SoloGoldenTests.cpp) holds fingerprints of whole single-player runs on both maps and on several difficulties, including Endless and a boss fight. They were recorded with the game as it was just before co-op was added. The runs take real damage, dash, reroll, take different cards and collect everything. After the change the same seeds and inputs must give the same fingerprints, step for step. If a change to single-player is ever meant, a failure prints the new values to record. A second test in [`CoopTests.cpp`](../tests/unit/CoopTests.cpp) checks that in a single-player run the hash ignores every co-op field.
 
-### Planned: running the game over the network
+### Running the game over the network
 
-**Planned.** None of this is in the code yet, and details may change.
+[`NetGame`](../src/components/NetGame/NetGame.h) runs a co-op run once the lobby has started it. Like the simulation, it has no raylib, no clock and no heap: every buffer is a fixed array, and the network is behind a small `Link` interface, so a unit test can join a host and a guest in one program with a pipe that delays and loses messages.
 
-- **The host runs the simulation.** Its `sim::step` takes one `InputFrame` per player, which is already the shape this needs: the host fills slot 0 from its own input and the other slots from the inputs that arrive over the network.
-- **Clients send inputs.** Each guest sends its input to the host often, on the unreliable channel. A missed input is replaced by the last one, or by standing still.
-- **About 20 snapshots a second.** The host sends the world as it is, not every 60 Hz step. To keep the messages small, each guest gets only what is near them: the players, and the zombies, shots and pickups in range. Slow changes that must arrive (run settings, game over, level-up choices) go on the reliable channel.
-- **Local prediction of your own movement.** A guest moves its own soldier at once from its own input, and corrects it gently when a snapshot says it is somewhere else. Everything else is drawn from the snapshots, a little behind, with interpolation between them.
-- **Drawing the other players.** The renderer would draw teammates from the snapshots, like it draws zombies now. The HUD is still one-player today and would need a view of the team.
+**The host runs the only real simulation.** Each step, the host fills slot 0 from its own keys and the other slots from inputs that arrived over the network, then calls the same `sim::step` that single-player uses. The guests never step the simulation. Their `GameState` is a picture filled from the host's messages, apart from their own soldier.
 
-The 16 KB message limit is a reason to keep each snapshot small and to send near things only.
+**The messages.** [`Codec`](../src/components/NetGame/Codec/Codec.h) turns each message into bytes and back. Every message starts with a kind byte and a version byte, and numbers are little-endian. The decoder checks every length, count and value before it uses it, so a cut or broken message is refused instead of read past its end. A unit test cuts a real snapshot at every length and changes random bytes 3,000 times.
+
+| Message | Direction and channel | Size and what it holds |
+|---|---|---|
+| RunStart | host to each guest, reliable | 20 bytes: run number, seed, map, difficulty, mode, player count, the guest's slot. Sent again every 0.5 s until that guest's first input arrives |
+| Input | guest to host, unreliable | 28 bytes, 30 times a second: the newest step number and the last 6 steps of movement and dash, so one lost message costs nothing |
+| CardPick | guest to host, reliable | 7 bytes: the card or a reroll, and which set of cards it was made for |
+| Snapshot | host to each guest, unreliable | 20 a second, at most 8 KB: the world near that guest |
+| Crushed, Pause, RunEnd | host to guests, reliable | flattened cars, the pause state, and the run's results |
+
+**Snapshots carry only what is near you.** Each guest gets the players, and then pickups, boss warning zones, events, enemy bullets, zombies, shots and gems within 1,250 units of them, nearest first. Positions are sent as whole eighths of a unit, relative to the guest, in 2 bytes each. A walking zombie takes 7 bytes. When a snapshot reaches 8,192 bytes, the list being written stops at a whole item and the less important lists after it are left out, gems first. Measured on one computer with headless Chrome: about 1.35 KB a snapshot with 2 players and 150 zombies, and the full 8,192 bytes with 2,000 zombies and 2,000 shots, which is about 164 KB a second for each guest. Every snapshot is sent whole, not as a change from the last one.
+
+**Prediction of your own movement.** A guest moves its own soldier at once, with the same `player::update`, the same solid cars and the same rounded input it sends to the host. It keeps its last 256 predicted positions. Each snapshot says which input step the host used last. The guest compares the host's position with its own guess for that step, and moves its guess and every later one by the difference. The drawn soldier slides over the gap a little each frame, and jumps only when it is more than 160 units off. Health, the build and the cards always come from the host. The dash cooldown is predicted too, until the host's answer includes that dash.
+
+**Everything else is drawn a little behind.** The guest keeps the last 4 snapshots and draws the world 100 ms behind the newest one, so there are almost always two snapshots to blend between. Zombies and other players are matched by id and moved smoothly between them. Shots are carried along their speed.
+
+**At the host.** Each guest has a queue of input steps, and the host takes one per simulation step. With nothing waiting, it repeats the guest's last movement for up to 15 steps, then stands them still. A dash is never repeated, and a dash in a step the host has to drop is moved to the next one.
+
+**Reliable messages are repaired, not trusted.** A card pick is sent again every 0.75 s while the guest still sees the same cards, and the run's end is sent again until the next run. Each input says how many flattened cars the guest has, so the host sends again from there if one was lost. A card pick names the set of cards it was made for (`Player::offerSerial`), and the host ignores a pick for an older set.
+
+**Rules of a co-op run.**
+- Only the host can pause. If the host's tab is hidden, everyone sees "Host is away" and the run stops. A guest's Esc opens a menu, but the run goes on.
+- If the host leaves, the run ends for everyone, with a message. A guest who leaves stays in the run, downed and out of reach, and the others are told.
+- When the run ends, everyone sees the results. The host can play again in the same room, with whoever is still there. If nobody else is left, the next run is an ordinary single-player one.
+- Co-op runs are never saved as best runs.
+
+**Drawing the team.** `GameState::localSlot` says which player this screen belongs to. The camera, the HUD, the cards and this player's sounds follow it. The simulation never reads it, so it is not in the state hash. Teammates have a colored ring, a helmet and vest in their color, and a name tag. A downed player lies down, with a DOWN mark and a revive bar everyone can see.
+
+**The network overlay.** F3 (or LB and View on a gamepad) shows the role, the path (WebRTC or relay), the round trip to the host and to the server, snapshots per second, snapshot sizes, messages and kilobytes per second, and how often the prediction was corrected. A four-bar signal mark sits under the pause button.
 
 ### Testing co-op
 
@@ -1804,7 +1830,10 @@ Counts below come from reading the test files (a `test(` or `TEST_CASE(` per cas
 - **Real lobby: 7 tests** in [`coopreal.test.mjs`](../tests/e2e/coopreal.test.mjs). Two game windows, real clicks, the real server: host, join, ready and start (once with WebRTC allowed and once forced through the server), errors, the host leaving, the server disappearing, and the wake on page load.
 - **Unit tests:** [`CoopTests.cpp`](../tests/unit/CoopTests.cpp) (21 cases) for targeting, downed and revive, level-ups, scaling, the boss, obstacle windows and the hash; [`NetLobbyTests.cpp`](../tests/unit/NetLobbyTests.cpp) (22) and [`NetWebSnapshotTests.cpp`](../tests/unit/NetWebSnapshotTests.cpp) (5) for the lobby rules, the fake backend and the reader of the script's JSON; and [`SoloGoldenTests.cpp`](../tests/unit/SoloGoldenTests.cpp) (6).
 
-**Not tested:** real phones, and real home networks with real NAT. The two-browser tests run on one machine, where a direct connection is easy. Co-op gameplay over the network does not exist yet, so nothing tests it.
+- **Co-op runs: 6 tests** in [`coopplay.test.mjs`](../tests/e2e/coopplay.test.mjs), with two game windows and the real server. Both players move with real key presses, and both windows must agree on both soldiers within 4 units and on the zombie and kill counts within a tolerance, once over WebRTC and once forced through the relay. Others cover the 8 KB cap with a full crowd, the overlay, game over and play again, the host hiding its tab, the host leaving, a revive, a guest's card pick over the running game, and a guest leaving.
+- **Unit tests:** [`NetGameTests.cpp`](../tests/unit/NetGameTests.cpp) (19 cases) for every message, rounding limits, the 8 KB cut, broken messages, and a host and guest joined by a pipe with delay and 33% loss. They check that the prediction ends within 1 unit of the host, that lost card picks, flattened cars and run ends are repaired, that a pick for older cards is ignored, and that a dropped dash still happens.
+
+**Not tested:** real phones, real home networks with real NAT, real internet delay in a browser (only the unit pipe has delay and loss), 3 or 4 players in a browser, touch and gamepad during a co-op run, and how it feels to play.
 
 ---
 
@@ -1814,7 +1843,6 @@ Everything marked **Planned** here is not in the code now, and details may chang
 
 **Planned:**
 
-- **Co-op gameplay over the network.** Snapshots, inputs, prediction and drawing other players. See [the end of section 11](#planned-running-the-game-over-the-network).
 - **Setting the relay's real address** in `NetConfig.js` once it is deployed.
 
 Ideas for a wider launch, not planned or committed: a TURN server, rate limits by IP address, and host migration.
