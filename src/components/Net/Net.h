@@ -11,7 +11,7 @@ namespace ls::net {
 inline constexpr int kMaxPlayers = 4;
 inline constexpr int kNameMax = 12;                       // Characters in a name, as the protocol allows.
 inline constexpr int kCodeLength = 5;                     // Characters in a room code.
-inline constexpr char kCodeAlphabet[] = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";  // No 0, O, 1, I or L.
+inline constexpr char kCodeAlphabet[] = "ABCDEFGHJKMNPQRSTUVWXY23456789";  // No 0, O, 1, I, L or Z: the pixel font draws Z like 2.
 // A free server can take about a minute to wake. After this long the screens offer Retry.
 inline constexpr float kWakeRetrySeconds = 70.0f;
 

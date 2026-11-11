@@ -63,7 +63,8 @@ TEST_CASE("codes: 5 characters from the alphabet, in either case") {
         const char code[6] = {*c, *c, *c, *c, *c, '\0'};
         CHECK(net::validCode(code));
     }
-    CHECK(std::strlen(net::kCodeAlphabet) == 31);
+    CHECK(std::strlen(net::kCodeAlphabet) == 30);
+    CHECK_FALSE(net::validCode("ZZZZZ"));  // Z is left out, because the pixel font draws it like 2.
 }
 
 TEST_CASE("single characters: what the text field lets through") {

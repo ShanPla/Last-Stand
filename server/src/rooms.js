@@ -6,7 +6,7 @@ export const MAX_PLAYERS = 4;
 export const HOST_SLOT = 0;
 
 // No 0, O, 1, I or L, so a code read aloud or typed from a screen is hard to mix up.
-const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXY23456789';
 const CODE_LENGTH = 5;
 
 /** @typedef {{id: number, name: string, ready: boolean, relay: boolean, conn: any}} Player */

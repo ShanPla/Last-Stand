@@ -27,7 +27,7 @@ Version: 1. Every connection starts with a `hello` that names this version.
 - A room holds up to 4 players in slots 0 to 3. The player who creates the room is the host and
   takes slot 0. Others take the lowest free slot. A slot number is a player's id in every
   message.
-- A room code is 5 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no 0, O, 1, I or L), and
+- A room code is 5 characters from `ABCDEFGHJKMNPQRSTUVWXY23456789` (no 0, O, 1, I, L or Z, which the pixel font draws like 2), and
   is case-insensitive when joining.
 - Names are 1 to 12 characters of letters (A-Z, a-z), digits and spaces, trimmed. The server
   rejects other names, including accented letters, with `bad-name`. Two players may share a

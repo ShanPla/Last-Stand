@@ -3,7 +3,7 @@ import { after, before, describe, test } from 'node:test';
 import { RoomRegistry } from '../src/rooms.js';
 import { Client, joinRoom, makeRoom, sleep, startRelay } from './helpers.js';
 
-const CODE_PATTERN = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{5}$/;
+const CODE_PATTERN = /^[ABCDEFGHJKMNPQRSTUVWXY23456789]{5}$/;
 
 describe('rooms and the lobby', () => {
   let s;
@@ -249,7 +249,7 @@ describe('room codes', () => {
     assert.equal(registry.count, 3000);
     // Every character of the alphabet should show up, so none is left out by mistake.
     const used = new Set([...seen].join(''));
-    assert.equal(used.size, 31);
+    assert.equal(used.size, 30);
   });
 });
 
