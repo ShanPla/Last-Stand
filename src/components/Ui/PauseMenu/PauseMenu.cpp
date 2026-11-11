@@ -33,7 +33,7 @@ void passiveEffect(const Player& player, PassiveId id, char* out, size_t size) {
 
 void drawWeaponRow(const GameState& state, const WeaponSlot& slot, Rectangle r, bool showStats) {
     const float u = ui::u();
-    const balance::WeaponLevel stats = weapons::effectiveStats(state.firstPlayer(), slot);
+    const balance::WeaponLevel stats = weapons::effectiveStats(state.localPlayer(), slot);
     const float cy = r.y + r.height * 0.5f;
     const float icon = std::min(r.height - 6.0f * u, 32.0f * u);
     const bool usesAmmo = stats.magazine > 0;
@@ -113,7 +113,7 @@ float buildHeight(const Player& player, float rowHeight, bool compact) {
 
 void drawBuild(const GameState& state, Rectangle r, bool showStats, float rowHeight, bool compact) {
     const float u = ui::u();
-    const Player& player = state.firstPlayer();
+    const Player& player = state.localPlayer();
     panel(r, theme::kUiPanel, theme::kUiBorder, 16.0f * u);
     const float pad = 14.0f * u;
     float y = r.y + pad;
@@ -180,7 +180,7 @@ void drawLevelTag(Difficulty level, float x, float y, font::Align align) {
 
 void resetPauseMenu() { g_nav = Nav{}; }
 
-PauseAction drawPauseMenu(const GameState& state) {
+PauseAction drawPauseMenu(const GameState& state, PauseKind kind) {
     const Layout& l = layout();
     const float u = l.u;
     PauseAction action = PauseAction::None;
@@ -189,7 +189,12 @@ PauseAction drawPauseMenu(const GameState& state) {
     // Two panes need room for the buttons and a readable build list. A 4:3 window is wide
     // enough for both, but not for the 760 design units the roomier look would want.
     const bool wide = !l.portrait && l.width() >= 690.0f * u;
-    const char* const labels[4] = {"Resume", "Settings", "Restart", "Quit to Title"};
+    // In co-op, Quit leaves the room. Only the host can restart, and a guest's menu does not
+    // pause anything, so it is not called paused.
+    const bool coop = kind != PauseKind::Solo;
+    const bool guest = kind == PauseKind::CoopGuest;
+    const char* const labels[4] = {"Resume", "Settings", "Restart", coop ? "Leave Run" : "Quit to Title"};
+    const char* title = guest ? "MENU" : "PAUSED";
 
     if (wide) {
         navigate(g_nav, 4);
@@ -198,15 +203,15 @@ PauseAction drawPauseMenu(const GameState& state) {
         const float buildWidth = std::min(l.width() - menuWidth - gap, 600.0f * u);
         const float total = menuWidth + gap + buildWidth;
         const float x = l.centerX() - total * 0.5f;
-        const float rowHeight = buildRowHeight(state.firstPlayer(), l.height(), false);
-        const float height = buildHeight(state.firstPlayer(), rowHeight, false);
-        textShadowed("PAUSED", x, l.top + 4.0f * u, 46.0f * u, theme::kUiAccent, font::Align::Left, 4.0f * u);
+        const float rowHeight = buildRowHeight(state.localPlayer(), l.height(), false);
+        const float height = buildHeight(state.localPlayer(), rowHeight, false);
+        textShadowed(title, x, l.top + 4.0f * u, 46.0f * u, theme::kUiAccent, font::Align::Left, 4.0f * u);
         drawLevelTag(state.run.difficulty, x, l.top + 56.0f * u, font::Align::Left);
         float y = l.top + 86.0f * u;
         const float buttonHeight = tall(56.0f * u);
         for (int i = 0; i < 4; ++i) {
             const float h = i == 0 ? tall(64.0f * u) : buttonHeight;
-            if (button(g_nav, i, Rectangle{x, y, menuWidth, h}, labels[i], i == 0 ? ButtonLook::Primary : ButtonLook::Normal, i == 0 ? promptPause() : nullptr)) {
+            if (button(g_nav, i, Rectangle{x, y, menuWidth, h}, labels[i], i == 0 ? ButtonLook::Primary : ButtonLook::Normal, i == 0 ? promptPause() : nullptr, !(guest && i == 2))) {
                 action = static_cast<PauseAction>(i + 1);
             }
             y += h + 12.0f * u;
@@ -227,7 +232,7 @@ PauseAction drawPauseMenu(const GameState& state) {
         bool grid = false;
         // If the whole build list can't fit above the buttons (a window that is nearly square),
         // the buttons go two by two and the list gets shorter rows, so nothing runs under them.
-        if (buildHeight(state.firstPlayer(), 26.0f * u, false) > availableTotal) {
+        if (buildHeight(state.localPlayer(), 26.0f * u, false) > availableTotal) {
             compact = true;
             grid = true;
             buttonHeight = tall(48.0f * u);
@@ -237,10 +242,10 @@ PauseAction drawPauseMenu(const GameState& state) {
         }
         navigate(g_nav, 4, grid);  // Two by two buttons also move with left and right.
         // Title, build and buttons form one group, centered, so a tall phone has no big hole.
-        const float rowHeight = buildRowHeight(state.firstPlayer(), availableTotal, compact);
-        const float panelHeight = std::min(availableTotal, buildHeight(state.firstPlayer(), rowHeight, compact));
+        const float rowHeight = buildRowHeight(state.localPlayer(), availableTotal, compact);
+        const float panelHeight = std::min(availableTotal, buildHeight(state.localPlayer(), rowHeight, compact));
         const float groupTop = l.top + (l.height() - (titleHeight + panelHeight + between + buttonsHeight)) * 0.5f;
-        textShadowed("PAUSED", l.centerX(), groupTop, (compact ? 34.0f : 40.0f) * u, theme::kUiAccent, font::Align::Center, 4.0f * u);
+        textShadowed(title, l.centerX(), groupTop, (compact ? 34.0f : 40.0f) * u, theme::kUiAccent, font::Align::Center, 4.0f * u);
         drawLevelTag(state.run.difficulty, l.centerX(), groupTop + (compact ? 36.0f : 44.0f) * u, font::Align::Center);
         const float buildTop = groupTop + titleHeight;
         const float buttonsTop = buildTop + panelHeight + between;
@@ -251,7 +256,7 @@ PauseAction drawPauseMenu(const GameState& state) {
                 const float cell = (width - gap) * 0.5f;
                 rect = Rectangle{x + static_cast<float>(i % 2) * (cell + gap), buttonsTop + static_cast<float>(i / 2) * (buttonHeight + gap), cell, buttonHeight};
             }
-            if (button(g_nav, i, rect, labels[i], i == 0 ? ButtonLook::Primary : ButtonLook::Normal, i == 0 ? promptPause() : nullptr)) {
+            if (button(g_nav, i, rect, labels[i], i == 0 ? ButtonLook::Primary : ButtonLook::Normal, i == 0 ? promptPause() : nullptr, !(guest && i == 2))) {
                 action = static_cast<PauseAction>(i + 1);
             }
         }

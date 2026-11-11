@@ -328,6 +328,44 @@ EM_JS(int, ls_js_net_stats, (char* buffer, int capacity), {
     } catch (error) { return -1; }
 });
 
+// Game messages. The script hands each one to onMessage as it arrives, between frames. This
+// keeps them in a queue that the game empties at the start of its next frame, so a message
+// never arrives in the middle of a frame. The queue lives in JavaScript, so the game itself
+// allocates nothing for it. It also tells the game when the page is hidden, because a hidden
+// tab may run no frame at all until it comes back.
+EM_JS(void, ls_js_net_listen, (), {
+    try {
+        if (typeof LastStandNet === "undefined") return;
+        var net = LastStandNet.shared();
+        if (net.lsGameQueue) return;
+        net.lsGameQueue = [];
+        net.onMessage = function (from, bytes) {
+            if (net.lsGameQueue.length >= 1024) net.lsGameQueue.shift();
+            net.lsGameQueue.push([from, bytes.slice()]);
+        };
+        document.addEventListener("visibilitychange", function () {
+            try { if (Module._ls_net_page_hidden) Module._ls_net_page_hidden(document.hidden ? 1 : 0); } catch (error) {}
+        });
+    } catch (error) {}
+});
+
+EM_JS(int, ls_js_net_send, (int to, const unsigned char* bytes, int length, int reliable), {
+    try { return LastStandNet.shared().send(to, HEAPU8.subarray(bytes, bytes + length), reliable !== 0) ? 1 : 0; } catch (error) { return -1; }
+});
+
+// Returns the length of the next message, 0 when none waits, or -2 for one too big (dropped).
+EM_JS(int, ls_js_net_receive, (unsigned char* buffer, int capacity, int* from), {
+    try {
+        var queue = LastStandNet.shared().lsGameQueue;
+        if (!queue || queue.length === 0) return 0;
+        var item = queue.shift();
+        if (item[1].length > capacity) return -2;
+        HEAPU8.set(item[1], buffer);
+        HEAP32[from >> 2] = item[0];
+        return item[1].length;
+    } catch (error) { return -1; }
+});
+
 namespace ls::net {
 
 namespace {
@@ -381,7 +419,23 @@ public:
         ls_js_net_leave();
     }
 
+    bool sendGame(int toId, const unsigned char* bytes, int length, bool reliable) override {
+        return ls_js_net_send(toId, bytes, length, reliable ? 1 : 0) > 0;
+    }
+
+    int receiveGame(unsigned char* buffer, int capacity, int* fromId) override {
+        int from = -1;
+        for (;;) {
+            const int length = ls_js_net_receive(buffer, capacity, &from);
+            if (length == -2) continue;  // Too big to be ours. The next one may be fine.
+            if (length <= 0) return 0;
+            if (fromId) *fromId = from;
+            return length;
+        }
+    }
+
     void update(Lobby& lobby, float dt) override {
+        ls_js_net_listen();
         heartbeat_ += dt;
         const int events = ls_js_net_events();
         if (events < 0) return;

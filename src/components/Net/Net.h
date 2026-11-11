@@ -114,6 +114,16 @@ void retry();      // Repeats the last host, join or wake that failed or timed o
 // Call once per frame, with the time since the last frame, so timers and the backend advance.
 void update(float dt);
 
+// ---- Game messages, during the run ------------------------------------------------
+
+// Sends bytes to one player, by their server slot (LobbyPlayer::id), or to everyone with 255.
+// reliable picks the ordered channel that resends what is lost. Returns false when nothing could
+// be sent, which is always the case with the fake backend.
+bool sendGame(int toId, const unsigned char* bytes, int length, bool reliable);
+// Copies the next message that arrived into buffer and returns its length, or 0 when none is
+// waiting. fromId gets the sender's server slot. A message too big for the buffer is dropped.
+int receiveGame(unsigned char* buffer, int capacity, int* fromId);
+
 // ---- Tests and debug builds ------------------------------------------------------
 
 // Commands for the fake backend, so every phase and every error can be shown without a

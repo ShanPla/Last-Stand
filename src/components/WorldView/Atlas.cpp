@@ -320,6 +320,12 @@ void buildPalette() {
 
     for (int r = 0; r < kPaletteHeight; ++r) fillBaseRow(g_palette[r]);
 
+    // Co-op soldiers: the same soldier, with his helmet and vest in his player's color.
+    for (int r = 0; r < kTeamRows; ++r) {
+        setRamp4(g_palette[kRowTeam + r], kPHelmet, kCoopSoldierHelmets[r]);
+        setRamp4(g_palette[kRowTeam + r], kPVest, kCoopSoldierVests[r]);
+    }
+
     // Outfits. Stepping each list by a different amount covers many combinations.
     for (int r = 0; r < kOutfitCount; ++r) {
         Color* row = g_palette[kRowOutfits + r];

@@ -165,10 +165,11 @@ GameOverAction drawGameOverScreen(const RunSummary& summary, float age) {
     navigate(g_nav, 2, true);
     const bool wasEnabled = inputEnabled();
     setInputEnabled(ready);
-    if (button(g_nav, 0, Rectangle{buttonsLeft, buttonY, restartWidth, buttonsHeight}, "RESTART", ButtonLook::Primary, promptConfirm(), ready)) {
+    const char* restartLabel = summary.coop ? (summary.canRestart ? "PLAY AGAIN" : "HOST DECIDES") : "RESTART";
+    if (button(g_nav, 0, Rectangle{buttonsLeft, buttonY, restartWidth, buttonsHeight}, restartLabel, ButtonLook::Primary, promptConfirm(), ready && summary.canRestart)) {
         action = GameOverAction::Restart;
     }
-    if (button(g_nav, 1, Rectangle{buttonsLeft + restartWidth + 12.0f * u, buttonY, quitWidth, buttonsHeight}, "Quit", ButtonLook::Normal, nullptr, ready)) {
+    if (button(g_nav, 1, Rectangle{buttonsLeft + restartWidth + 12.0f * u, buttonY, quitWidth, buttonsHeight}, summary.coop ? "Leave" : "Quit", ButtonLook::Normal, nullptr, ready)) {
         action = GameOverAction::Quit;
     }
     setInputEnabled(wasEnabled);

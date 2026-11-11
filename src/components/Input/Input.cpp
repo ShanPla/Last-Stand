@@ -96,6 +96,7 @@ void readKeyboard(Snapshot& s) {
                 case KEY_LEFT_SHIFT: case KEY_RIGHT_SHIFT: s.dash = true; break;
                 case KEY_ESCAPE: case KEY_P: s.back = true; break;
                 case KEY_R: s.reroll = true; break;
+                case KEY_F3: s.netOverlay = true; break;
                 default: break;
             }
         }
@@ -145,6 +146,7 @@ void readGamepad(Snapshot& s) {
     const bool reroll = IsGamepadButtonPressed(kGamepad, GAMEPAD_BUTTON_RIGHT_FACE_UP);
     // The right shoulder, not A: A is menu confirm, and must not dash when a card is picked.
     const bool dash = IsGamepadButtonPressed(kGamepad, GAMEPAD_BUTTON_RIGHT_TRIGGER_1);
+    s.netOverlay |= IsGamepadButtonDown(kGamepad, GAMEPAD_BUTTON_LEFT_TRIGGER_1) && IsGamepadButtonPressed(kGamepad, GAMEPAD_BUTTON_MIDDLE_LEFT);
     s.stepX += (right ? 1 : 0) - (left ? 1 : 0);
     s.stepY += (down ? 1 : 0) - (up ? 1 : 0);
     s.left |= left;

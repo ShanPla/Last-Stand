@@ -36,20 +36,26 @@ float longShadowReach(const Enemy& enemy, float shadowLength);
 // and figureHalfWidth are deliberately generous, so they can't answer this.
 bool figureTouchesTarget(const View& view, const GameState& state, const Enemy& enemy, const ScreenPoint& feet);
 
-void drawSoldierShadow(const GameState& state, const ScreenPoint& feet, const DayLook& look);
-void drawSoldier(const GameState& state, const ScreenPoint& feet, uint8_t strength);
+// Soldiers. slot is the player's slot in state.players. In single-player it is always 0.
+void drawSoldierShadow(const GameState& state, int slot, const ScreenPoint& feet, const DayLook& look);
+void drawSoldier(const GameState& state, int slot, const ScreenPoint& feet, uint8_t strength);
 void drawSoldierRing(const View& view, Vec2 worldFeet);
 void drawSoldierRingOverCrowd(const View& view, Vec2 worldFeet);
-void drawMuzzleFlash(const GameState& state, const ScreenPoint& feet);
-// The pale afterimage behind him during a dash. Goes inside an open sprite pass, under the figures.
+// The ring under another co-op player, in that player's color.
+void drawTeammateRing(const View& view, Vec2 worldFeet, int slot);
+void drawMuzzleFlash(const GameState& state, int slot, const ScreenPoint& feet);
+// The pale afterimage behind this screen's own soldier during a dash. Goes inside an open
+// sprite pass, under the figures.
 void drawDashTrail(const View& view, const GameState& state, Vec2 playerWorld);
 
-// Updates the soldier's walk cycle and timers, once per drawn frame. These live here,
+// Updates a soldier's walk cycle and timers, once per drawn frame. These live here,
 // not in the simulation, because they only change how things look.
-void updateSoldierAnimation(Vec2 feetWorld, float realDt);
-void noteWeaponFired(WeaponId weapon);
+void updateSoldierAnimation(int slot, Vec2 feetWorld, float realDt);
+void noteWeaponFired(int slot, WeaponId weapon);
 // Forgets the last gun and every timer, so a new run doesn't start with the old run's gun.
 void resetSoldierAnimation();
+// Co-op: the color each player slot wears, as an index into theme::kCoopSlotColors.
+void setSoldierColors(const int colors[kMaxPlayers]);
 
 // For the browser tests: what the soldier looks like right now, and how many frames have
 // shown a muzzle flash.

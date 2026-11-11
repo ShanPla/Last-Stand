@@ -19,12 +19,12 @@ constexpr float kBarHeightShare = 0.13f;
 float weaponSlotsHeight(float slot) { return slot + slot * kBarHeightShare + slot * 0.08f; }
 
 float drawWeaponSlots(const GameState& state, float x, float y, float slot) {
-    const Player& player = state.firstPlayer();
+    const Player& player = state.localPlayer();
     const float gap = slot * kSlotGap;
     char label[8];
     for (int i = 0; i < player.weaponCount; ++i) {
         const WeaponSlot& weapon = player.weapons[i];
-        const balance::WeaponLevel stats = weapons::effectiveStats(state.firstPlayer(), weapon);
+        const balance::WeaponLevel stats = weapons::effectiveStats(state.localPlayer(), weapon);
         const bool usesAmmo = stats.magazine > 0;
         const bool reloading = weapon.reloadLeft > 0.0f;
         const bool dry = usesAmmo && weapon.magazine <= 0 && weapon.reserve <= 0 && !reloading;
@@ -60,7 +60,7 @@ float drawWeaponSlots(const GameState& state, float x, float y, float slot) {
 }
 
 float drawPassiveSlots(const GameState& state, float x, float y, float slot) {
-    const Player& player = state.firstPlayer();
+    const Player& player = state.localPlayer();
     const float gap = slot * kSlotGap;
     char label[8];
     for (int i = 0; i < player.passiveCount; ++i) {

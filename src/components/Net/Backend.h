@@ -27,6 +27,15 @@ public:
     virtual void leave(Lobby& lobby) = 0;
     // Advances timers and reads answers. Called every frame.
     virtual void update(Lobby& lobby, float dt) = 0;
+    // Game messages once the run has started. See sendGame and receiveGame in Net.h.
+    virtual bool sendGame(int toId, const unsigned char* bytes, int length, bool reliable) {
+        (void)toId; (void)bytes; (void)length; (void)reliable;
+        return false;
+    }
+    virtual int receiveGame(unsigned char* buffer, int capacity, int* fromId) {
+        (void)buffer; (void)capacity; (void)fromId;
+        return 0;
+    }
     // For the fake only. A real backend ignores it.
     virtual void debug(Lobby& lobby, int op, int value) { (void)lobby; (void)op; (void)value; }
 };

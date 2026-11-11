@@ -89,6 +89,8 @@ enum PaletteRow : uint8_t {
     kRowLampLight = 53,  // Pools of light, multiplied onto the ground.
     kRowFireLight = 54,
     kRowPlayerLight = 55,
+    kRowTeam = 56,   // Co-op: four rows, one soldier color per player.
+    kTeamRows = 4,
     kPaletteHeight = 64,
 };
 

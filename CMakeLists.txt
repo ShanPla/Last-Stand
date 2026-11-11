@@ -69,6 +69,16 @@ if(MSVC)
   target_compile_options(ls_sim PRIVATE /W4 /utf-8)
 endif()
 
+# Co-op during the run: the message codec, the host's snapshots and the client's prediction.
+# Plain C++ like the simulation it drives, so the unit tests can join a host and a client.
+file(GLOB_RECURSE LS_NETGAME_SOURCES CONFIGURE_DEPENDS src/components/NetGame/*.cpp)
+add_library(ls_netgame STATIC ${LS_NETGAME_SOURCES})
+target_include_directories(ls_netgame PUBLIC src)
+target_link_libraries(ls_netgame PUBLIC ls_sim)
+if(MSVC)
+  target_compile_options(ls_netgame PRIVATE /W4 /utf-8)
+endif()
+
 # The sound synthesis is plain C++ too, so the unit tests can render and check
 # every sound and the music without raylib. Only Audio/Audio.cpp uses raylib.
 file(GLOB_RECURSE LS_AUDIO_SOURCES CONFIGURE_DEPENDS src/components/Audio/*/*.cpp)
@@ -125,7 +135,7 @@ if(NOT EXISTS "${LS_FONT_CPP}" OR "${LS_FONT_TTF}" IS_NEWER_THAN "${LS_FONT_CPP}
 endif()
 
 add_executable(laststand src/main.cpp src/core/Platform.cpp ${LS_APP_SOURCE} ${LS_GAME_SOURCES} "${LS_FONT_CPP}")
-target_link_libraries(laststand PRIVATE ls_sim ls_audio raylib)
+target_link_libraries(laststand PRIVATE ls_netgame ls_sim ls_audio raylib)
 # Release builds are the ones players get. They hide the debug overlay (native: unless run
 # with --debug). The check is on the configuration, not NDEBUG, because the RelWithDebInfo
 # build used for development also defines NDEBUG.
@@ -151,7 +161,7 @@ endif()
 if(EMSCRIPTEN)
   set(CMAKE_EXECUTABLE_SUFFIX ".html")
   set(LS_WEB_DIR "${CMAKE_SOURCE_DIR}/web")
-  foreach(tgt ls_net ls_sim ls_audio laststand)
+  foreach(tgt ls_net ls_sim ls_netgame ls_audio laststand)
     target_compile_options(${tgt} PRIVATE -O3 -flto -fno-exceptions -fno-rtti)
   endforeach()
   target_compile_options(raylib PRIVATE -O3 -flto)
@@ -204,7 +214,7 @@ if(LS_BUILD_TESTS AND NOT EMSCRIPTEN)
   enable_testing()
   file(GLOB_RECURSE LS_TEST_SOURCES CONFIGURE_DEPENDS tests/unit/*.cpp)
   add_executable(ls_tests ${LS_TEST_SOURCES})
-  target_link_libraries(ls_tests PRIVATE ls_sim ls_audio)
+  target_link_libraries(ls_tests PRIVATE ls_netgame ls_sim ls_audio)
   target_include_directories(ls_tests PRIVATE third_party/doctest)
   if(MSVC)
     target_compile_options(ls_tests PRIVATE /W4 /utf-8)

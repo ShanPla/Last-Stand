@@ -15,9 +15,10 @@
 // statsJson() (to copy the lobby and the numbers for the debug overlay). Browser events never
 // run inside a C++ frame, so the game polls and needs no locking.
 //
-// Not connected yet (planned, for the run itself): sending and receiving game messages. C++
-// would call net.send(to, bytes, reliable) and set net.onMessage to copy each message into a
-// buffer that C++ owns.
+// During the run, C++ sends game messages with net.send(to, bytes, reliable), and sets
+// net.onMessage once to a small queue (net.lsGameQueue). Each frame it takes the waiting
+// messages out of that queue into a buffer it owns, so no message arrives mid-frame. The
+// messages themselves (snapshots, inputs) are made in src/components/NetGame.
 //
 // How the states map to the C++ lobby interface:
 //   phases  Offline | Waking | Connecting | InLobby | Starting | Error

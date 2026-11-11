@@ -183,6 +183,16 @@ void retry() {
 
 void update(float dt) { backend().update(g_lobby, dt); }
 
+bool sendGame(int toId, const unsigned char* bytes, int length, bool reliable) {
+    if (!bytes || length <= 0) return false;
+    return backend().sendGame(toId, bytes, length, reliable);
+}
+
+int receiveGame(unsigned char* buffer, int capacity, int* fromId) {
+    if (!buffer || capacity <= 0) return 0;
+    return backend().receiveGame(buffer, capacity, fromId);
+}
+
 void debugCommand(int op, int value) {
     if (op == kDebugPhase) {
         g_lobby.phase = static_cast<LobbyPhase>(value);

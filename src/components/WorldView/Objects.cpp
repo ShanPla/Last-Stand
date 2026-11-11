@@ -252,9 +252,9 @@ void drawTeslaLink(const View& view, const Zone& zone, uint32_t tick) {
     pixelBlock(b.x, b.y, 2.0f + 3.0f * life, fade(theme::kTeslaCore, life));
 }
 
-const WeaponSlot* heldBlades(const GameState& state) {
-    for (int i = 0; i < state.firstPlayer().weaponCount; ++i) {
-        if (state.firstPlayer().weapons[i].id == WeaponId::Blades) return &state.firstPlayer().weapons[i];
+const WeaponSlot* heldBlades(const Player& player) {
+    for (int i = 0; i < player.weaponCount; ++i) {
+        if (player.weapons[i].id == WeaponId::Blades) return &player.weapons[i];
     }
     return nullptr;
 }
@@ -352,13 +352,15 @@ void queueShotGlows(const View& view, const GameState& state, float alpha) {
     }
 }
 
-void drawBladeTrails(const View& view, const GameState& state, float alpha) {
-    const WeaponSlot* blades = heldBlades(state);
+namespace {
+
+void drawBladeTrailsOf(const View& view, const Player& player, float alpha) {
+    const WeaponSlot* blades = heldBlades(player);
     if (!blades) return;
-    const balance::WeaponLevel stats = weapons::effectiveStats(state.firstPlayer(), *blades);
+    const balance::WeaponLevel stats = weapons::effectiveStats(player, *blades);
     const int count = std::max(1, stats.count);
-    const float angle = state.firstPlayer().bladeAngle - stats.speed * kDt * (1.0f - alpha);
-    const Vec2 center = lerp(state.firstPlayer().prevPos, state.firstPlayer().pos, alpha);
+    const float angle = player.bladeAngle - stats.speed * kDt * (1.0f - alpha);
+    const Vec2 center = lerp(player.prevPos, player.pos, alpha);
     const Color color = blades->evolved ? theme::kEvolvedAccent : theme::kBladeTrail;
     if (blades->evolved) groundRing(view, center, stats.area, 3.0f, 2, fade(color, 0.4f));
     constexpr int kTrailSegments = 5;
@@ -376,6 +378,13 @@ void drawBladeTrails(const View& view, const GameState& state, float alpha) {
             thickLine(Vec2{p0.x, p0.y - lift}, Vec2{p1.x, p1.y - lift}, 2.0f, fade(color, strength));
         }
     }
+}
+
+}  // namespace
+
+void drawBladeTrails(const View& view, const GameState& state, float alpha) {
+    // Every player's blades, so a teammate's ring of blades can be seen too.
+    for (int slot = 0; slot < state.playerCount(); ++slot) drawBladeTrailsOf(view, state.players[slot], alpha);
 }
 
 // --- Sprites below the figures -------------------------------------------------
@@ -454,13 +463,15 @@ void drawAirSprites(const View& view, const GameState& state, float alpha) {
         }
     }
 
-    const WeaponSlot* blades = heldBlades(state);
-    if (blades) {
-        const balance::WeaponLevel stats = weapons::effectiveStats(state.firstPlayer(), *blades);
+    for (int slot = 0; slot < state.playerCount(); ++slot) {
+        const Player& player = state.players[slot];
+        const WeaponSlot* blades = heldBlades(player);
+        if (!blades) continue;
+        const balance::WeaponLevel stats = weapons::effectiveStats(player, *blades);
         const int count = std::max(1, stats.count);
         // The angle is the latest step's, so step it back to match interpolated positions.
-        const float angle = state.firstPlayer().bladeAngle - stats.speed * kDt * (1.0f - alpha);
-        const Vec2 center = lerp(state.firstPlayer().prevPos, state.firstPlayer().pos, alpha);
+        const float angle = player.bladeAngle - stats.speed * kDt * (1.0f - alpha);
+        const Vec2 center = lerp(player.prevPos, player.pos, alpha);
         const int spin = static_cast<int>(state.run.tick >> 1) % kBladeFrames;
         for (int i = 0; i < count; ++i) {
             const float bladeAngle = angle + kTau * static_cast<float>(i) / static_cast<float>(count);

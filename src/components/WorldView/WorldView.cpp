@@ -66,7 +66,7 @@ constexpr float kSilhouetteDepthGap = 0.0005f;
 constexpr int kCoverColumnWidth = 32;
 constexpr int kCoverColumns = 48;
 
-constexpr int kPlayerSlot = kMaxEnemies;  // The player takes one extra slot in the sort.
+constexpr int kPlayerSlot = kMaxEnemies;  // Players take the slots after the zombies in the sort, one each.
 
 // A clock that jumps back to under this many ticks means a run has just begun.
 constexpr uint32_t kFreshRunTicks = 30;
@@ -77,8 +77,8 @@ struct VisibleFigure {
 };
 
 // Fixed memory, so that drawing never touches the heap.
-VisibleFigure g_visible[kMaxEnemies + 1];
-uint16_t g_drawOrder[kMaxEnemies + 1];
+VisibleFigure g_visible[kMaxEnemies + kMaxPlayers];
+uint16_t g_drawOrder[kMaxEnemies + kMaxPlayers];
 int g_bucketStarts[kSortBuckets + 1];
 // Zombies warning of an attack, in or out of the picture. Filled by the same walk that finds
 // the visible figures, so it costs a comparison per zombie and no second loop.
@@ -98,6 +98,7 @@ bool g_carCover = true;       // Debug only: off, cars hide nothing, for compari
 int g_telegraphsShown = 0;
 int g_silhouettesShown = 0;
 const GameState* g_lastDrawnState = nullptr;
+int g_lastPlayerFigures = 0;  // Soldiers drawn on the last frame, for the co-op browser tests.
 
 // The last run the renderer saw, so it can notice a new one. App starts runs on its own.
 uint64_t g_seenSeed = 0;
@@ -184,7 +185,7 @@ void fitTargetToWindow() {
 // here in whole art pixels too, so to the renderer a shake is just the camera walking.
 // Returns where the camera would be with no shake, which is where the soldier stands.
 Vec2 aimCamera(const GameState& state, float alpha) {
-    const Vec2 player = lerp(state.firstPlayer().prevPos, state.firstPlayer().pos, alpha);
+    const Vec2 player = lerp(state.localPlayer().prevPos, state.localPlayer().pos, alpha);
     const float column = std::floor(player.x * kArtPerWorld + 0.5f);
     const float row = std::floor(player.y * kArtPerWorld * kTiltSquash + 0.5f);
     int shakeColumns = 0;
@@ -297,9 +298,9 @@ Covering coveringOf(const Enemy& enemy, const ScreenPoint& feet) {
 }
 
 void drawFigure(const GameState& state, const VisibleFigure& figure) {
-    if (figure.enemyIndex == kPlayerSlot) {
+    if (figure.enemyIndex >= kPlayerSlot) {
         setSpriteDepth(depthOfRow(g_view, figure.feet.y));
-        drawSoldier(state, figure.feet, 255);
+        drawSoldier(state, figure.enemyIndex - kPlayerSlot, figure.feet, 255);
         return;
     }
     const Enemy& enemy = state.enemies[figure.enemyIndex];
@@ -408,6 +409,16 @@ void present(const DayLook& look) {
 
 const View& currentView() { return g_view; }
 
+bool screenPosition(Vec2 world, float liftArtPixels, float* x, float* y) {
+    const ScreenPoint point = project(g_view, world);
+    if (!onTarget(g_view, point, 30.0f, liftArtPixels + 30.0f, 30.0f)) return false;
+    *x = point.x * g_view.pixelScale;
+    *y = (point.y - liftArtPixels * point.scale) * g_view.pixelScale;
+    return true;
+}
+
+void setPlayerColors(const int colors[kMaxPlayers]) { setSoldierColors(colors); }
+
 void init() {
     if (g_ready) return;
     const double start = GetTime();
@@ -445,7 +456,7 @@ void consumeEvents(const GameState& state) {
 
     for (const SimEvent& event : state.events) {
         switch (event.type) {
-            case EventType::WeaponFired: noteWeaponFired(static_cast<WeaponId>(event.detail)); break;
+            case EventType::WeaponFired: noteWeaponFired(event.player == kNoPlayer ? 0 : event.player, static_cast<WeaponId>(event.detail)); break;
             case EventType::EnemyKilled:
             case EventType::EliteKilled:
             case EventType::BossKilled: addCorpse(static_cast<EnemyType>(event.detail), event.pos, state.run.tick); break;
@@ -463,18 +474,33 @@ void draw(const GameState& state, float alpha) {
     const Vec2 ringCenter = aimCamera(state, alpha);
     updateGround(g_view, state.run.seed, state.run.map, maps::CrushedCars{state.run.crushed, state.run.crushedCount});
 
-    const Vec2 playerWorld = lerp(state.firstPlayer().prevPos, state.firstPlayer().pos, alpha);
-    updateSoldierAnimation(playerWorld, GetFrameTime());
+    const Vec2 playerWorld = lerp(state.localPlayer().prevPos, state.localPlayer().pos, alpha);
+    for (int slot = 0; slot < state.playerCount(); ++slot) {
+        const Player& player = state.players[slot];
+        updateSoldierAnimation(slot, slot == state.localSlot ? playerWorld : lerp(player.prevPos, player.pos, alpha), GetFrameTime());
+    }
 
     const DayLook look = dayLookAt(dayClock(state));
     const uint32_t tick = state.run.tick;
     const bool flicker = effects::flickerAllowed() && g_quality > 0;
 
     const int zombies = collectVisibleZombies(state, alpha, look.shadowLength);
-    VisibleFigure& playerFigure = g_visible[zombies];
-    playerFigure.feet = project(g_view, playerWorld);
-    playerFigure.enemyIndex = static_cast<uint16_t>(kPlayerSlot);
-    const int figures = zombies + 1;
+    // Every player is a figure in the depth sort. This screen's own soldier is always drawn,
+    // and the others when they are near enough to be in the picture.
+    int figures = zombies;
+    int localFigure = zombies;
+    for (int slot = 0; slot < state.playerCount(); ++slot) {
+        const Player& player = state.players[slot];
+        const Vec2 world = slot == state.localSlot ? playerWorld : lerp(player.prevPos, player.pos, alpha);
+        const ScreenPoint feet = project(g_view, world);
+        if (slot != state.localSlot && !onTarget(g_view, feet, 40.0f, 60.0f, 40.0f)) continue;
+        if (slot == state.localSlot) localFigure = figures;
+        g_visible[figures].feet = feet;
+        g_visible[figures].enemyIndex = static_cast<uint16_t>(kPlayerSlot + slot);
+        figures++;
+    }
+    const VisibleFigure& playerFigure = g_visible[localFigure];
+    g_lastPlayerFigures = figures - zombies;
     sortByDepth(figures);
 
     BeginTextureMode(g_target);
@@ -506,6 +532,12 @@ void draw(const GameState& state, float alpha) {
     // The ring sits on the unshaken camera position, the same whole art pixel as his
     // feet, so it never wobbles around him as he walks.
     drawSoldierRing(g_view, ringCenter);
+    for (int i = zombies; i < figures; ++i) {
+        const int slot = g_visible[i].enemyIndex - kPlayerSlot;
+        if (slot == state.localSlot) continue;
+        const Player& other = state.players[slot];
+        drawTeammateRing(g_view, lerp(other.prevPos, other.pos, alpha), slot);
+    }
     endFlat();
 
     // From here to the end of the figures, a car's pixels hide what stands behind them.
@@ -523,8 +555,10 @@ void draw(const GameState& state, float alpha) {
     // All shadows go down before any figure, so none falls across a body.
     const bool longShadows = look.shadowLength > 0.02f;
     const int shadowBudget = g_fastMode ? kLongShadowBudgetFast : kLongShadowBudget;
-    setSpriteDepth(depthOfRow(g_view, playerFigure.feet.y));
-    drawSoldierShadow(state, playerFigure.feet, look);
+    for (int i = zombies; i < figures; ++i) {
+        setSpriteDepth(depthOfRow(g_view, g_visible[i].feet.y));
+        drawSoldierShadow(state, g_visible[i].enemyIndex - kPlayerSlot, g_visible[i].feet, look);
+    }
     for (int i = 0; i < zombies; ++i) {
         const VisibleFigure& figure = g_visible[i];
         const Enemy& enemy = state.enemies[figure.enemyIndex];
@@ -542,7 +576,7 @@ void draw(const GameState& state, float alpha) {
     for (int i = 0; i < figures; ++i) drawFigure(state, g_visible[g_drawOrder[i]]);
     // He shows faintly through anything standing in front of him, so he can't be lost.
     setSpriteDepth(kDepthNearest);
-    drawSoldier(state, playerFigure.feet, kSoldierSeeThrough);
+    drawSoldier(state, state.localSlot, playerFigure.feet, kSoldierSeeThrough);
     endSprites();
     rlEnableDepthMask();
     rlDisableDepthTest();
@@ -583,7 +617,7 @@ void draw(const GameState& state, float alpha) {
     beginSprites();
     drawSmoke(g_view, tick);
     drawAirSprites(g_view, state, alpha);
-    drawMuzzleFlash(state, playerFigure.feet);
+    for (int i = zombies; i < figures; ++i) drawMuzzleFlash(state, g_visible[i].enemyIndex - kPlayerSlot, g_visible[i].feet);
     endSprites();
 
     // The neon layer, any full-screen flash, then the numbers.
@@ -609,7 +643,7 @@ extern "C" {
 // Test hook: what the renderer drew on its last frame, which the simulation can't report.
 EMSCRIPTEN_KEEPALIVE const char* ls_query_world() {
     using namespace ls::worldview;
-    static char json[768];
+    static char json[1024];
     const SoldierDebug soldier = g_lastDrawnState ? soldierDebug(*g_lastDrawnState) : SoldierDebug{};
     // The car nearest the soldier, whose feet are at the anchor.
     CarOnScreen car{};
@@ -627,13 +661,13 @@ EMSCRIPTEN_KEEPALIVE const char* ls_query_world() {
     const ScreenPoint boxTopLeft = project(g_view, car.boxMin);
     const ScreenPoint boxBottomRight = project(g_view, car.boxMax);
     std::snprintf(json, sizeof(json),
-                  "{\"telegraphing\":%d,\"telegraphsShown\":%d,\"heldGun\":%d,\"muzzleFrames\":%d,\"chunkPaints\":%d,\"cars\":%d,\"crushed\":%d,\"flatSwap\":%d,\"silhouettes\":%d,\"covers\":%d,\"coversDropped\":%d,\"pixelScale\":%.3f,\"car\":[%.1f,%.1f,%.1f,%.1f],\"carBox\":[%.1f,%.1f,%.1f,%.1f],\"worldBox\":[%.1f,%.1f,%.1f,%.1f],\"prop\":[%.1f,%.1f,%.1f,%.1f],\"spot\":[%.1f,%.1f]}",
+                  "{\"telegraphing\":%d,\"telegraphsShown\":%d,\"heldGun\":%d,\"muzzleFrames\":%d,\"chunkPaints\":%d,\"cars\":%d,\"crushed\":%d,\"flatSwap\":%d,\"silhouettes\":%d,\"covers\":%d,\"coversDropped\":%d,\"pixelScale\":%.3f,\"car\":[%.1f,%.1f,%.1f,%.1f],\"carBox\":[%.1f,%.1f,%.1f,%.1f],\"worldBox\":[%.1f,%.1f,%.1f,%.1f],\"prop\":[%.1f,%.1f,%.1f,%.1f],\"spot\":[%.1f,%.1f],\"soldiers\":%d}",
                   g_telegraphCount, g_telegraphsShown, soldier.heldGun, soldier.muzzleFrames, groundPaintCount(), g_carCount, g_lastDrawnState ? g_lastDrawnState->run.crushedCount : 0, groundLastSwapSize(), g_silhouettesShown, g_coverCount, coversDropped(),
                   static_cast<double>(g_view.pixelScale), static_cast<double>(car.left), static_cast<double>(car.top), static_cast<double>(car.right), static_cast<double>(car.bottom),
                   static_cast<double>(boxTopLeft.x), static_cast<double>(boxTopLeft.y), static_cast<double>(boxBottomRight.x), static_cast<double>(boxBottomRight.y),
                   static_cast<double>(car.boxMin.x), static_cast<double>(car.boxMin.y), static_cast<double>(car.boxMax.x), static_cast<double>(car.boxMax.y),
                   static_cast<double>(prop[0]), static_cast<double>(prop[1]), static_cast<double>(prop[2]), static_cast<double>(prop[3]),
-                  static_cast<double>(prop[4]), static_cast<double>(prop[5]));
+                  static_cast<double>(prop[4]), static_cast<double>(prop[5]), g_lastPlayerFigures);
     return json;
 }
 }

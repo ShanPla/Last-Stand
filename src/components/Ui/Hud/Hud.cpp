@@ -200,7 +200,7 @@ input::Rect dashButtonRect() {
 HudPresses drawHud(const GameState& state, float hintAlpha, bool playing) {
     const Layout& l = layout();
     const float u = l.u;
-    const Player& player = state.firstPlayer();
+    const Player& player = state.localPlayer();
     const RunState& run = state.run;
 
     const float hpFraction = player.maxHp > 0.0f ? std::max(0.0f, player.hp / player.maxHp) : 0.0f;

@@ -5,6 +5,8 @@
 #include "components/Input/Input.h"
 #include "components/Maps/Maps.h"
 #include "components/Net/Net.h"
+#include "components/NetGame/NetGame.h"
+#include "components/Ui/CoopHud/CoopHud.h"
 #include "components/Ui/CoopScreens/CoopScreens.h"
 #include "components/Ui/Font/Font.h"
 #include "components/Ui/GameOverScreen/GameOverScreen.h"
@@ -79,6 +81,7 @@ enum DebugCommand {
     kCrushNearestCar = 45,  // Flattens the car nearest the soldier.
     kBossBesideCar = 46,    // The boss about to walk over a car, with the simulation running.
     kKillBoss = 47,         // Takes the boss's HP away, so the next step kills it as a last hit would.
+    kLevelUpSlot = 48,      // Co-op host: gives the player in this slot the XP for their next level.
 };
 
 // Which screen is showing. Level-up is not here: it is a phase of a running game.
@@ -127,6 +130,14 @@ ui::LevelUpChoice g_pendingChoice;
 // can't dash a moment later.
 bool g_pendingDash = false;
 bool g_holdSim = false;  // Debug only: the simulation stands still, for screenshots.
+
+// Co-op. The host's tab being hidden pauses everyone, and the browser may not draw another
+// frame until it comes back, so this is set straight from the page's event.
+bool g_hostAway = false;
+bool g_netOverlay = false;       // The network debug overlay, toggled with F3.
+bool g_cardsWereOpen = false;    // Co-op cards open over the running game, so their delay restarts each time.
+bool g_slotConnected[kMaxPlayers] = {true, true, true, true};
+char g_netDebug[640] = "";
 
 float smooth(float average, float sample) { return average + (sample - average) * 0.05f; }
 float smoothstep01(float t) {
@@ -191,6 +202,7 @@ maps::MapId selectedMap() { return maps::mapFromIndex(save::current().map); }
 void startDemo() {
     worldview::setFixedDayTime(theme::kDuskSeconds);
     effects::reset();
+    g_state->localSlot = 0;
     sim::newRun(*g_state, kDemoSeed, Difficulty::Normal, selectedMap());
     for (WeaponId id : {WeaponId::Shotgun, WeaponId::Smg, WeaponId::Flamethrower, WeaponId::Tesla, WeaponId::Blades}) {
         weapons::grant(*g_state, 0, id);
@@ -205,10 +217,14 @@ void startDemo() {
     setScreen(Screen::Title);
 }
 
-void startRun(uint64_t seed) {
+bool coopRun() { return netgame::role() != netgame::Role::None; }
+bool coopHost() { return netgame::role() == netgame::Role::Host; }
+bool coopGuest() { return netgame::role() == netgame::Role::Client; }
+
+// Everything a new run on screen needs, after its state has been made.
+void showNewRun() {
     worldview::setFixedDayTime(-1.0f);
     effects::reset();
-    sim::newRun(*g_state, seed != 0 ? seed : pickSeed(), save::current().difficulty, selectedMap(), save::current().mode);
     g_inDemo = false;
     g_accumulator = 0.0f;
     g_pendingChoice = ui::LevelUpChoice{};
@@ -218,8 +234,66 @@ void startRun(uint64_t seed) {
     g_runStartFade = 1.0f;
     g_lastPhase = RunPhase::Playing;
     g_phaseAge = 0.0f;
+    g_cardsWereOpen = false;
     ui::resetLevelUpCards();
     setScreen(Screen::Playing);
+}
+
+// The names and colors of a co-op run's players, from the lobby, kept for the whole run.
+void showNewCoopRun() {
+    const net::Lobby& lobby = net::lobby();
+    const char* names[kMaxPlayers] = {};
+    int colors[kMaxPlayers] = {0, 1, 2, 3};
+    for (int slot = 0; slot < kMaxPlayers; ++slot) {
+        const int id = netgame::netIdOf(slot);
+        g_slotConnected[slot] = true;
+        if (id < 0) continue;
+        colors[slot] = id;
+        for (int i = 0; i < lobby.count; ++i) {
+            if (lobby.players[i].id == id) names[slot] = lobby.players[i].name;
+        }
+    }
+    ui::coopHudBeginRun(names, colors);
+    worldview::setPlayerColors(colors);
+    showNewRun();
+}
+
+void startRun(uint64_t seed) {
+    // The co-op host's Restart starts another run for the whole room.
+    if (coopHost()) {
+        netgame::hostRestart(*g_state, seed != 0 ? seed : pickSeed());
+        showNewCoopRun();
+        return;
+    }
+    g_state->localSlot = 0;
+    sim::newRun(*g_state, seed != 0 ? seed : pickSeed(), save::current().difficulty, selectedMap(), save::current().mode);
+    showNewRun();
+}
+
+// The host pressed Start: this machine runs the real game, with the lobby's players in it.
+// The host is slot 0, and the others follow in the lobby's order.
+void startCoopHost() {
+    const net::Lobby& lobby = net::lobby();
+    netgame::RunStart start;
+    start.runNumber = 1;
+    start.seed = pickSeed();
+    start.map = selectedMap();
+    start.difficulty = save::current().difficulty;
+    start.mode = save::current().mode;
+    start.netIds[0] = static_cast<uint8_t>(lobby.players[lobby.host].id);
+    start.playerCount = 1;
+    for (int i = 0; i < lobby.count && start.playerCount < kMaxPlayers; ++i) {
+        if (i != lobby.host) start.netIds[start.playerCount++] = static_cast<uint8_t>(lobby.players[i].id);
+    }
+    netgame::hostStart(*g_state, start);
+    showNewCoopRun();
+}
+
+// Leaving a co-op run on purpose: out of the room, and back to the title.
+void leaveCoop() {
+    net::leaveRoom();
+    netgame::stop();
+    g_hostAway = false;
 }
 
 void pauseGame() {
@@ -227,6 +301,8 @@ void pauseGame() {
     ui::resetPauseMenu();
     audio::playUi(audio::UiSound::Pause);
     setScreen(Screen::Paused);
+    // Only the host's pause stops the run. Everyone else is told at once.
+    if (coopHost()) netgame::hostSendPause(true, g_hostAway);
 }
 
 void openSettings(Screen from) {
@@ -253,8 +329,28 @@ void finishRun() {
     g_summary.timeSeconds = s.timeSeconds();
     g_summary.bossesKilled = s.run.bossesKilled;
     g_summary.kills = s.run.kills;
-    g_summary.level = s.firstPlayer().level;
+    g_summary.level = s.localPlayer().level;
     for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) g_summary.damageByWeapon[i] = s.run.damageByWeapon[i];
+    if (coopRun()) {
+        // Each player sees their own share of the damage, and a co-op run is never a best run:
+        // a team of four should not beat a record set alone.
+        g_summary.coop = true;
+        g_summary.canRestart = coopHost();
+        if (coopGuest() && netgame::clientRunEnded()) {
+            const netgame::RunEnd& end = netgame::clientRunEnd();
+            g_summary.won = end.phase == RunPhase::Won;
+            g_summary.timeSeconds = static_cast<float>(end.tick) * kDt;
+            g_summary.kills = end.kills;
+            g_summary.bossesKilled = end.bossesKilled;
+            g_summary.level = end.levels[s.localSlot];
+            for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) g_summary.damageByWeapon[i] = end.damageByWeapon[s.localSlot][i];
+        } else {
+            for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) g_summary.damageByWeapon[i] = s.localPlayer().damageByWeapon[i];
+        }
+        ui::resetGameOverScreen();
+        setScreen(Screen::Over);
+        return;
+    }
 
     // Best runs are kept per level and mode, so a new best only means something on the same
     // level and mode.
@@ -296,7 +392,16 @@ void runSimulation(float dtReal) {
         // One press is one dash: the first step of the frame takes it, the others don't.
         frameInput.dash = g_pendingDash;
         g_pendingDash = false;
-        sim::step(*g_state, frameInput);
+        if (coopHost()) {
+            // The host's own input is slot 0. Everyone else's comes from the network.
+            InputFrame inputs[kMaxPlayers];
+            inputs[0] = frameInput;
+            netgame::hostFillInputs(inputs, g_state->playerCount());
+            netgame::hostBeforeStep(*g_state);
+            sim::step(*g_state, inputs, g_state->playerCount());
+        } else {
+            sim::step(*g_state, frameInput);
+        }
         g_accumulator -= kDt;
         steps++;
     }
@@ -343,6 +448,131 @@ bool g_qualityPinned = false;               // Debug only: a test chose the qual
 void watchFrameRate(float rawDt) {
     if (g_qualityPinned) return;
     effects::watchFrameTime(rawDt, !g_inDemo && g_screen == Screen::Playing && g_state->run.phase == RunPhase::Playing);
+}
+
+// ---- Co-op during the run ---------------------------------------------------------
+
+bool lobbyHas(int netId) {
+    const net::Lobby& lobby = net::lobby();
+    for (int i = 0; i < lobby.count; ++i) {
+        if (lobby.players[i].id == netId) return true;
+    }
+    return false;
+}
+
+const net::LobbyPlayer* lobbyPlayer(int netId) {
+    const net::Lobby& lobby = net::lobby();
+    for (int i = 0; i < lobby.count; ++i) {
+        if (lobby.players[i].id == netId) return &lobby.players[i];
+    }
+    return nullptr;
+}
+
+// The round trip to the host, or for the host the slowest player, in milliseconds.
+int coopPing() {
+    int worst = -1;
+    for (int slot = 0; slot < g_state->playerCount(); ++slot) {
+        if (slot == g_state->localSlot) continue;
+        if (coopGuest() && slot != 0) continue;
+        const net::LobbyPlayer* player = lobbyPlayer(netgame::netIdOf(slot));
+        if (player && player->rttMs > worst) worst = player->rttMs;
+    }
+    return worst;
+}
+
+const char* coopTransport() {
+    const int target = coopGuest() ? 0 : (g_state->playerCount() > 1 ? 1 : 0);
+    const net::LobbyPlayer* player = lobbyPlayer(netgame::netIdOf(target));
+    return player ? net::transportName(player->transport) : "none";
+}
+
+// The room is gone: the host left, or the server was lost. The run ends here, and the co-op
+// screens show why (they read the reason from the lobby).
+void endCoopToLobby() {
+    netgame::stop();
+    g_hostAway = false;
+    startDemo();
+    setScreen(Screen::Coop);
+}
+
+// Once a frame, before anything is stepped: starts a co-op run when the host presses Start,
+// notices when the room closes, and keeps track of who is still connected.
+void watchCoop() {
+    const net::Lobby& lobby = net::lobby();
+    if (!coopRun()) {
+        if (g_screen == Screen::Coop && lobby.phase == net::LobbyPhase::Starting) {
+            if (lobby.you >= 0 && lobby.you == lobby.host) startCoopHost();
+            else netgame::clientListen();
+        }
+        return;
+    }
+    if (lobby.phase != net::LobbyPhase::Starting) {
+        endCoopToLobby();
+        return;
+    }
+    if (coopHost()) netgame::hostReceive();
+    if (coopGuest() && netgame::clientNewRun(*g_state)) showNewCoopRun();
+    if (g_inDemo) return;
+    // A player missing from the room has left. The host keeps them in the run, down and still.
+    for (int slot = 0; slot < g_state->playerCount(); ++slot) {
+        const bool here = lobbyHas(netgame::netIdOf(slot));
+        if (here == g_slotConnected[slot]) continue;
+        g_slotConnected[slot] = here;
+        if (coopHost()) netgame::hostSetConnected(slot, here);
+        if (!here) {
+            char message[64];
+            std::snprintf(message, sizeof(message), "%s left the run", ui::coopHudName(slot)[0] ? ui::coopHudName(slot) : "A player");
+            ui::coopHudNotice(message);
+        }
+    }
+}
+
+// Events about another player are theirs to hear and see: a teammate's level-up or pickup
+// must not sound like this player's own. Events about nobody (a zombie hit) stay, and so do
+// the ones everyone should know about, like a teammate going down.
+void keepEventsForThisPlayer() {
+    if (!coopRun()) return;
+    const int local = g_state->localSlot;
+    int kept = 0;
+    for (int i = 0; i < g_state->events.count; ++i) {
+        const SimEvent& event = g_state->events[i];
+        const bool shared = event.type == EventType::PlayerDowned || event.type == EventType::PlayerRevived || event.type == EventType::PlayerDied;
+        if (event.player != kNoPlayer && event.player != local && !shared) continue;
+        g_state->events.items[kept++] = event;
+    }
+    g_state->events.count = kept;
+}
+
+void buildNetDebug() {
+    const netgame::Stats& st = netgame::stats();
+    int n = std::snprintf(g_netDebug, sizeof(g_netDebug), "NET %s  slot %d of %d  via %s\nping %d ms  server %d ms\nsnapshots out %d/s  in %d/s  age %.0f ms\nsnapshot %d B  avg %d  max %d\nmessages out %d/s  in %d/s\nbytes out %.1f KB/s  in %.1f KB/s\nprediction fixes %d  jumps %d  last %.1f",
+                          coopHost() ? "host" : "guest", g_state->localSlot, g_state->playerCount(), coopTransport(), coopPing(), net::lobby().serverRttMs,
+                          st.snapshotsOutPerSec, st.snapshotsInPerSec, static_cast<double>(st.snapshotAge * 1000.0f), st.lastSnapshotBytes,
+                          st.avgSnapshotBytes, st.maxSnapshotBytes, st.messagesOutPerSec, st.messagesInPerSec,
+                          static_cast<double>(st.bytesOutPerSec) / 1024.0, static_cast<double>(st.bytesInPerSec) / 1024.0, st.corrections, st.snaps,
+                          static_cast<double>(st.predictionError));
+    // Each other player's own line, as the relay and the browser count them.
+    for (int slot = 0; slot < g_state->playerCount() && n > 0 && n < static_cast<int>(sizeof(g_netDebug)) - 80; ++slot) {
+        if (slot == g_state->localSlot || (coopGuest() && slot != 0)) continue;
+        const net::LobbyPlayer* player = lobbyPlayer(netgame::netIdOf(slot));
+        if (!player) continue;
+        n += std::snprintf(g_netDebug + n, sizeof(g_netDebug) - static_cast<size_t>(n), "\n%s: %s %d ms  %d/%d msg/s", ui::coopHudName(slot),
+                           net::transportName(player->transport), std::max(0, player->rttMs), player->msgsOutPerSec, player->msgsInPerSec);
+    }
+}
+
+void drawCoopOverlay(float dtReal) {
+    ui::CoopHudView view;
+    view.hostAway = coopGuest() ? netgame::clientHostAway() : false;
+    view.hostPaused = coopGuest() && netgame::clientHostPaused();
+    view.pingMs = coopPing();
+    view.snapshotAge = coopGuest() ? netgame::stats().snapshotAge : 0.0f;
+    for (int slot = 0; slot < kMaxPlayers; ++slot) view.connected[slot] = g_slotConnected[slot];
+    if (g_netOverlay) {
+        buildNetDebug();
+        view.debugText = g_netDebug;
+    }
+    ui::drawCoopHud(*g_state, view, dtReal);
 }
 
 // ---- Drawing --------------------------------------------------------------------
@@ -401,7 +631,12 @@ static void drawUiPass(float dtReal, bool playing) {
     ui::setFade(1.0f);
     // The HUD belongs to play only. Menus and the level-up cards cover the world, and
     // the cards show the build themselves.
-    if (!g_inDemo && g_screen == Screen::Playing && g_state->run.phase != RunPhase::LevelUp) {
+    const bool coopCards = coopRun() && !g_inDemo && g_screen == Screen::Playing && g_state->localPlayer().cardsOpen && g_state->run.phase == RunPhase::Playing;
+    if (coopCards != g_cardsWereOpen) {
+        g_cardsWereOpen = coopCards;
+        ui::resetLevelUpCards();
+    }
+    if (!g_inDemo && g_screen == Screen::Playing && g_state->run.phase != RunPhase::LevelUp && !coopCards) {
         // The boss bar needs the space at the bottom, so the hint gives way to it.
         const float hintAlpha = g_state->run.bossSpawned ? 0.0f : 1.0f - smoothstep01((g_moveTime - 0.4f) / 0.6f);
         const ui::HudPresses presses = ui::drawHud(*g_state, hintAlpha, playing);
@@ -410,6 +645,7 @@ static void drawUiPass(float dtReal, bool playing) {
         // Always there on a touch screen, so the thumb knows where to go before it lands.
         if (playing && g_input.lastDevice == input::Device::Touch) ui::drawVirtualJoystick(g_input);
     }
+    if (coopRun() && !g_inDemo && g_screen == Screen::Playing) drawCoopOverlay(dtReal);
 
     switch (g_screen) {
         case Screen::Title: {
@@ -443,7 +679,17 @@ static void drawUiPass(float dtReal, bool playing) {
             break;
         }
         case Screen::Playing:
-            if (g_state->run.phase == RunPhase::LevelUp) {
+            if (coopCards) {
+                // Co-op: the cards open over the running game, and only this player waits.
+                ui::setFade(1.0f);
+                const ui::LevelUpChoice choice = ui::drawLevelUpCards(*g_state, dtReal);
+                if (coopGuest()) {
+                    netgame::clientPickCard(*g_state, choice.card, choice.reroll);
+                } else if (g_pendingChoice.card < 0 && !g_pendingChoice.reroll) {
+                    if (choice.card >= 0) g_pendingChoice.card = choice.card;
+                    else if (choice.reroll) g_pendingChoice.reroll = true;
+                }
+            } else if (g_state->run.phase == RunPhase::LevelUp) {
                 ui::setFade(smoothstep01(g_phaseAge / kScreenFadeSeconds));
                 const ui::LevelUpChoice choice = ui::drawLevelUpCards(*g_state, dtReal);
                 // One action until a step uses it. On a fast display several frames can pass
@@ -458,13 +704,17 @@ static void drawUiPass(float dtReal, bool playing) {
             break;
         case Screen::Paused: {
             ui::setFade(screenFade);
-            const ui::PauseAction action = ui::drawPauseMenu(*g_state);
+            const ui::PauseKind kind = coopHost() ? ui::PauseKind::CoopHost : (coopGuest() ? ui::PauseKind::CoopGuest : ui::PauseKind::Solo);
+            const ui::PauseAction action = ui::drawPauseMenu(*g_state, kind);
             if (action == ui::PauseAction::Resume) {
                 audio::playUi(audio::UiSound::Back);
                 setScreen(Screen::Playing);
             } else if (action == ui::PauseAction::Settings) openSettings(Screen::Paused);
-            else if (action == ui::PauseAction::Restart) startRun(0);
-            else if (action == ui::PauseAction::Quit) startDemo();
+            else if (action == ui::PauseAction::Restart && !coopGuest()) startRun(0);
+            else if (action == ui::PauseAction::Quit) {
+                if (coopRun()) leaveCoop();
+                startDemo();
+            }
             break;
         }
         case Screen::Settings: {
@@ -487,8 +737,11 @@ static void drawUiPass(float dtReal, bool playing) {
         }
         case Screen::Over: {
             const ui::GameOverAction action = ui::drawGameOverScreen(g_summary, g_screenAge);
-            if (action == ui::GameOverAction::Restart) startRun(0);
-            else if (action == ui::GameOverAction::Quit) startDemo();
+            if (action == ui::GameOverAction::Restart && !coopGuest()) startRun(0);
+            else if (action == ui::GameOverAction::Quit) {
+                if (coopRun()) leaveCoop();
+                startDemo();
+            }
             break;
         }
     }
@@ -509,11 +762,12 @@ void frame() {
     g_frameMs = smooth(g_frameMs, rawDt * 1000.0f);
     const float dtReal = std::min(rawDt, 0.1f);
     net::update(dtReal);
+    watchCoop();
 
     // Input. The joystick only exists while playing, and a touch that starts on the
-    // pause button must press it instead.
+    // pause button must press it instead. A co-op player choosing a card stands still.
     const bool running = !g_inDemo && g_screen == Screen::Playing;
-    const bool playing = running && g_state->run.phase == RunPhase::Playing;
+    const bool playing = running && g_state->run.phase == RunPhase::Playing && !(coopRun() && g_state->localPlayer().cardsOpen);
     input::setJoystickEnabled(playing);
     input::setJoystickHome(ui::joystickHome());
     const input::Rect blockers[2] = {ui::pauseButtonRect(), ui::dashButtonRect()};
@@ -534,8 +788,10 @@ void frame() {
     if (!playing) g_pendingDash = false;
     else if (g_input.dash) g_pendingDash = true;
 
-    // Leaving the tab or window pauses at once, so no damage is taken unseen.
-    if (platform::consumeFocusLost()) pauseGame();
+    // Leaving the tab or window pauses at once, so no damage is taken unseen. In co-op only
+    // the host can pause, because the host's pause stops the run for everyone.
+    if (platform::consumeFocusLost() && !coopGuest()) pauseGame();
+    if (g_input.netOverlay) g_netOverlay = !g_netOverlay;
 
     // Back keys: pause while playing, and step back out of menus.
     if (g_input.back) {
@@ -560,18 +816,30 @@ void frame() {
     const bool demoRuns = g_inDemo && g_screen != Screen::Over;
     if (g_inDemo) {
         if (demoRuns) runDemo(dtReal);
+    } else if (coopGuest()) {
+        // A guest never steps the simulation. The host's snapshots fill the state, and only
+        // this player's own soldier is predicted, from the same input the host will get.
+        netgame::clientFrame(*g_state, dtReal, playing ? g_input.moveX : 0.0f, playing ? g_input.moveY : 0.0f, playing && g_pendingDash);
+        g_pendingDash = false;
+        if (playing && std::hypot(g_input.moveX, g_input.moveY) > 0.2f) g_moveTime += dtReal;
     } else if (g_screen == Screen::Playing) {
         if (g_showcase) worldview::tickShowcase(*g_state);
         else if (!g_holdSim) runSimulation(simDt);
         if (playing && std::hypot(g_input.moveX, g_input.moveY) > 0.2f) g_moveTime += dtReal;
     }
 
+    // The host sends this frame's world to the others before the events are cleared, because
+    // each player is told about the events near them.
+    if (coopHost() && !g_inDemo) netgame::hostAfterFrame(*g_state, dtReal, g_screen != Screen::Playing || g_hostAway, g_hostAway);
+
     // Events feed the sound and the effects. The demo makes no sound, and every frame's
-    // list is emptied.
+    // list is emptied. The soldiers see every player's shots first. Then, in co-op, what
+    // happened to other players is taken out, so this player only hears their own.
+    worldview::consumeEvents(*g_state);
+    keepEventsForThisPlayer();
     if (!g_inDemo) {
         for (const SimEvent& event : g_state->events) audio::onEvent(event);
     }
-    worldview::consumeEvents(*g_state);
     effects::consumeEvents(*g_state, g_inDemo);
     g_state->events.clear();
 
@@ -580,8 +848,9 @@ void frame() {
     effects::update(dtReal, !paused && (g_inDemo || g_screen == Screen::Playing || g_screen == Screen::Over));
     watchFrameRate(rawDt);
 
-    // A run that just ended goes to its summary.
-    if (!g_inDemo && g_screen == Screen::Playing && (g_state->run.phase == RunPhase::Dead || g_state->run.phase == RunPhase::Won)) finishRun();
+    // A run that just ended goes to its summary. A guest waits for the host's results.
+    const bool ended = g_state->run.phase == RunPhase::Dead || g_state->run.phase == RunPhase::Won;
+    if (!g_inDemo && (g_screen == Screen::Playing || g_screen == Screen::Paused) && (coopGuest() ? netgame::clientRunEnded() : ended)) finishRun();
     if (g_state->run.phase != g_lastPhase) {
         g_lastPhase = g_state->run.phase;
         g_phaseAge = 0.0f;
@@ -596,7 +865,7 @@ void frame() {
     audio::update(dtReal, std::min(1.0f, g_state->timeSeconds() / balance::kRunSeconds), g_state->run.bossSpawned);
 
     const double drawStart = GetTime();
-    const float alpha = g_accumulator / kDt;
+    const float alpha = coopGuest() && !g_inDemo ? netgame::clientAlpha() : g_accumulator / kDt;
     BeginDrawing();
     ClearBackground(theme::kBackground);
 
@@ -689,6 +958,43 @@ const char* queryUi() {
     }
     std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "]}");
     return json;
+}
+
+// What co-op looks like on this machine, for the browser tests: the players and zombies as
+// drawn here, and the network numbers.
+const char* queryCoop() {
+    static char json[2048];
+    const GameState& s = *g_state;
+    const netgame::Stats& st = netgame::stats();
+    const char* role = coopHost() ? "host" : (coopGuest() ? "guest" : "none");
+    int n = std::snprintf(json, sizeof(json),
+                          "{\"role\":\"%s\",\"screen\":\"%s\",\"demo\":%d,\"run\":%d,\"slot\":%d,\"count\":%d,\"phase\":%d,\"tick\":%u,\"enemies\":%d,"
+                          "\"kills\":%d,\"hostAway\":%d,\"hostPaused\":%d,\"ended\":%d,\"overlay\":%d,\"notice\":\"%s\",\"transport\":\"%s\",\"ping\":%d,"
+                          "\"snapOut\":%d,\"snapIn\":%d,\"msgOut\":%d,\"msgIn\":%d,\"bytesOut\":%d,\"bytesIn\":%d,\"snapBytes\":%d,\"snapAvg\":%d,\"snapMax\":%d,"
+                          "\"inputsIn\":%d,\"corrections\":%d,\"jumps\":%d,\"near\":[%d,%d,%d,%d],\"players\":[",
+                          role, screenName(), g_inDemo ? 1 : 0, netgame::settings().runNumber, s.localSlot, s.playerCount(), static_cast<int>(s.run.phase), s.run.tick,
+                          s.enemies.count, s.run.kills, coopGuest() && netgame::clientHostAway() ? 1 : 0, coopGuest() && netgame::clientHostPaused() ? 1 : 0,
+                          coopGuest() && netgame::clientRunEnded() ? 1 : 0, g_netOverlay ? 1 : 0, ui::coopHudLastNotice(), coopRun() ? coopTransport() : "none",
+                          coopRun() ? coopPing() : -1, st.snapshotsOutPerSec, st.snapshotsInPerSec, st.messagesOutPerSec, st.messagesInPerSec, st.bytesOutPerSec,
+                          st.bytesInPerSec, st.lastSnapshotBytes, st.avgSnapshotBytes, st.maxSnapshotBytes, st.inputsInPerSec, st.corrections, st.snaps,
+                          netgame::hostNearEnemies(0), netgame::hostNearEnemies(1), netgame::hostNearEnemies(2), netgame::hostNearEnemies(3));
+    for (int slot = 0; slot < s.playerCount() && n > 0 && n < static_cast<int>(sizeof(json)) - 160; ++slot) {
+        const Player& p = s.players[slot];
+        n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "%s{\"x\":%.2f,\"y\":%.2f,\"hp\":%.1f,\"downed\":%d,\"cards\":%d,\"level\":%d,\"connected\":%d}",
+                           slot > 0 ? "," : "", static_cast<double>(p.pos.x), static_cast<double>(p.pos.y), static_cast<double>(p.hp), p.downed ? 1 : 0,
+                           p.cardsOpen ? 1 : 0, p.level, g_slotConnected[slot] ? 1 : 0);
+    }
+    std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "]}");
+    return json;
+}
+
+// The page's tab was hidden or shown. The host's run pauses for everyone at once, because a
+// hidden tab may not draw another frame, and the others are told the host is away.
+void pageHidden(bool hidden) {
+    if (!coopHost() || g_inDemo) return;
+    g_hostAway = hidden;
+    if (hidden) pauseGame();
+    netgame::hostSendPause(g_screen != Screen::Playing || hidden, hidden);
 }
 
 void debugCommand(int command, int value) {
@@ -827,6 +1133,9 @@ void debugCommand(int command, int value) {
         case kLevelUp:
             if (!g_inDemo) upgrades::addXp(s, 0, std::max(1, s.firstPlayer().xpToNext - s.firstPlayer().xp));
             break;
+        case kLevelUpSlot:
+            if (!g_inDemo && value >= 0 && value < s.playerCount()) upgrades::addXp(s, value, std::max(1, s.players[value].xpToNext - s.players[value].xp));
+            break;
         default: break;
     }
 }
@@ -839,6 +1148,10 @@ extern "C" {
 EMSCRIPTEN_KEEPALIVE const char* ls_query_ui() { return ls::app::queryUi(); }
 // Test hook: the co-op lobby and what the co-op screens hold.
 EMSCRIPTEN_KEEPALIVE const char* ls_query_net() { return ls::ui::coopDebugJson(); }
+// Test hook: co-op during a run, as this machine sees it.
+EMSCRIPTEN_KEEPALIVE const char* ls_query_coop() { return ls::app::queryCoop(); }
+// Called by the page when its tab is hidden (1) or shown again (0).
+EMSCRIPTEN_KEEPALIVE void ls_net_page_hidden(int hidden) { ls::app::pageHidden(hidden != 0); }
 // Test hook: counters that prove each effect and setting really changes behavior.
 EMSCRIPTEN_KEEPALIVE const char* ls_query_effects() { return ls::effects::debugJson(); }
 }

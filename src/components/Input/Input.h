@@ -29,6 +29,9 @@ struct Snapshot {
     int stepX = 0;
     int stepY = 0;
     bool anyPress = false;  // Any key, button or touch went down this frame.
+    // Shows or hides the co-op network overlay: F3, or the gamepad's View (Select) button
+    // pressed while the left shoulder is held, so it is never pressed by accident.
+    bool netOverlay = false;
 
     // Text entry. Only filled while setTextInputActive(true) is in force. typed holds the printable
     // characters pressed this frame, in order. backspace repeats while the key is held.

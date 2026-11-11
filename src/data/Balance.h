@@ -649,4 +649,39 @@ inline constexpr float coopZombieHp(int players) { return kCoopZombieHp[coopInde
 inline constexpr float coopBossHp(int players) { return kCoopBossHp[coopIndex(players)]; }
 static_assert(kCoopSpawnRate[0] == 1.0f && kCoopZombieHp[0] == 1.0f && kCoopBossHp[0] == 1.0f, "single-player must not be scaled");
 
+// --- Online co-op network ------------------------------------------------------
+// The host runs the real game and sends each other player a picture of the world around
+// them (a snapshot). The others send only what they press. See components/NetGame.
+inline constexpr float kNetSnapshotsPerSecond = 20.0f;
+inline constexpr float kNetInputsPerSecond = 30.0f;
+// The biggest snapshot, in bytes. What does not fit is left out, least important last.
+inline constexpr int kNetSnapshotBytes = 8192;
+// Each input message repeats this many of the latest steps, so a lost message costs nothing.
+inline constexpr int kNetInputRepeat = 6;
+// Only things this close to a player are sent to them. The camera shows about 1280 units across,
+// and zombies spawn just out of sight at kSpawnRadius, so this reaches a little past that.
+inline constexpr float kNetViewRadius = 1250.0f;
+// The most of each kind that one snapshot carries, nearest first.
+inline constexpr int kNetMaxEnemies = 520;
+inline constexpr int kNetMaxEnemyBullets = 260;
+inline constexpr int kNetMaxProjectiles = 360;
+inline constexpr int kNetMaxGems = 220;
+inline constexpr int kNetMaxZones = 48;
+inline constexpr int kNetMaxEvents = 72;
+// The other players are drawn this far in the past, so there are almost always two snapshots
+// to blend between, even when one arrives late. 60 steps are one second.
+inline constexpr float kNetInterpDelaySteps = 6.0f;
+// The host holds a player's last input this long when no new one arrives, then stops them.
+inline constexpr int kNetHoldInputSteps = 15;
+// Inputs waiting at the host beyond this many are old, so the oldest are dropped.
+inline constexpr int kNetMaxQueuedInputs = 8;
+// A prediction this far from the host's answer is moved at once instead of smoothly.
+inline constexpr float kNetSnapDistance = 160.0f;
+// The share of a small prediction error taken away each drawn frame.
+inline constexpr float kNetCorrectionRate = 0.18f;
+// With no snapshot for this long, a player is told the host is away.
+inline constexpr float kNetHostSilentSeconds = 1.5f;
+// The host sends the run's settings again this often until each player answers.
+inline constexpr float kNetStartResendSeconds = 0.5f;
+
 }  // namespace ls::balance

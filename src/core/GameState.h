@@ -305,13 +305,20 @@ struct GameState {
     // which are hashed. So it can't make two runs differ, and it stays out of the state hash.
     ObstacleCache obstacleCache;
 
+    // Which player this screen belongs to: the camera, the HUD, the cards and "your" sounds
+    // follow them. It is 0 in single-player and for the co-op host. Only drawing, sound and the
+    // interface read it. The simulation never does, so it is not part of the state hash.
+    int localSlot = 0;
+
     float timeSeconds() const { return static_cast<float>(run.tick) * kDt; }
     int playerCount() const { return run.playerCount; }
     bool isCoop() const { return run.playerCount > 1; }
-    // Slot 0, the only player of a single-player run. Screens that show one player, such as
-    // the HUD, show this one until co-op has screens of its own.
+    // Slot 0, the only player of a single-player run, and the co-op host.
     Player& firstPlayer() { return players[0]; }
     const Player& firstPlayer() const { return players[0]; }
+    // The player this screen shows. Use this, not firstPlayer(), in anything that is drawn.
+    Player& localPlayer() { return players[localSlot]; }
+    const Player& localPlayer() const { return players[localSlot]; }
 };
 
 // A standing player is one who is not downed. Only standing players are chased, collect

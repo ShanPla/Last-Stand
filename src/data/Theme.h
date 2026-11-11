@@ -628,5 +628,31 @@ inline constexpr Color kCoopKeyDown{74, 62, 58, 255};         // The key that is
 inline constexpr Color kCoopKeyDone{112, 208, 170, 255};      // The OK key.
 // One color per player slot, none of them a warm threat color. The slot number is drawn too.
 inline constexpr Color kCoopSlotColors[4] = {{150, 200, 224, 255}, {112, 208, 170, 255}, {184, 140, 224, 255}, {240, 196, 120, 255}};
+// Co-op soldiers wear their player's color on the helmet and vest. The first is the usual
+// olive soldier, so the host looks like the single-player soldier.
+inline constexpr Ramp4 kCoopSoldierHelmets[4] = {
+    kSoldierHelmet,
+    {{{24, 56, 50, 255}, {36, 84, 74, 255}, {56, 118, 102, 255}, {84, 152, 132, 255}}},
+    {{{48, 36, 64, 255}, {72, 54, 96, 255}, {102, 78, 134, 255}, {136, 108, 170, 255}}},
+    {{{74, 54, 26, 255}, {110, 82, 38, 255}, {148, 112, 56, 255}, {186, 148, 84, 255}}},
+};
+inline constexpr Ramp4 kCoopSoldierVests[4] = {
+    kSoldierVest,
+    {{{22, 76, 84, 255}, {34, 116, 122, 255}, {58, 164, 160, 255}, {104, 212, 194, 255}}},
+    {{{58, 36, 90, 255}, {92, 58, 138, 255}, {130, 88, 184, 255}, {174, 130, 224, 255}}},
+    {{{96, 60, 18, 255}, {148, 96, 30, 255}, {200, 140, 50, 255}, {240, 190, 96, 255}}},
+};
+// The co-op overlay: name tags, revive bars, the connection mark and notices.
+inline constexpr Color kCoopTagBack{12, 12, 16, 190};          // Behind a name tag.
+inline constexpr Color kCoopDowned{255, 120, 96, 255};         // The DOWN mark over a downed player.
+inline constexpr Color kCoopReviveBack{40, 36, 44, 220};
+inline constexpr Color kCoopReviveFill{112, 208, 170, 255};    // A cool color: getting someone up is a reward.
+inline constexpr Color kCoopSignalGood{112, 208, 170, 255};
+inline constexpr Color kCoopSignalFair{240, 196, 120, 255};
+inline constexpr Color kCoopSignalPoor{222, 92, 60, 255};
+inline constexpr Color kCoopSignalOff{70, 66, 72, 255};
+inline constexpr Color kCoopBannerBack{14, 12, 18, 220};       // Behind "Host is away" and the drop notices.
+inline constexpr Color kCoopBannerText{255, 196, 64, 255};
+inline constexpr Color kCoopDebugBack{8, 8, 12, 200};          // Behind the network debug overlay.
 
 }  // namespace ls::theme

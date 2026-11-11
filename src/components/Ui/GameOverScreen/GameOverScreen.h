@@ -17,6 +17,10 @@ struct RunSummary {
     bool newBestTime = false;
     bool newBestKills = false;
     bool newBestLevel = false;
+    // Co-op: runs are not kept as best runs, Quit leaves the room, and only the host can
+    // start another run. A guest waits for the host instead.
+    bool coop = false;
+    bool canRestart = true;
 };
 
 enum class GameOverAction { None, Restart, Quit };

@@ -13,6 +13,13 @@ void init();
 // simulation step and the latest one.
 void draw(const GameState& state, float alpha);
 
+// Where a point of the world, lifted this many art pixels off the ground, was drawn on the last
+// frame, in screen pixels. Returns false when it is off screen. The co-op name tags use this.
+bool screenPosition(Vec2 world, float liftArtPixels, float* x, float* y);
+
+// Co-op: the color each player slot wears, as an index into theme::kCoopSlotColors.
+void setPlayerColors(const int colors[kMaxPlayers]);
+
 // Reads this frame's simulation events, for things like muzzle flash timing. What it
 // starts belongs to the renderer, so the simulation is never changed.
 void consumeEvents(const GameState& state);

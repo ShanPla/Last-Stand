@@ -91,7 +91,7 @@ ZombieLook lookOf(const GameState& state, const Enemy& enemy, const ScreenPoint&
     const Figure figure = figureOf(state, enemy);
     const int step = stepForEnemy(enemy, feet.scale);
 
-    Vec2 toward = state.firstPlayer().pos - enemy.pos;
+    Vec2 toward = state.players[enemy.target < state.playerCount() ? enemy.target : 0].pos - enemy.pos;
     bool flashing = false;
     int pose;
     const int frames = enemy.type == EnemyType::Boss ? kBossWalkFrames : kWalkFrames;
@@ -351,8 +351,11 @@ struct SoldierState {
     bool seenAny = false;
 };
 
-SoldierState g_soldierState;
-DashPath g_dashPath;
+// One per player slot. In single-player only the first is used.
+SoldierState g_soldierStates[kMaxPlayers];
+// Each co-op player's color, as an index into the team rows of the palette.
+uint8_t g_teamColor[kMaxPlayers] = {0, 1, 2, 3};
+DashPath g_dashPath;          // The dash trail is only drawn for this screen's own soldier.
 uint32_t g_dashPathTick = 0;  // The simulation step the path was last added to.
 int g_muzzleFrames = 0;  // Only read by the browser tests.
 
@@ -370,32 +373,37 @@ constexpr uint8_t kTrailWash = 110;      // How far a copy mixes toward the pale
 
 bool isHeldGun(WeaponId weapon) { return weapon != WeaponId::Blades && weapon != WeaponId::Landmines; }
 
-WeaponId heldGun(const GameState& state) {
-    if (g_soldierState.seenAny) return g_soldierState.gun;
-    for (int i = 0; i < state.firstPlayer().weaponCount; ++i) {
-        if (isHeldGun(state.firstPlayer().weapons[i].id)) return state.firstPlayer().weapons[i].id;
+WeaponId heldGun(const GameState& state, int slot) {
+    if (g_soldierStates[slot].seenAny) return g_soldierStates[slot].gun;
+    const Player& player = state.players[slot];
+    for (int i = 0; i < player.weaponCount; ++i) {
+        if (isHeldGun(player.weapons[i].id)) return player.weapons[i].id;
     }
     return WeaponId::Rifle;
 }
 
-bool gunEvolved(const GameState& state, WeaponId gun) {
-    for (int i = 0; i < state.firstPlayer().weaponCount; ++i) {
-        if (state.firstPlayer().weapons[i].id == gun) return state.firstPlayer().weapons[i].evolved;
+bool gunEvolved(const GameState& state, int slot, WeaponId gun) {
+    const Player& player = state.players[slot];
+    for (int i = 0; i < player.weaponCount; ++i) {
+        if (player.weapons[i].id == gun) return player.weapons[i].evolved;
     }
     return false;
 }
 
 // True while the gun in his hands is reloading.
-bool reloading(const GameState& state, WeaponId gun) {
-    for (int i = 0; i < state.firstPlayer().weaponCount; ++i) {
-        if (state.firstPlayer().weapons[i].id == gun) return state.firstPlayer().weapons[i].reloadLeft > 0.0f;
+bool reloading(const GameState& state, int slot, WeaponId gun) {
+    const Player& player = state.players[slot];
+    for (int i = 0; i < player.weaponCount; ++i) {
+        if (player.weapons[i].id == gun) return player.weapons[i].reloadLeft > 0.0f;
     }
     return false;
 }
 
-Heading soldierHeading(const GameState& state) {
-    if (g_soldierState.sinceFired < kAimHoldSeconds) return headingFrom(state.firstPlayer().aim);
-    return headingFrom(g_soldierState.moving ? state.firstPlayer().facing : state.firstPlayer().aim);
+Heading soldierHeading(const GameState& state, int slot) {
+    const Player& player = state.players[slot];
+    const SoldierState& s = g_soldierStates[slot];
+    if (s.sinceFired < kAimHoldSeconds) return headingFrom(player.aim);
+    return headingFrom(s.moving ? player.facing : player.aim);
 }
 
 // Index 0 aims straight up the screen, and the last straight down. Left is mirrored.
@@ -405,34 +413,49 @@ int gunAngleIndex(Vec2 aim) {
     return std::clamp(static_cast<int>(position + 0.5f), 0, kGunAngles - 1);
 }
 
-int bodyPose(uint32_t tick) {
-    if (!g_soldierState.moving) return kSoldierIdlePose + static_cast<int>((tick / 40u) & 1u);
-    const float cycle = g_soldierState.stride / kStrideLength;
+int bodyPose(int slot, uint32_t tick) {
+    const SoldierState& s = g_soldierStates[slot];
+    if (!s.moving) return kSoldierIdlePose + static_cast<int>((tick / 40u) & 1u);
+    const float cycle = s.stride / kStrideLength;
     const float wrapped = cycle - std::floor(cycle);
     return std::min(kSoldierWalkFrames - 1, static_cast<int>(wrapped * static_cast<float>(kSoldierWalkFrames)));
 }
 
+// A single-player soldier keeps his own colors. In co-op each one wears his player's color.
+uint8_t soldierRow(const GameState& state, int slot) {
+    if (!state.isCoop()) return kRowBase;
+    return static_cast<uint8_t>(kRowTeam + g_teamColor[slot] % kTeamRows);
+}
+
+// Lying on the ground: dead at the end of a run, or a co-op player who is down.
+bool lyingDown(const GameState& state, int slot) { return state.run.phase == RunPhase::Dead || state.players[slot].downed; }
+
 }  // namespace
 
-void noteWeaponFired(WeaponId weapon) {
+void setSoldierColors(const int colors[kMaxPlayers]) {
+    for (int slot = 0; slot < kMaxPlayers; ++slot) g_teamColor[slot] = static_cast<uint8_t>((colors[slot] < 0 ? slot : colors[slot]) % kTeamRows);
+}
+
+void noteWeaponFired(int slot, WeaponId weapon) {
     // Mines are dropped and blades circle by themselves, so neither moves the gun in his
     // hands. Treating them as shots would flash and kick a gun that never fired.
-    if (!isHeldGun(weapon)) return;
-    g_soldierState.sinceFired = 0.0f;
-    g_soldierState.firedThisFrame = true;
-    g_soldierState.gun = weapon;
-    g_soldierState.seenAny = true;
+    if (!isHeldGun(weapon) || slot < 0 || slot >= kMaxPlayers) return;
+    SoldierState& s = g_soldierStates[slot];
+    s.sinceFired = 0.0f;
+    s.firedThisFrame = true;
+    s.gun = weapon;
+    s.seenAny = true;
 }
 
 void resetSoldierAnimation() {
-    g_soldierState = SoldierState{};
+    for (SoldierState& s : g_soldierStates) s = SoldierState{};
     g_dashPath.clear();
 }
 
-SoldierDebug soldierDebug(const GameState& state) { return {static_cast<int>(heldGun(state)), g_muzzleFrames}; }
+SoldierDebug soldierDebug(const GameState& state) { return {static_cast<int>(heldGun(state, state.localSlot)), g_muzzleFrames}; }
 
-void updateSoldierAnimation(Vec2 feetWorld, float realDt) {
-    SoldierState& s = g_soldierState;
+void updateSoldierAnimation(int slot, Vec2 feetWorld, float realDt) {
+    SoldierState& s = g_soldierStates[slot];
     const float moved = distance(feetWorld, s.lastFeet);
     s.lastFeet = feetWorld;
     // A big jump means a new run or a debug move, not walking.
@@ -454,26 +477,33 @@ void drawSoldierRingOverCrowd(const View& view, Vec2 worldFeet) {
     groundRing(view, worldFeet, balance::kPlayerRadius * 1.9f, 4.0f, 3, fade(theme::kPlayerRing, 0.7f));
 }
 
-void drawSoldierShadow(const GameState& state, const ScreenPoint& feet, const DayLook& look) {
+void drawTeammateRing(const View& view, Vec2 worldFeet, int slot) {
+    // A thinner ring than this screen's own soldier, in his player's color.
+    groundRing(view, worldFeet, balance::kPlayerRadius * 1.9f, 3.0f, 3, fade(theme::kCoopSlotColors[g_teamColor[slot] % kTeamRows], 0.8f));
+}
+
+void drawSoldierShadow(const GameState& state, int slot, const ScreenPoint& feet, const DayLook& look) {
     const int x = roundToInt(feet.x);
     const int y = roundToInt(feet.y);
     spriteQuad(itemSprite(Item::ShadowMedium), x, y, false, kRowShadow, 0);
-    if (look.shadowLength > 0.02f) {
-        const Heading heading = soldierHeading(state);
-        const SpriteRef& body = soldierBody(heading.facing, bodyPose(state.run.tick));
+    // A co-op player lying down casts no standing shadow.
+    if (look.shadowLength > 0.02f && !state.players[slot].downed) {
+        const Heading heading = soldierHeading(state, slot);
+        const SpriteRef& body = soldierBody(heading.facing, bodyPose(slot, state.run.tick));
         const float height = static_cast<float>(body.h);
         shadowQuad(body, x, y, heading.mirror, height * look.shadowLength * kShadowLeanX, -height * look.shadowLength * kShadowLeanY);
     }
 }
 
-void drawSoldier(const GameState& state, const ScreenPoint& feet, uint8_t strength) {
-    const Player& player = state.firstPlayer();
+void drawSoldier(const GameState& state, int slot, const ScreenPoint& feet, uint8_t strength) {
+    const Player& player = state.players[slot];
     const uint32_t tick = state.run.tick;
     const int x = roundToInt(feet.x);
     const int y = roundToInt(feet.y);
-    const Heading heading = soldierHeading(state);
-    if (state.run.phase == RunPhase::Dead) {
-        spriteQuad(soldierBody(kFacingSide, kSoldierDeadPose), x, y, heading.mirror, kRowBase, 150, strength);
+    const Heading heading = soldierHeading(state, slot);
+    const uint8_t row = soldierRow(state, slot);
+    if (lyingDown(state, slot)) {
+        spriteQuad(soldierBody(kFacingSide, kSoldierDeadPose), x, y, heading.mirror, row, 150, strength);
         return;
     }
     const bool playing = state.run.phase == RunPhase::Playing;
@@ -484,19 +514,18 @@ void drawSoldier(const GameState& state, const ScreenPoint& feet, uint8_t streng
     if (safe && !effects::flickerAllowed()) strength = static_cast<uint8_t>(strength / 2 + strength / 4);
 
     const uint8_t flash = playing && player.hitFlash > 0.0f ? effects::soldierFlash(player.hitFlash) : 0;
-    const uint8_t row = kRowBase;
     const uint8_t grade = 150;
-    const SpriteRef& body = soldierBody(heading.facing, bodyPose(tick));
+    const SpriteRef& body = soldierBody(heading.facing, bodyPose(slot, tick));
 
-    const WeaponId gun = heldGun(state);
-    const uint8_t gunRow = gunEvolved(state, gun) ? kRowEvolved : kRowBase;
-    const bool isReloading = reloading(state, gun);
+    const WeaponId gun = heldGun(state, slot);
+    const uint8_t gunRow = gunEvolved(state, slot, gun) ? kRowEvolved : kRowBase;
+    const bool isReloading = reloading(state, slot, gun);
 
     const Vec2 aim = player.aim;
     const float aimX = aim.x;
     const float aimY = aim.y * kTiltSquash;
     const float aimLength = std::max(0.001f, std::sqrt(aimX * aimX + aimY * aimY));
-    const float t = clampf(1.0f - g_soldierState.sinceFired / kRecoilSeconds, 0.0f, 1.0f);
+    const float t = clampf(1.0f - g_soldierStates[slot].sinceFired / kRecoilSeconds, 0.0f, 1.0f);
     const float recoil = isReloading ? 0.0f : t * kRecoilPixels;
     const int gunX = x - roundToInt(aimX / aimLength * recoil);
     const int gunY = y - roundToInt(kShoulderHeight) - roundToInt(aimY / aimLength * recoil);
@@ -515,7 +544,8 @@ void drawSoldier(const GameState& state, const ScreenPoint& feet, uint8_t streng
 // really went. A dash into a car goes nowhere, so it leaves no copies.
 // Reduced motion or no flicker keeps only two, steady and without the fade-out blink.
 void drawDashTrail(const View& view, const GameState& state, Vec2 playerWorld) {
-    const Player& player = state.firstPlayer();
+    const int slot = state.localSlot;
+    const Player& player = state.players[slot];
     if (player.dashLeft <= 0.0f) {
         g_dashPath.clear();
         return;
@@ -531,27 +561,27 @@ void drawDashTrail(const View& view, const GameState& state, Vec2 playerWorld) {
     }
     const bool simple = !effects::flickerAllowed();
     const int ghosts = simple ? kTrailGhostsSimple : kTrailGhosts;
-    const Heading heading = soldierHeading(state);
-    const SpriteRef& body = soldierBody(heading.facing, bodyPose(state.run.tick));
+    const Heading heading = soldierHeading(state, slot);
+    const SpriteRef& body = soldierBody(heading.facing, bodyPose(slot, state.run.tick));
     // Far ghosts first, so nearer ones draw over them.
     for (int i = ghosts; i >= 1; --i) {
         Vec2 ghost;
         if (!g_dashPath.pointBack(playerWorld, static_cast<float>(i) * kTrailSpacing, &ghost)) continue;
         const ScreenPoint at = project(view, ghost);
         const float strength = 1.0f - static_cast<float>(i - 1) / static_cast<float>(ghosts);
-        spriteQuad(body, roundToInt(at.x), roundToInt(at.y), heading.mirror, kRowBase, 150, static_cast<uint8_t>(kTrailAlpha * strength), kTrailWash);
+        spriteQuad(body, roundToInt(at.x), roundToInt(at.y), heading.mirror, soldierRow(state, slot), 150, static_cast<uint8_t>(kTrailAlpha * strength), kTrailWash);
     }
 }
 
-void drawMuzzleFlash(const GameState& state, const ScreenPoint& feet) {
-    if (g_soldierState.sinceFired > kFlashSeconds || state.run.phase == RunPhase::Dead) return;
+void drawMuzzleFlash(const GameState& state, int slot, const ScreenPoint& feet) {
+    if (g_soldierStates[slot].sinceFired > kFlashSeconds || lyingDown(state, slot)) return;
     // With rapid fire this is a strobe, however small, so it is the first thing to go.
     const float light = effects::flashScale();
     if (effects::reducedMotion() || light <= 0.0f) return;
-    const WeaponId gun = heldGun(state);
+    const WeaponId gun = heldGun(state, slot);
     if (gun == WeaponId::Flamethrower || gun == WeaponId::Tesla) return;
-    if (reloading(state, gun)) return;
-    const Vec2 aim = state.firstPlayer().aim;
+    if (reloading(state, slot, gun)) return;
+    const Vec2 aim = state.players[slot].aim;
     const float along = 1.0f - 0.28f * std::abs(aim.y);
     const float length = gunLength(gun) * along + 1.0f;
     const float aimY = aim.y * kTiltSquash;
@@ -559,8 +589,8 @@ void drawMuzzleFlash(const GameState& state, const ScreenPoint& feet) {
     const int x = roundToInt(feet.x + aim.x / aimLength * length);
     const int y = roundToInt(feet.y - kShoulderHeight + aimY / aimLength * length);
     const bool big = gun == WeaponId::Shotgun || gun == WeaponId::Sniper || gun == WeaponId::Rockets || gun == WeaponId::GrenadeLauncher;
-    const bool evolved = gunEvolved(state, gun);
-    g_muzzleFrames++;
+    const bool evolved = gunEvolved(state, slot, gun);
+    if (slot == state.localSlot) g_muzzleFrames++;
     spriteQuad(itemSprite(big ? Item::MuzzleBig : Item::MuzzleSmall), x, y, false, evolved ? kRowEvolved : kRowBase, 0, static_cast<uint8_t>(255.0f * light));
     effects::queueGlowSpot(static_cast<float>(x), static_cast<float>(y), big ? 34.0f : 22.0f, evolved ? theme::kFxGlowEvolved : theme::kFxGlowMuzzle, (big ? 0.8f : 0.6f) * light);
 }
