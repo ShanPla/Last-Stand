@@ -53,8 +53,18 @@ file(GLOB_RECURSE LS_SIM_SOURCES CONFIGURE_DEPENDS
 )
 list(FILTER LS_SIM_SOURCES EXCLUDE REGEX "/core/(App|Platform|NativePaths)\\.cpp$")
 
+# The co-op lobby logic is plain C++ as well (no raylib, no browser code), so the unit tests can
+# run its rules and its fake server. The simulation links it for the shared name rules.
+file(GLOB_RECURSE LS_NET_SOURCES CONFIGURE_DEPENDS src/components/Net/*.cpp)
+add_library(ls_net STATIC ${LS_NET_SOURCES})
+target_include_directories(ls_net PUBLIC src)
+if(MSVC)
+  target_compile_options(ls_net PRIVATE /W4 /utf-8)
+endif()
+
 add_library(ls_sim STATIC ${LS_SIM_SOURCES})
 target_include_directories(ls_sim PUBLIC src)
+target_link_libraries(ls_sim PUBLIC ls_net)
 if(MSVC)
   target_compile_options(ls_sim PRIVATE /W4 /utf-8)
 endif()
@@ -141,7 +151,7 @@ endif()
 if(EMSCRIPTEN)
   set(CMAKE_EXECUTABLE_SUFFIX ".html")
   set(LS_WEB_DIR "${CMAKE_SOURCE_DIR}/web")
-  foreach(tgt ls_sim ls_audio laststand)
+  foreach(tgt ls_net ls_sim ls_audio laststand)
     target_compile_options(${tgt} PRIVATE -O3 -flto -fno-exceptions -fno-rtti)
   endforeach()
   target_compile_options(raylib PRIVATE -O3 -flto)

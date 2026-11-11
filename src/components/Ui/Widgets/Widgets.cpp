@@ -1,6 +1,7 @@
 #include "components/Ui/Widgets/Widgets.h"
 
 #include "components/Audio/Audio.h"
+#include "components/Net/Net.h"
 #include "core/Platform.h"
 #include "data/Theme.h"
 
@@ -13,7 +14,7 @@ namespace ls::ui {
 
 namespace {
 
-constexpr int kMaxRegistered = 32;
+constexpr int kMaxRegistered = 64;  // The on-screen keyboard registers up to 44 keys.
 constexpr float kDesignShortSide = 560.0f;
 
 Layout g_layout;
@@ -86,6 +87,9 @@ void beginFrame(const input::Snapshot& input, float dtReal) {
     g_selectedName[0] = '\0';
     g_fade = 1.0f;
     g_inputEnabled = true;
+    // A text field that is still being edited sets this again while it draws. Input reads it
+    // before the next frame's drawing, so it falls away on its own when the field is gone.
+    input::setTextInputActive(false);
 
     Layout& l = g_layout;
     l.w = static_cast<float>(GetScreenWidth());
@@ -131,6 +135,7 @@ void consumePresses() {
     g_input.confirm = false;
     g_input.reroll = false;
     g_input.back = false;
+    textCancel();
 }
 
 void setInputEnabled(bool enabled) { g_inputEnabled = enabled; }
@@ -540,6 +545,356 @@ bool toggle(Nav& nav, int index, Rectangle rect, const char* label, bool* value)
     }
     if (changed) audio::playUi(audio::UiSound::Confirm);
     return changed;
+}
+
+
+// ---- Text entry -----------------------------------------------------------------
+
+namespace {
+
+constexpr int kMaxKeys = 48;
+
+enum class KeyType { Char, Shift, Space, Delete, Done };
+
+struct KeyCell {
+    KeyType type = KeyType::Char;
+    char ch = 0;
+    int span = 1;     // Cells wide.
+    int row = 0;
+    int cell = 0;     // First cell in its row.
+    Rectangle rect{};
+    char label[8] = {};
+};
+
+TextEntry* g_activeEntry = nullptr;
+Rectangle g_activeRect{};
+KeyCell g_keys[kMaxKeys];
+int g_keyCount = 0;
+int g_keyRows = 0;
+
+int maxLength(TextKind kind) { return kind == TextKind::Code ? net::kCodeLength : net::kNameMax; }
+
+bool charAllowed(TextKind kind, char c) { return kind == TextKind::Code ? net::codeCharAllowed(c) : net::nameCharAllowed(c); }
+
+void appendChar(TextEntry& entry, char c) {
+    if (entry.length >= maxLength(entry.kind) || !charAllowed(entry.kind, c)) return;
+    if (entry.kind == TextKind::Code && c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    // A name can't start with a space, and a code has none.
+    if (c == ' ' && entry.length == 0) return;
+    entry.text[entry.length++] = c;
+    entry.text[entry.length] = '\0';
+    // After a letter the next one is lower case, until Shift is pressed again.
+    if (c != ' ') entry.shift = false;
+}
+
+void deleteChar(TextEntry& entry) {
+    if (entry.length <= 0) return;
+    entry.text[--entry.length] = '\0';
+    if (entry.length == 0) entry.shift = true;
+}
+
+void beginEditing(TextEntry& entry, TextKind kind) {
+    if (g_activeEntry && g_activeEntry != &entry) textCancel();
+    g_activeEntry = &entry;
+    entry.kind = kind;
+    entry.editing = true;
+    // The pixel keyboard is for fingers and gamepads. A keyboard or mouse user types.
+    entry.keys = g_input.lastDevice == input::Device::Touch || g_input.lastDevice == input::Device::Gamepad;
+    entry.shift = entry.length == 0 && kind == TextKind::Name;
+    entry.key = 0;
+}
+
+void finishEditing(TextEntry& entry) {
+    // A name keeps no trailing spaces.
+    while (entry.length > 0 && entry.text[entry.length - 1] == ' ') entry.text[--entry.length] = '\0';
+    entry.editing = false;
+    entry.keys = false;
+    entry.finished = true;
+    if (g_activeEntry == &entry) g_activeEntry = nullptr;
+}
+
+// Builds the key list for the active entry, and returns the rectangle of the whole keyboard
+// panel. Keys wrap row by row like text. Wider keys (Shift, Space, Delete, OK) take two cells.
+Rectangle layoutKeys(const TextEntry& entry) {
+    const Layout& l = g_layout;
+    const float u = l.u;
+    const float gap = std::max(l.px * 2.0f, 4.0f * u);
+    const float pad = 10.0f * u;
+    const float panelWidth = std::min(l.width(), 720.0f * u);
+
+    // As many columns as keep every key finger sized, between 6 and 13.
+    const float minKey = std::max(l.touch, 40.0f * u);
+    int columns = static_cast<int>((panelWidth - pad * 2.0f + gap) / (minKey + gap));
+    columns = std::min(13, std::max(6, columns));
+    const float keyWidth = (panelWidth - pad * 2.0f - gap * static_cast<float>(columns - 1)) / static_cast<float>(columns);
+
+    g_keyCount = 0;
+    const auto add = [&](KeyType type, char ch, int span, const char* label) {
+        if (g_keyCount >= kMaxKeys) return;
+        KeyCell& key = g_keys[g_keyCount++];
+        key.type = type;
+        key.ch = ch;
+        key.span = span;
+        std::snprintf(key.label, sizeof(key.label), "%s", label);
+    };
+    if (entry.kind == TextKind::Code) {
+        for (const char* c = net::kCodeAlphabet; *c; ++c) {
+            const char label[2] = {*c, '\0'};
+            add(KeyType::Char, *c, 1, label);
+        }
+    } else {
+        for (char c = 'A'; c <= 'Z'; ++c) {
+            const char shown = entry.shift ? c : static_cast<char>(c - 'A' + 'a');
+            const char label[2] = {shown, '\0'};
+            add(KeyType::Char, shown, 1, label);
+        }
+        for (char c = '0'; c <= '9'; ++c) {
+            const char label[2] = {c, '\0'};
+            add(KeyType::Char, c, 1, label);
+        }
+        add(KeyType::Shift, 0, 2, "ABC");
+        add(KeyType::Space, ' ', 2, "SPACE");
+    }
+    add(KeyType::Delete, 0, 2, "DEL");
+    add(KeyType::Done, 0, 2, "OK");
+
+    // Flow the keys into rows.
+    int row = 0;
+    int used = 0;
+    for (int i = 0; i < g_keyCount; ++i) {
+        if (used + g_keys[i].span > columns) {
+            row++;
+            used = 0;
+        }
+        g_keys[i].row = row;
+        g_keys[i].cell = used;
+        used += g_keys[i].span;
+    }
+    g_keyRows = row + 1;
+
+    const float previewHeight = std::max(l.touch, 40.0f * u);
+    const bool hints = g_input.lastDevice == input::Device::Gamepad;
+    const float hintHeight = hints ? 26.0f * u : 0.0f;
+    // The keys give up height before they give up being readable, when the window is short.
+    float keyHeight = std::max(l.touch, 44.0f * u);
+    const float chrome = pad * 2.0f + previewHeight + gap + hintHeight;
+    const float roomForKeys = l.height() - chrome - 8.0f * u;
+    keyHeight = std::min(keyHeight, (roomForKeys - gap * static_cast<float>(g_keyRows - 1)) / static_cast<float>(g_keyRows));
+    keyHeight = std::max(keyHeight, 28.0f * u);
+
+    const float panelHeight = chrome + keyHeight * static_cast<float>(g_keyRows) + gap * static_cast<float>(g_keyRows - 1);
+    const Rectangle panelRect{l.centerX() - panelWidth * 0.5f, l.bottom - panelHeight, panelWidth, panelHeight};
+    const float keysTop = panelRect.y + pad + previewHeight + gap;
+    for (int i = 0; i < g_keyCount; ++i) {
+        KeyCell& key = g_keys[i];
+        key.rect = Rectangle{panelRect.x + pad + static_cast<float>(key.cell) * (keyWidth + gap), keysTop + static_cast<float>(key.row) * (keyHeight + gap),
+                             keyWidth * static_cast<float>(key.span) + gap * static_cast<float>(key.span - 1), keyHeight};
+    }
+    return panelRect;
+}
+
+// The key nearest above or below the selected one, by horizontal position.
+int keyInRow(int from, int step) {
+    if (g_keyRows <= 1) return from;
+    const int targetRow = ((g_keys[from].row + step) % g_keyRows + g_keyRows) % g_keyRows;
+    const float centerX = g_keys[from].rect.x + g_keys[from].rect.width * 0.5f;
+    int best = from;
+    float bestDistance = 1e9f;
+    for (int i = 0; i < g_keyCount; ++i) {
+        if (g_keys[i].row != targetRow) continue;
+        const float distance = std::fabs(g_keys[i].rect.x + g_keys[i].rect.width * 0.5f - centerX);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            best = i;
+        }
+    }
+    return best;
+}
+
+void pressKey(TextEntry& entry, const KeyCell& key) {
+    switch (key.type) {
+        case KeyType::Char:
+        case KeyType::Space: appendChar(entry, key.ch); audio::playUi(audio::UiSound::Move); break;
+        case KeyType::Shift: entry.shift = !entry.shift; audio::playUi(audio::UiSound::Move); break;
+        case KeyType::Delete: deleteChar(entry); audio::playUi(audio::UiSound::Move); break;
+        case KeyType::Done: finishEditing(entry); audio::playUi(audio::UiSound::Confirm); break;
+    }
+}
+
+bool caretOn() { return std::fmod(g_seconds, 1.0f) < 0.6f; }
+
+}  // namespace
+
+void textSet(TextEntry& entry, TextKind kind, const char* value) {
+    entry.kind = kind;
+    entry.length = 0;
+    entry.text[0] = '\0';
+    for (const char* c = value ? value : ""; *c; ++c) appendChar(entry, *c);
+    entry.shift = entry.length == 0;
+}
+
+bool textEditing() { return g_activeEntry != nullptr; }
+bool textKeyboardOpen() { return g_activeEntry != nullptr && g_activeEntry->keys; }
+
+void textCancel() {
+    if (g_activeEntry) {
+        g_activeEntry->editing = false;
+        g_activeEntry->keys = false;
+    }
+    g_activeEntry = nullptr;
+}
+
+void textField(Nav& nav, int index, Rectangle rect, const char* label, TextEntry& entry, TextKind kind, const char* placeholder) {
+    const float u = g_layout.u;
+    entry.finished = false;
+    entry.kind = kind;
+    registerRect(label, rect);
+    hoverSelect(nav, index, rect);
+    if (nav.selected == index) markSelected(label);
+
+    // Starting. The press that opens the field is used up, so it can't also press a key of the
+    // on-screen keyboard that appears under the same finger.
+    bool justStarted = false;
+    if (!entry.editing && activated(nav, index, rect)) {
+        beginEditing(entry, kind);
+        g_input.pointerPressed = false;
+        g_input.confirm = false;
+        justStarted = true;
+    }
+
+    if (entry.editing && g_activeEntry == &entry) {
+        g_activeRect = rect;
+        input::setTextInputActive(true);
+        for (int i = 0; i < g_input.typedCount; ++i) appendChar(entry, g_input.typed[i]);
+        for (int i = 0; i < g_input.backspaces; ++i) deleteChar(entry);
+        if (!justStarted && !entry.keys) {
+            // With a physical keyboard the field itself takes Enter and Esc. The on-screen
+            // keyboard takes them for its own keys instead.
+            if (g_input.confirm) {
+                g_input.confirm = false;
+                finishEditing(entry);
+            } else if (g_input.back) {
+                g_input.back = false;
+                finishEditing(entry);
+            } else if (g_input.stepY != 0 || (g_input.pointerPressed && !inside(g_input.pointer, rect))) {
+                finishEditing(entry);
+            }
+        }
+    }
+
+    const bool editing = entry.editing;
+    const bool selected = (editing || nav.selected == index) && showsSelection();
+    controlBox(rect, theme::kCoopCodePlate, selected, false);
+
+    const float pad = rect.height * 0.28f;
+    const float labelSize = std::min(rect.height * 0.24f, 14.0f * u);
+    text(label, rect.x + pad, rect.y + rect.height * 0.10f, labelSize, theme::kUiTextDim, font::Align::Left, g_layout.px);
+    const float valueSize = std::min(rect.height * 0.44f, 28.0f * u);
+    const float valueY = rect.y + rect.height * 0.64f;
+    const float room = rect.width - pad * 2.0f;
+    if (entry.length > 0) {
+        const float fitted = font::fitSize(entry.text, valueSize, room);
+        textMiddle(entry.text, rect.x + pad, valueY, fitted, theme::kUiText);
+        if (editing && caretOn()) {
+            const float caretX = rect.x + pad + font::measure(entry.text, fitted) + g_layout.px;
+            pixelRect(Rectangle{caretX, valueY - fitted * 0.4f, g_layout.px * 2.0f, fitted * 0.8f}, theme::kCoopCaret);
+        }
+    } else if (editing) {
+        if (caretOn()) pixelRect(Rectangle{rect.x + pad, valueY - valueSize * 0.4f, g_layout.px * 2.0f, valueSize * 0.8f}, theme::kCoopCaret);
+    } else {
+        const float fitted = font::fitSize(placeholder, valueSize, room);
+        textMiddle(placeholder, rect.x + pad, valueY, fitted, theme::kUiTextDim);
+    }
+}
+
+void drawTextKeyboard() {
+    if (!g_activeEntry || !g_activeEntry->keys) return;
+    TextEntry& entry = *g_activeEntry;
+    const Layout& l = g_layout;
+    const float u = l.u;
+    const Rectangle panelRect = layoutKeys(entry);
+    entry.key = std::min(std::max(entry.key, 0), g_keyCount - 1);
+
+    // Dim everything behind the keyboard, so it is clear that the screen is waiting for it.
+    pixelRect(Rectangle{0.0f, 0.0f, l.w, l.h}, withAlpha(theme::kScreenScrim, 0.6f));
+    panel(panelRect, theme::kUiPanel, theme::kUiBorder, 0.0f);
+
+    // What is typed so far, big, with the cursor.
+    const float pad = 10.0f * u;
+    const float previewHeight = std::max(l.touch, 40.0f * u);
+    const Rectangle preview{panelRect.x + pad, panelRect.y + pad, panelRect.width - pad * 2.0f, previewHeight};
+    panel(preview, theme::kCoopCodePlate, theme::kUiBorder, 0.0f);
+    const char* title = entry.kind == TextKind::Code ? "ROOM CODE" : "YOUR NAME";
+    const float titleSize = 14.0f * u;
+    text(title, preview.x + 10.0f * u, preview.y + preview.height * 0.5f - titleSize * 0.5f, titleSize, theme::kUiTextDim, font::Align::Left, l.px);
+    const float previewSize = std::min(preview.height * 0.55f, 30.0f * u);
+    const float titleWidth = font::measure(title, titleSize, l.px) + 24.0f * u;
+    const float textX = preview.x + std::max(titleWidth, preview.width * 0.34f);
+    const float fitted = entry.length > 0 ? font::fitSize(entry.text, previewSize, preview.x + preview.width - textX - 12.0f * u) : previewSize;
+    textMiddle(entry.text, textX, preview.y + preview.height * 0.5f, fitted, theme::kUiText);
+    if (caretOn()) {
+        const float caretX = textX + (entry.length > 0 ? font::measure(entry.text, fitted) : 0.0f) + l.px;
+        pixelRect(Rectangle{caretX, preview.y + preview.height * 0.5f - fitted * 0.4f, l.px * 2.0f, fitted * 0.8f}, theme::kCoopCaret);
+    }
+
+    // Which key was pressed, and where the selection moves.
+    int pressed = -1;
+    for (int i = 0; i < g_keyCount; ++i) {
+        const KeyCell& key = g_keys[i];
+        char name[24];
+        std::snprintf(name, sizeof(name), "key %s", key.label);
+        registerRect(name, key.rect);
+        if (g_input.mouseMoved && inside(g_input.mouse, key.rect)) entry.key = i;
+        if (g_input.pointerPressed && inside(g_input.pointer, key.rect)) pressed = i;
+    }
+    // Move around with the arrows or the D-pad, and wrap at the edges.
+    if (g_input.stepX != 0) {
+        entry.key = ((entry.key + g_input.stepX) % g_keyCount + g_keyCount) % g_keyCount;
+        audio::playUi(audio::UiSound::Move);
+    }
+    if (g_input.stepY != 0) {
+        entry.key = keyInRow(entry.key, g_input.stepY);
+        audio::playUi(audio::UiSound::Move);
+    }
+    markSelected(g_keys[entry.key].label);
+
+    const bool shows = showsSelection();
+    for (int i = 0; i < g_keyCount; ++i) {
+        const KeyCell& key = g_keys[i];
+        const bool isSelected = shows && entry.key == i;
+        Color fill = key.type == KeyType::Done ? theme::kCoopKeyDone : (isSelected ? theme::kCoopKeyDown : theme::kCoopKey);
+        if (key.type == KeyType::Done && isSelected) fill = theme::kButtonPrimaryHover;
+        controlBox(key.rect, fill, isSelected, key.type == KeyType::Done);
+        // On the code keyboard digits are teal, because Z and 2 look alike in this font.
+        const bool codeDigit = entry.kind == TextKind::Code && key.type == KeyType::Char && key.ch >= '0' && key.ch <= '9';
+        const Color ink = key.type == KeyType::Done ? theme::kTextOnPrimary : (codeDigit ? theme::kCoopCodeDigit : theme::kUiText);
+        const float size = font::fitSize(key.label, std::min(key.rect.height * 0.5f, 26.0f * u), key.rect.width * 0.86f);
+        textMiddle(key.label, key.rect.x + key.rect.width * 0.5f, key.rect.y + key.rect.height * 0.5f, size, ink, font::Align::Center);
+    }
+    if (g_input.lastDevice == input::Device::Gamepad) {
+        char hint[48];
+        std::snprintf(hint, sizeof(hint), "%s type    Y delete    %s done", promptConfirm(), promptBack());
+        text(hint, panelRect.x + panelRect.width * 0.5f, panelRect.y + panelRect.height - pad - 20.0f * u, 16.0f * u, theme::kUiTextDim, font::Align::Center);
+    }
+
+    // Input. A press on a key types it. A press outside the keyboard and the field ends editing.
+    if (pressed >= 0) {
+        entry.key = pressed;
+        pressKey(entry, g_keys[pressed]);
+        g_input.pointerPressed = false;
+    } else if (g_input.pointerPressed && !inside(g_input.pointer, panelRect) && !inside(g_input.pointer, g_activeRect)) {
+        finishEditing(entry);
+        g_input.pointerPressed = false;
+    } else if (g_input.confirm) {
+        g_input.confirm = false;
+        pressKey(entry, g_keys[entry.key]);
+    } else if (g_input.reroll) {
+        g_input.reroll = false;
+        deleteChar(entry);
+    } else if (g_input.back) {
+        g_input.back = false;
+        finishEditing(entry);
+    }
 }
 
 }  // namespace ls::ui

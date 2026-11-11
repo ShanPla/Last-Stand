@@ -30,6 +30,12 @@ struct Snapshot {
     int stepY = 0;
     bool anyPress = false;  // Any key, button or touch went down this frame.
 
+    // Text entry. Only filled while setTextInputActive(true) is in force. typed holds the printable
+    // characters pressed this frame, in order. backspace repeats while the key is held.
+    char typed[8] = {};
+    int typedCount = 0;
+    int backspaces = 0;  // How many characters to delete: two quick presses in one frame count twice.
+
     // Mouse click or touch start, in drawing buffer pixels.
     bool pointerPressed = false;
     Vec2 pointer;
@@ -65,6 +71,12 @@ void setJoystickEnabled(bool enabled);
 // Where the stick sits, in drawing buffer pixels. Set it every frame, because it follows the
 // window size. A finger must land near this to steer.
 void setJoystickHome(Vec2 home);
+
+// While a text field is being edited, letters and Space type text instead of moving the menu, and
+// Backspace and typed characters are reported. Enter, Esc and the arrow keys still work as
+// before. The text field sets this every frame it is editing, and it takes effect on the next
+// input read, so it ends by itself when the field goes away.
+void setTextInputActive(bool active);
 
 // A touch that starts inside one of these presses a button, and never starts the
 // joystick. Set it every frame. The list is copied, and at most 8 rectangles are kept.

@@ -606,4 +606,27 @@ inline constexpr Color kMapColors[2] = {Color{176, 170, 190, 255}, Color{226, 17
 // Story keeps the plain text color. Endless is a cool violet: a reward color, never a threat.
 inline constexpr Color kModeColors[2] = {kDifficultyNormal, Color{176, 150, 255, 255}};  // Indexed by RunMode.
 
+// --- Co-op screens (menu, host, join, and the text entry they share) ---
+// Players and readiness use the cool reward colors, and problems use the warm danger red, the
+// same split as the rest of the game. Ready is also a check mark and waiting an empty box, so
+// the two never rely on color alone.
+inline constexpr Color kCoopCode{255, 196, 64, 255};          // The room code, big and gold.
+// The pixel font draws Z and 2 almost alike, so digits in a room code are teal and letters gold.
+inline constexpr Color kCoopCodeDigit{112, 208, 170, 255};
+inline constexpr Color kCoopCodePlate{22, 20, 26, 255};       // Dark plate behind the code and text fields.
+inline constexpr Color kCoopReady{112, 208, 170, 255};        // A ready player's check mark.
+inline constexpr Color kCoopWaiting{178, 162, 140, 255};      // A player who is not ready yet.
+inline constexpr Color kCoopYou{150, 200, 224, 255};          // The YOU tag.
+inline constexpr Color kCoopHost{255, 196, 64, 255};          // The HOST tag.
+inline constexpr Color kCoopError{222, 92, 60, 255};          // Error messages.
+inline constexpr Color kCoopNotice{255, 196, 64, 255};        // The short notice after a room closes.
+inline constexpr Color kCoopSpinner{255, 196, 64, 255};       // The moving square of the waiting spinner.
+inline constexpr Color kCoopSpinnerDim{78, 66, 64, 255};      // The other squares of the spinner.
+inline constexpr Color kCoopCaret{240, 226, 196, 255};        // The blinking cursor in a text field.
+inline constexpr Color kCoopKey{48, 42, 50, 255};             // An on-screen key.
+inline constexpr Color kCoopKeyDown{74, 62, 58, 255};         // The key that is selected.
+inline constexpr Color kCoopKeyDone{112, 208, 170, 255};      // The OK key.
+// One color per player slot, none of them a warm threat color. The slot number is drawn too.
+inline constexpr Color kCoopSlotColors[4] = {{150, 200, 224, 255}, {112, 208, 170, 255}, {184, 140, 224, 255}, {240, 196, 120, 255}};
+
 }  // namespace ls::theme

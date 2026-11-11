@@ -4,7 +4,7 @@
 
 namespace ls::ui {
 
-enum class TitleAction { None, Play, Settings, HowToPlay };
+enum class TitleAction { None, Play, Settings, HowToPlay, Coop };
 
 // Draws the title menu over the running demo, and reads its input. Play is selected
 // first, so Enter, Space, gamepad A or a click on Play starts at once, with the level

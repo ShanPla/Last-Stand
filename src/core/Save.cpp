@@ -1,5 +1,7 @@
 #include "core/Save.h"
 
+#include "components/Net/Net.h"
+
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -114,6 +116,10 @@ void applyKey(SaveData& data, std::string_view key, std::string_view value) {
         readInt(value, 0, static_cast<int>(RunMode::Count) - 1, &mode);
         data.mode = static_cast<RunMode>(mode);
     }
+    else if (key == "coopName") {
+        // Only a name the server would accept is kept, so a damaged value never reaches a button.
+        if (net::validName(std::string(value).c_str())) std::snprintf(data.coopName, sizeof(data.coopName), "%s", std::string(value).c_str());
+    }
     else if (startsWith(key, kEndlessPrefix)) applyLevelKey(data.endlessBest, key.substr(kEndlessPrefix.size()), value);
     else applyLevelKey(data.best, key, value);
     // Unknown keys are ignored, so a save from a newer version still loads.
@@ -124,11 +130,11 @@ void applyKey(SaveData& data, std::string_view key, std::string_view value) {
 std::string serialize(const SaveData& data) {
     char buffer[2048];
     int n = std::snprintf(buffer, sizeof(buffer),
-                          "version=%d\nmusic=%.3f\neffects=%.3f\nshake=%.3f\nflash=%.3f\ndamageNumbers=%d\nreducedMotion=%d\ndifficulty=%d\nmap=%d\nmode=%d\n",
+                          "version=%d\nmusic=%.3f\neffects=%.3f\nshake=%.3f\nflash=%.3f\ndamageNumbers=%d\nreducedMotion=%d\ndifficulty=%d\nmap=%d\nmode=%d\ncoopName=%s\n",
                           kSaveVersion, static_cast<double>(data.settings.musicVolume), static_cast<double>(data.settings.effectsVolume),
                           static_cast<double>(data.settings.screenShake), static_cast<double>(data.settings.flashIntensity),
                           data.settings.damageNumbers ? 1 : 0, data.settings.reducedMotion ? 1 : 0, static_cast<int>(data.difficulty), data.map,
-                          static_cast<int>(data.mode));
+                          static_cast<int>(data.mode), data.coopName);
     const char* const prefixes[kDifficultyCount] = {"easy.", "", "hard.", "hell."};
     for (int level = 0; level < kDifficultyCount && n > 0 && n < static_cast<int>(sizeof(buffer)); ++level) {
         const BestRun& best = data.best[level];

@@ -4,6 +4,8 @@
 #include "components/Effects/Effects.h"
 #include "components/Input/Input.h"
 #include "components/Maps/Maps.h"
+#include "components/Net/Net.h"
+#include "components/Ui/CoopScreens/CoopScreens.h"
 #include "components/Ui/Font/Font.h"
 #include "components/Ui/GameOverScreen/GameOverScreen.h"
 #include "components/Ui/Hud/Hud.h"
@@ -80,7 +82,7 @@ enum DebugCommand {
 };
 
 // Which screen is showing. Level-up is not here: it is a phase of a running game.
-enum class Screen { Title, Playing, Paused, Settings, HowToPlay, Over };
+enum class Screen { Title, Playing, Paused, Settings, HowToPlay, Over, Coop };
 
 constexpr int kMaxStepsPerFrame = 5;  // Stops a slow frame causing an even slower one.
 constexpr float kScreenFadeSeconds = 0.20f;  // Under the 300 ms limit, and input never waits for it.
@@ -360,6 +362,7 @@ const char* screenName() {
         case Screen::Settings: return "settings";
         case Screen::HowToPlay: return "howto";
         case Screen::Over: return "over";
+        case Screen::Coop: return ui::coopScreenName();
     }
     return "";
 }
@@ -379,6 +382,9 @@ void init() {
     // A phone has no keyboard to hint at, so its prompts are right from the first frame.
     if (platform::touchIsOnlyPointer()) g_input.lastDevice = input::Device::Touch;
     startDemo();
+    // A free co-op server sleeps, so it is woken now, while the title is read, rather than when
+    // someone presses Host. In the fake backend this only moves the phase to Waking and back.
+    net::wakeServer();
 }
 
 // WORLD PASS. Draws the game world from the simulation state, and nothing else. The
@@ -420,6 +426,19 @@ static void drawUiPass(float dtReal, bool playing) {
             else if (action == ui::TitleAction::HowToPlay) {
                 ui::setInputEnabled(true);
                 setScreen(Screen::HowToPlay);
+            } else if (action == ui::TitleAction::Coop) {
+                ui::openCoopScreens(save::current());
+                setScreen(Screen::Coop);
+            }
+            break;
+        }
+        case Screen::Coop: {
+            ui::setFade(screenFade);
+            const ui::CoopResult result = ui::drawCoopScreens(save::current());
+            if (result.saveChanged) persist();
+            if (result.back) {
+                audio::playUi(audio::UiSound::Back);
+                setScreen(Screen::Title);
             }
             break;
         }
@@ -489,6 +508,7 @@ void frame() {
     const float rawDt = GetFrameTime();
     g_frameMs = smooth(g_frameMs, rawDt * 1000.0f);
     const float dtReal = std::min(rawDt, 0.1f);
+    net::update(dtReal);
 
     // Input. The joystick only exists while playing, and a touch that starts on the
     // pause button must press it instead.
@@ -673,6 +693,11 @@ const char* queryUi() {
 
 void debugCommand(int command, int value) {
     if (!g_debug) return;
+    // Commands 100 and up drive the fake co-op server. They have no use for the game state.
+    if (command >= net::kDebugReset) {
+        net::debugCommand(command, value);
+        return;
+    }
     GameState& s = *g_state;
     // Any other debug command hands control back to the simulation, except the ones
     // that only move the camera or the clock, which also work while it is held still.
@@ -812,6 +837,8 @@ void debugCommand(int command, int value) {
 extern "C" {
 // Test hook: what the screens look like and where their buttons are.
 EMSCRIPTEN_KEEPALIVE const char* ls_query_ui() { return ls::app::queryUi(); }
+// Test hook: the co-op lobby and what the co-op screens hold.
+EMSCRIPTEN_KEEPALIVE const char* ls_query_net() { return ls::ui::coopDebugJson(); }
 // Test hook: counters that prove each effect and setting really changes behavior.
 EMSCRIPTEN_KEEPALIVE const char* ls_query_effects() { return ls::effects::debugJson(); }
 }

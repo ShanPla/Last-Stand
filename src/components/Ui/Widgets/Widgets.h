@@ -123,6 +123,50 @@ bool toggle(Nav& nav, int index, Rectangle rect, const char* label, bool* value)
 bool selector(Nav& nav, int index, Rectangle rect, const char* label, const char* const* options, int count, int* value,
               const Color* optionColors = nullptr);
 
+// ---- Text entry -----------------------------------------------------------------
+
+// A one-line field that holds a player name or a room code. It works with a physical
+// keyboard, with a mouse click or a touch tap to focus it, and with a pixel keyboard drawn on
+// screen, which opens when the last device was touch or a gamepad. The pixel keyboard is
+// simple on purpose: it is easier to build and to test than asking the phone for its own.
+enum class TextKind {
+    Name,  // Letters, digits and spaces, up to 12.
+    Code,  // A room code: 5 characters from the code alphabet, always shown in capitals.
+};
+
+struct TextEntry {
+    char text[16] = "";
+    int length = 0;
+    TextKind kind = TextKind::Name;
+    bool editing = false;
+    bool keys = false;       // The on-screen keyboard is open for this field.
+    bool shift = true;       // Name keyboard: the next letter is a capital.
+    int key = 0;             // The selected on-screen key, for gamepad and keyboard.
+    bool finished = false;   // True for the one frame in which editing ended.
+};
+
+// Replaces the text, keeping only the characters the field allows.
+void textSet(TextEntry& entry, TextKind kind, const char* text);
+
+// Draws the field and reads its input. Draw the fields of a screen before its buttons, because
+// an Enter or Esc that ends the editing is used up here and must not also press a button.
+// Activating it (click, tap, Enter, A) starts editing. Enter, Esc, an Up or Down press, or a
+// click outside the field ends it. placeholder shows, dimmed, while the field is empty.
+void textField(Nav& nav, int index, Rectangle rect, const char* label, TextEntry& entry, TextKind kind, const char* placeholder);
+
+// Draws the on-screen keyboard if one is open, and handles its keys. Call it last in a screen's
+// drawing, after every field and button, then read TextEntry::finished.
+void drawTextKeyboard();
+
+// True while any field is being edited. Esc then only ends the editing, so a screen must not
+// also treat it as Back.
+bool textEditing();
+// True while the on-screen keyboard is open. A screen turns its own buttons and navigation off
+// meanwhile, with setInputEnabled(false).
+bool textKeyboardOpen();
+// Stops editing without a finish. Call it when a screen is left.
+void textCancel();
+
 // ---- Layout record for tests ----------------------------------------------------
 
 struct Registered {

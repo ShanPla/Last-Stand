@@ -13,7 +13,9 @@
     if (event.ctrlKey) event.preventDefault();
   }, { passive: false });
   window.addEventListener('keydown', function (event) {
-    var keys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Tab'];
+    var keys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Tab', 'Backspace'];
+    // A text field being edited needs Space to arrive as a character, in order with the letters.
+    if (event.key === ' ' && window.LS_textEditing) return;
     if (keys.indexOf(event.key) !== -1) event.preventDefault();
   });
 

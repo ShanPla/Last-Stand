@@ -43,6 +43,10 @@ struct SaveData {
     Difficulty difficulty = Difficulty::Normal;  // The level the title screen has selected.
     int map = 0;  // The map the title screen has selected. A number, because maps are not part of this file's world.
     RunMode mode = RunMode::Story;               // The mode the title screen has selected.
+    // The name shown to other players in co-op. Empty means the screens offer Player N. A saved
+    // name that is not a valid one (see net::validName) is dropped on loading. An older save
+    // has no such key, so it loads with an empty name.
+    char coopName[13] = {};
     BestRun best[kDifficultyCount];              // Story's best run per level, indexed by Difficulty.
     BestRun endlessBest[kDifficultyCount];       // Endless keeps its own, because its runs are far longer.
 

@@ -84,8 +84,10 @@ test('keyboard: the Mode row sits after Map, left and right change it, and Play 
   await waitMode(page, ENDLESS);
   assert.equal((await readUi(page)).screen, 'title');
   await page.keyboard.press('ArrowDown');
+  await waitSelected(page, 'Co-op');
+  await page.keyboard.press('ArrowDown');
   await waitSelected(page, 'Settings');
-  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowUp');
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowUp');
   await waitSelected(page, 'PLAY');
   await page.keyboard.press('Enter');
   await waitScreen(page, 'playing');

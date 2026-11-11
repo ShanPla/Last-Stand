@@ -15,8 +15,10 @@ namespace {
 
 Nav g_nav;
 
-// Focus order.
-enum Focus { kFocusPlay = 0, kFocusDifficulty, kFocusMap, kFocusMode, kFocusSettings, kFocusHowTo, kFocusCount };
+// Focus order. Co-op comes after the selectors, because it is another way to play and the
+// selectors are what Play is set up with, and before Settings and How to Play, which are
+// not ways to play at all.
+enum Focus { kFocusPlay = 0, kFocusDifficulty, kFocusMap, kFocusMode, kFocusCoop, kFocusSettings, kFocusHowTo, kFocusCount };
 constexpr int kSelectorRows = 3;     // Rows of selectors above Settings. The layout budgets for this many.
 constexpr float kLogoLeast = 56.0f;  // Smallest logo, in design units, before the best run makes way.
 constexpr float kLogoTiny = 24.0f;   // Smallest logo, in design units, before the tagline makes way too.
@@ -82,22 +84,6 @@ TitleAction drawTitleScreen(SaveData& data) {
     const bool wide = !l.portrait && l.width() >= 700.0f * u;
     TitleAction action = TitleAction::None;
 
-    // The column the menu sits in: left aligned on wide screens, centered otherwise.
-    const float columnWidth = wide ? std::min(430.0f * u, l.width() * 0.5f) : std::min(l.width(), 440.0f * u);
-    const float columnX = wide ? l.left + 24.0f * u : l.centerX() - columnWidth * 0.5f;
-    const font::Align align = wide ? font::Align::Left : font::Align::Center;
-    const float textX = wide ? columnX : l.centerX();
-
-    // A flat dark shade so the text reads, with a hard edge. On wide screens it only
-    // covers the menu side, so the demo stays visible on the other.
-    if (wide) {
-        const float edge = snapPx(columnX + columnWidth + 40.0f * u);
-        pixelRect(Rectangle{0.0f, 0.0f, edge, l.h}, withAlpha(theme::kTitleShade, 0.9f));
-        pixelRect(Rectangle{edge, 0.0f, l.px, l.h}, theme::kUiBorderDark);
-    } else {
-        pixelRect(Rectangle{0.0f, 0.0f, l.w, l.h}, withAlpha(theme::kTitleShade, 0.72f));
-    }
-
     // Heights of everything below the logo, so the logo can take what is left. Each
     // selector row (difficulty, map and mode) adds one row to the menu, and the logo and the
     // best run give way, so another row would need no other change.
@@ -105,7 +91,9 @@ TitleAction drawTitleScreen(SaveData& data) {
     const float smallHeight = tall(50.0f * u);
     const float rowGap = 10.0f * u;
     const float selectorsBlock = (smallHeight + rowGap) * static_cast<float>(kSelectorRows);
-    const float fullButtons = playHeight + 12.0f * u + selectorsBlock + smallHeight + rowGap + smallHeight;
+    // Play, the selectors, the Co-op button, then Settings and How to Play.
+    const float coopBlock = smallHeight + rowGap;
+    const float fullButtons = playHeight + 12.0f * u + selectorsBlock + coopBlock + smallHeight + rowGap + smallHeight;
     const float bestBlock = 26.0f * u + 76.0f * u;
     const float taglineBlock = 26.0f * u + 26.0f * u;
     // On a very short window, Settings and How to Play share a row, so that every
@@ -113,6 +101,11 @@ TitleAction drawTitleScreen(SaveData& data) {
     // Without the side column, the credit line sits under the buttons and needs room too.
     const float creditRoom = wide ? 0.0f : 28.0f * u;
     const float sharedButtons = fullButtons - smallHeight - rowGap;
+    // A wide window that is also very short (a phone on its side, with notch margins) has no
+    // height for one column of every button. Then the menu becomes two columns under a full-width
+    // Play: the selectors on the left, and Co-op, Settings and How to Play on the right.
+    const bool twoColumns = wide && l.height() - sharedButtons - 12.0f * u - 8.0f * u < kLogoTiny * u * 1.85f;
+    const float columnsButtons = playHeight + 12.0f * u + selectorsBlock;
     const auto bestFits = [&](float buttons) {
         return (l.height() - buttons - taglineBlock - creditRoom - 8.0f * u - bestBlock) / 1.85f >= kLogoLeast * u;
     };
@@ -120,7 +113,7 @@ TitleAction drawTitleScreen(SaveData& data) {
     // for that too, when that makes the difference.
     const bool shareForBest = !wide && !bestFits(fullButtons) && bestFits(sharedButtons);
     const bool shareLastRow = shareForBest || l.height() - fullButtons - taglineBlock - creditRoom - 8.0f * u < kLogoLeast * u * 1.85f;
-    const float buttonsBlock = shareLastRow ? sharedButtons : fullButtons;
+    const float buttonsBlock = twoColumns ? columnsButtons : (shareLastRow ? sharedButtons : fullButtons);
     // On the very shortest windows, such as a landscape phone with notch margins on every
     // side, even the shared row leaves no room. Then the tagline gives way and the logo shrinks,
     // so every button still fits.
@@ -130,8 +123,28 @@ TitleAction drawTitleScreen(SaveData& data) {
     const float roomWithoutBest = l.height() - buttonsBlock - taglineRoom - creditRoom - 8.0f * u;
     const bool roomForBest = bestFits(buttonsBlock);
     const float logoRoom = roomForBest ? roomWithoutBest - bestBlock : roomWithoutBest;
+    // The column the menu sits in: left aligned on wide screens, centered otherwise. In two
+    // columns, columnWidth is one of them, and menuWidth is both with the gap between.
+    const float columnGap = 10.0f * u;
+    const float columnWidth = twoColumns ? std::min(380.0f * u, (l.width() - 24.0f * u - columnGap) * 0.5f)
+                                         : (wide ? std::min(430.0f * u, l.width() * 0.5f) : std::min(l.width(), 440.0f * u));
+    const float menuWidth = twoColumns ? columnWidth * 2.0f + columnGap : columnWidth;
+    const float columnX = wide ? l.left + 24.0f * u : l.centerX() - columnWidth * 0.5f;
+    const font::Align align = wide ? font::Align::Left : font::Align::Center;
+    const float textX = wide ? columnX : l.centerX();
+
+    // A flat dark shade so the text reads, with a hard edge. On wide screens it only
+    // covers the menu side, so the demo stays visible on the other.
+    if (wide) {
+        const float edge = snapPx(columnX + menuWidth + 40.0f * u);
+        pixelRect(Rectangle{0.0f, 0.0f, edge, l.h}, withAlpha(theme::kTitleShade, 0.9f));
+        pixelRect(Rectangle{edge, 0.0f, l.px, l.h}, theme::kUiBorderDark);
+    } else {
+        pixelRect(Rectangle{0.0f, 0.0f, l.w, l.h}, withAlpha(theme::kTitleShade, 0.72f));
+    }
+
     const float wanted = std::min(wide ? 110.0f * u : 128.0f * u, logoRoom / 1.85f);
-    const float logoSize = font::fitSize("STAND", font::snapSize(wanted * 0.95f), columnWidth - 5.0f * l.px, l.px);
+    const float logoSize = font::fitSize("STAND", font::snapSize(wanted * 0.95f), menuWidth - 5.0f * l.px, l.px);
 
     const float logoTop = wide ? l.top + 6.0f * u : l.top + 10.0f * u;
     const float lastWidth = font::measure("LAST", logoSize, l.px);
@@ -145,10 +158,10 @@ TitleAction drawTitleScreen(SaveData& data) {
     const char* tagline = data.mode == RunMode::Endless ? "It returns every ten minutes. Outlast it."
                                                         : "Survive ten minutes. Then face what is waiting.";
     const float taglineY = logoTop + logoSize * 1.82f;
-    const float taglineSize = font::fitSize(tagline, 22.0f * u, columnWidth);
+    const float taglineSize = font::fitSize(tagline, 22.0f * u, menuWidth);
     if (showTagline) textShadowed(tagline, textX, taglineY, taglineSize, theme::kUiTextDim, align);
 
-    // Buttons. The focus order is Play, the selectors, Settings, How to Play.
+    // Buttons. The focus order is Play, the selectors, Co-op, Settings, How to Play.
     const float buttonX = columnX;
     const float buttonWidth = columnWidth;
     float y = showTagline ? taglineY + taglineSize + 26.0f * u : taglineY + 12.0f * u;
@@ -158,40 +171,52 @@ TitleAction drawTitleScreen(SaveData& data) {
     if (!wide) y = std::max(y, std::min(l.top + l.height() * 0.42f, l.bottom - creditRoom - buttonsBlock - bestRoom));
 
     navigate(g_nav, kFocusCount);
-    if (button(g_nav, kFocusPlay, Rectangle{buttonX, y, buttonWidth, playHeight}, "PLAY", ButtonLook::Primary, promptConfirm())) action = TitleAction::Play;
+    if (button(g_nav, kFocusPlay, Rectangle{buttonX, y, menuWidth, playHeight}, "PLAY", ButtonLook::Primary, promptConfirm())) action = TitleAction::Play;
     y += playHeight + 12.0f * u;
 
+    // The six rows under Play, in focus order: Difficulty, Map, Mode, Co-op, Settings, How to Play.
+    // In one column they stack. In two, the first three are the left column and the last three the right.
+    const float step = smallHeight + rowGap;
+    const float rowsTop = y;
+    const auto rowRect = [&](int row) {
+        if (twoColumns) {
+            return Rectangle{buttonX + (row >= 3 ? columnWidth + columnGap : 0.0f), rowsTop + static_cast<float>(row % 3) * step, columnWidth, smallHeight};
+        }
+        return Rectangle{buttonX, rowsTop + static_cast<float>(row) * step, buttonWidth, smallHeight};
+    };
+
     int level = static_cast<int>(data.difficulty);
-    if (selector(g_nav, kFocusDifficulty, Rectangle{buttonX, y, buttonWidth, smallHeight}, "Difficulty", difficultyNames(), static_cast<int>(Difficulty::Count),
+    if (selector(g_nav, kFocusDifficulty, rowRect(0), "Difficulty", difficultyNames(), static_cast<int>(Difficulty::Count),
                  &level, theme::kDifficultyColors)) {
         data.difficulty = static_cast<Difficulty>(level);
     }
-    y += smallHeight + rowGap;
 
     static const char* const kMapNames[maps::kMapCount] = {maps::name(maps::MapId::City), maps::name(maps::MapId::Wasteland)};
     int map = static_cast<int>(maps::mapFromIndex(data.map));
-    if (selector(g_nav, kFocusMap, Rectangle{buttonX, y, buttonWidth, smallHeight}, "Map", kMapNames, maps::kMapCount, &map, theme::kMapColors)) {
+    if (selector(g_nav, kFocusMap, rowRect(1), "Map", kMapNames, maps::kMapCount, &map, theme::kMapColors)) {
         data.map = map;
     }
-    y += smallHeight + rowGap;
 
     int mode = static_cast<int>(data.mode);
-    if (selector(g_nav, kFocusMode, Rectangle{buttonX, y, buttonWidth, smallHeight}, "Mode", modeNames(), static_cast<int>(RunMode::Count), &mode,
+    if (selector(g_nav, kFocusMode, rowRect(2), "Mode", modeNames(), static_cast<int>(RunMode::Count), &mode,
                  theme::kModeColors)) {
         data.mode = static_cast<RunMode>(mode);
     }
-    y += smallHeight + rowGap;
 
-    if (shareLastRow) {
-        const float halfWidth = (buttonWidth - rowGap) * 0.5f;
-        if (button(g_nav, kFocusSettings, Rectangle{buttonX, y, halfWidth, smallHeight}, "Settings")) action = TitleAction::Settings;
-        if (button(g_nav, kFocusHowTo, Rectangle{buttonX + halfWidth + rowGap, y, halfWidth, smallHeight}, "How to Play")) action = TitleAction::HowToPlay;
+    if (button(g_nav, kFocusCoop, rowRect(3), "Co-op")) action = TitleAction::Coop;
+
+    if (shareLastRow && !twoColumns) {
+        const Rectangle row = rowRect(4);
+        const float halfWidth = (row.width - rowGap) * 0.5f;
+        if (button(g_nav, kFocusSettings, Rectangle{row.x, row.y, halfWidth, smallHeight}, "Settings")) action = TitleAction::Settings;
+        if (button(g_nav, kFocusHowTo, Rectangle{row.x + halfWidth + rowGap, row.y, halfWidth, smallHeight}, "How to Play")) action = TitleAction::HowToPlay;
     } else {
-        if (button(g_nav, kFocusSettings, Rectangle{buttonX, y, buttonWidth, smallHeight}, "Settings")) action = TitleAction::Settings;
-        y += smallHeight + rowGap;
-        if (button(g_nav, kFocusHowTo, Rectangle{buttonX, y, buttonWidth, smallHeight}, "How to Play")) action = TitleAction::HowToPlay;
+        if (button(g_nav, kFocusSettings, rowRect(4), "Settings")) action = TitleAction::Settings;
+        if (button(g_nav, kFocusHowTo, rowRect(5), "How to Play")) action = TitleAction::HowToPlay;
     }
-    y += smallHeight + 26.0f * u;
+    // Under the last row of buttons.
+    const int lastRow = twoColumns ? 2 : (shareLastRow ? 4 : 5);
+    y = rowsTop + static_cast<float>(lastRow) * step + smallHeight + 26.0f * u;
 
     // Best run for the chosen level and mode, under the buttons if there is room. A wide window has no
     // room in the column, but it has the whole demo side, so the record goes in a corner there.
@@ -202,9 +227,10 @@ TitleAction drawTitleScreen(SaveData& data) {
     if (roomForBest && y + 76.0f * u < l.bottom) {
         drawBest(best, data.mode, data.difficulty, buttonX, y, buttonWidth);
         registerExtent("best run", Rectangle{buttonX, y, buttonWidth, bestHeight});
-    } else if (wide) {
+    } else if (wide && l.right - (columnX + menuWidth + 40.0f * u) - 12.0f * u >= 120.0f * u) {
+        // (Two columns on a very small window leave no room beside them, so the record is left out.)
         const float pad = 14.0f * u;
-        const float width = std::min(kBestPanelWidth * u, l.right - (columnX + columnWidth + 40.0f * u) - 12.0f * u);
+        const float width = std::min(kBestPanelWidth * u, l.right - (columnX + menuWidth + 40.0f * u) - 12.0f * u);
         const Rectangle plate{l.right - width, l.bottom - 30.0f * u - bestHeight - pad * 2.0f, width, bestHeight + pad * 2.0f};
         panel(plate, withAlpha(theme::kHudPlate, 0.92f), theme::kUiBorder, 0.0f);
         drawBest(best, data.mode, data.difficulty, plate.x + pad, plate.y + pad, width - pad * 2.0f);

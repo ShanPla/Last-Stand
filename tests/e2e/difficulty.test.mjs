@@ -107,6 +107,8 @@ test('keyboard: left and right change the level while the selector has focus, an
   await page.keyboard.press('ArrowDown');
   await waitSelected(page, 'Mode');
   await page.keyboard.press('ArrowDown');
+  await waitSelected(page, 'Co-op');
+  await page.keyboard.press('ArrowDown');
   await waitSelected(page, 'Settings');
   await page.keyboard.press('ArrowRight');
   await page.waitForTimeout(150);
@@ -472,7 +474,13 @@ for (const [name, options] of [
     }
     // The row is no narrower than Play's column, so it lines up with the other buttons.
     assert.ok(Math.abs(get('Difficulty <').x - get('PLAY').x) < 1.5);
-    assert.ok(Math.abs(get('Difficulty >').x + get('Difficulty >').w - (get('PLAY').x + get('PLAY').w)) < 1.5);
+    // On a very short wide window the menu is two columns under a full-width Play. Then the
+    // selectors fill the left column, and Co-op fills the right one on the same row.
+    const rightEdgeOfPlay = get('PLAY').x + get('PLAY').w;
+    const alignsWithPlay = Math.abs(get('Difficulty >').x + get('Difficulty >').w - rightEdgeOfPlay) < 1.5;
+    const twoColumns = get('Co-op').x > get('Difficulty >').x && Math.abs(get('Co-op').y - get('Difficulty').y) < 1.5;
+    assert.ok(alignsWithPlay || (twoColumns && Math.abs(get('Co-op').x + get('Co-op').w - rightEdgeOfPlay) < 1.5),
+      'the selector row lines up with Play, alone or as one of two columns');
     assert.deepEqual(problems, []);
     await context.close();
   });

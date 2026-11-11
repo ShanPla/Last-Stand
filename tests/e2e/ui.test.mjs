@@ -113,7 +113,7 @@ test('tapping or clicking elsewhere on the title does not start a run', async ()
 test('title menu: keyboard moves the selection, and hover follows the mouse', async () => {
   const { context, page, problems } = await open();
   await waitScreen(page, 'title');
-  // The order is Play, Difficulty, Map, Mode, Settings, How to Play.
+  // The order is Play, Difficulty, Map, Mode, Co-op, Settings, How to Play.
   await page.keyboard.press('ArrowDown');
   await page.waitForTimeout(100);
   await waitSelected(page, 'Difficulty');
@@ -125,10 +125,14 @@ test('title menu: keyboard moves the selection, and hover follows the mouse', as
   await waitSelected(page, 'Mode');
   await page.keyboard.press('ArrowDown');
   await page.waitForTimeout(100);
+  await waitSelected(page, 'Co-op');
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(100);
   await waitSelected(page, 'Settings');
   await page.keyboard.press('ArrowDown');
   await page.waitForTimeout(100);
   await waitSelected(page, 'How to Play');
+  await page.keyboard.press('ArrowUp');
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('ArrowUp');
@@ -850,6 +854,7 @@ test('input works during a screen fade, and the first frame of a new screen', as
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');  // Settings is the fifth stop now that Co-op comes before it.
   await page.keyboard.press('Enter');
   await waitScreen(page, 'settings');
   await page.keyboard.press('Escape');
@@ -881,8 +886,11 @@ test('a gamepad can navigate the title, start, pause, resume, and use the level-
   await padPress(page, 13);
   await waitSelected(page, 'Mode');
   await padPress(page, 13);
+  await waitSelected(page, 'Co-op');
+  await padPress(page, 13);
   await waitSelected(page, 'Settings');
-  await padPress(page, 12);  // D-pad up, four times.
+  await padPress(page, 12);  // D-pad up, five times.
+  await padPress(page, 12);
   await padPress(page, 12);
   await padPress(page, 12);
   await padPress(page, 12);

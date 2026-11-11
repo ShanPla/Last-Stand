@@ -28,6 +28,10 @@ Vec2 g_stickHome;
 int g_stickMenuX = 0;  // Remembers stick direction, so a held stick moves one step.
 int g_stickMenuY = 0;
 bool g_joystickEnabled = true;
+bool g_textInput = false;
+double g_backspaceRepeatAt = 0.0;  // When a held Backspace deletes again.
+constexpr double kBackspaceDelay = 0.40;
+constexpr double kBackspaceRepeat = 0.05;
 Rect g_blockers[kMaxBlockers];
 int g_blockerCount = 0;
 double g_lastTouchTime = -100.0;
@@ -66,21 +70,54 @@ void readKeyboard(Snapshot& s) {
     // frames would be invisible to a state check, and on slow devices that happens.
     int key = GetKeyPressed();
     while (key != 0) {
-        switch (key) {
-            case KEY_W: case KEY_UP: s.up = true; s.stepY--; break;
-            case KEY_S: case KEY_DOWN: s.down = true; s.stepY++; break;
-            case KEY_A: case KEY_LEFT: s.left = true; s.stepX--; break;
-            case KEY_D: case KEY_RIGHT: s.right = true; s.stepX++; break;
-            case KEY_ENTER: case KEY_KP_ENTER: s.confirm = true; break;
-            case KEY_SPACE: s.confirm = true; s.dash = true; break;
-            case KEY_LEFT_SHIFT: case KEY_RIGHT_SHIFT: s.dash = true; break;
-            case KEY_ESCAPE: case KEY_P: s.back = true; break;
-            case KEY_R: s.reroll = true; break;
-            default: break;
+        if (g_textInput) {
+            // Letters and Space are text now, so they must not also move the menu.
+            switch (key) {
+                case KEY_UP: s.up = true; s.stepY--; break;
+                case KEY_DOWN: s.down = true; s.stepY++; break;
+                case KEY_LEFT: s.left = true; s.stepX--; break;
+                case KEY_RIGHT: s.right = true; s.stepX++; break;
+                case KEY_ENTER: case KEY_KP_ENTER: s.confirm = true; break;
+                case KEY_ESCAPE: s.back = true; break;
+                case KEY_BACKSPACE:
+                    s.backspaces++;
+                    g_backspaceRepeatAt = GetTime() + kBackspaceDelay;
+                    break;
+                default: break;
+            }
+        } else {
+            switch (key) {
+                case KEY_W: case KEY_UP: s.up = true; s.stepY--; break;
+                case KEY_S: case KEY_DOWN: s.down = true; s.stepY++; break;
+                case KEY_A: case KEY_LEFT: s.left = true; s.stepX--; break;
+                case KEY_D: case KEY_RIGHT: s.right = true; s.stepX++; break;
+                case KEY_ENTER: case KEY_KP_ENTER: s.confirm = true; break;
+                case KEY_SPACE: s.confirm = true; s.dash = true; break;
+                case KEY_LEFT_SHIFT: case KEY_RIGHT_SHIFT: s.dash = true; break;
+                case KEY_ESCAPE: case KEY_P: s.back = true; break;
+                case KEY_R: s.reroll = true; break;
+                default: break;
+            }
         }
         s.lastDevice = Device::Keyboard;
         s.anyPress = true;
         key = GetKeyPressed();
+    }
+
+    // Typed characters are always read out of raylib's queue, so old ones can never turn up later
+    // when a field opens. They are only kept while a field is being edited.
+    int character = GetCharPressed();
+    while (character != 0) {
+        if (g_textInput && character >= 32 && character < 127 && s.typedCount < static_cast<int>(sizeof(s.typed))) {
+            s.typed[s.typedCount++] = static_cast<char>(character);
+            s.lastDevice = Device::Keyboard;
+        }
+        character = GetCharPressed();
+    }
+    // A held Backspace deletes again and again, after a short wait.
+    if (g_textInput && s.backspaces == 0 && IsKeyDown(KEY_BACKSPACE) && GetTime() >= g_backspaceRepeatAt) {
+        s.backspaces = 1;
+        g_backspaceRepeatAt = GetTime() + kBackspaceRepeat;
     }
 }
 
@@ -252,6 +289,8 @@ float joystickRadius() {
 
 void setJoystickEnabled(bool enabled) { g_joystickEnabled = enabled; }
 
+void setTextInputActive(bool active) { g_textInput = active; }
+
 void setJoystickHome(Vec2 home) { g_stickHome = home; }
 
 void setTouchBlockers(const Rect* rects, int count) {
@@ -263,6 +302,8 @@ void update(Snapshot& s) {
     const Device kept = s.lastDevice;
     s = Snapshot{};
     s.lastDevice = kept;
+    // What the last frame's text field asked for. The page is told, so it lets Space through.
+    platform::setTextEditing(g_textInput);
     readKeyboard(s);
     readGamepad(s);
     readTouch(s);

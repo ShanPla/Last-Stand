@@ -143,6 +143,39 @@ EM_JS(int, ls_js_storage_write, (const char* text), {
     }
 });
 
+// Tells the page whether a text field is being edited. The page normally stops the browser's own
+// Space action (scrolling), and that also stops the character event, so a name could not hold a
+// space. While a field is being edited the page lets Space through.
+EM_JS(void, ls_js_set_text_editing, (int editing), { window.LS_textEditing = editing !== 0; });
+
+// Puts text on the system clipboard. A page may only do this soon after a click or tap, which is
+// exactly when the Copy button calls it. Where the clipboard is blocked, the old textarea trick
+// is tried. The last text is also kept on window, so the browser tests can check it.
+EM_JS(void, ls_js_copy_text, (const char* text), {
+    var out = String();
+    for (var i = 0; HEAPU8[text + i] !== 0; i++) out += String.fromCharCode(HEAPU8[text + i]);
+    window.LS_lastCopied = out;
+    var fallback = function () {
+        try {
+            var area = document.createElement('textarea');
+            area.value = out;
+            area.readOnly = true;
+            area.style.position = 'fixed';
+            area.style.opacity = '0';
+            document.body.appendChild(area);
+            area.select();
+            document.execCommand('copy');
+            document.body.removeChild(area);
+        } catch (error) {}
+    };
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(out).catch(fallback);
+        else fallback();
+    } catch (error) {
+        fallback();
+    }
+});
+
 #endif
 
 namespace ls::platform {
@@ -363,6 +396,27 @@ bool touchIsOnlyPointer() {
 #endif
 }
 
+
+void setTextEditing(bool editing) {
+#ifdef __EMSCRIPTEN__
+    // Only on a change: the text field asks every frame.
+    static bool last = false;
+    if (editing != last) {
+        last = editing;
+        ls_js_set_text_editing(editing ? 1 : 0);
+    }
+#else
+    (void)editing;
+#endif
+}
+
+void copyToClipboard(const char* text) {
+#ifdef __EMSCRIPTEN__
+    ls_js_copy_text(text);
+#else
+    (void)text;  // Native builds have no clipboard use. The Copy button is only for the browser.
+#endif
+}
 
 #ifndef __EMSCRIPTEN__
 namespace {

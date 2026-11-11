@@ -57,6 +57,14 @@ bool prefersReducedMotion();
 // A laptop with a touch screen still has a mouse, so it stays false there.
 bool touchIsOnlyPointer();
 
+// Tells the browser page that a text field is being edited, so it lets Space through as a
+// character. A no-op on native.
+void setTextEditing(bool editing);
+
+// Puts text on the system clipboard, for the room code's Copy button. A no-op on native.
+// Nothing here throws, and a blocked clipboard simply does nothing.
+void copyToClipboard(const char* text);
+
 // Save storage: browser localStorage, or a file on native (%APPDATA%\LastStand on Windows,
 // with the current folder as the fallback). Nothing here throws.
 // Missing and Unreadable are kept apart: a save that could not be read (storage blocked,
