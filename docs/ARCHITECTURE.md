@@ -4,9 +4,9 @@ Last Stand is a zombie survivors game. You move, your weapons fire by themselves
 
 This document explains how the code works. It is written for someone who knows programming but is new to game engines and to systems-level C++. Each technical term is explained where it first appears.
 
-**What this document covers.** It describes the code that exists in this repository now. Work that has not been written yet is marked **Planned**, and all of it is listed once, in [section 11](#11-planned-work-not-in-the-code-yet).
+**What this document covers.** It describes the code that exists in this repository now. Work that has not been written yet is marked **Planned**, and all of it is listed once, in [section 12](#12-planned-work-not-in-the-code-yet).
 
-**How to read it.** Sections 1 to 3 give the big picture, including how the pixel-art world is drawn. Section 4 covers the memory tricks that keep the game fast, including the sprite atlas and the ground chunks. Section 5 covers game content (weapons, zombies, waves, the boss, difficulty, the dash and the solid cars) and how to add more. Section 2 also covers the effects that give the game its feel. Sections 6 and 7 cover the user interface, input, saves, the browser build, installing and offline play, and audio. Section 8 covers testing and measured performance. Section 9 lists the major decisions, and section 10 maps every topic to its files.
+**How to read it.** Sections 1 to 3 give the big picture, including how the pixel-art world is drawn. Section 4 covers the memory tricks that keep the game fast, including the sprite atlas and the ground chunks. Section 5 covers game content (weapons, zombies, waves, the boss, difficulty, the dash and the solid cars) and how to add more. Section 2 also covers the effects that give the game its feel. Sections 6 and 7 cover the user interface, input, saves, the browser build, installing and offline play, and audio. Section 8 covers testing and measured performance. Section 9 lists the major decisions, and section 10 maps every topic to its files. Section 11 covers online co-op: the relay server, the browser networking layer, the lobby and the multi-player simulation. Section 12 lists planned work.
 
 Contents:
 
@@ -20,7 +20,8 @@ Contents:
 8. [Testing and performance](#8-testing-and-performance)
 9. [Major decisions](#9-major-decisions)
 10. [File map](#10-file-map)
-11. [Planned work, not in the code yet](#11-planned-work-not-in-the-code-yet)
+11. [Online co-op](#11-online-co-op)
+12. [Planned work, not in the code yet](#12-planned-work-not-in-the-code-yet)
 
 ---
 
@@ -63,6 +64,11 @@ The world is pixel art that the program paints itself. There are no image files.
 flowchart LR
     subgraph Page["Browser page: web/"]
         Shell["index.html with LoadingScreen, WebGlError, GameCanvas"]
+        NetJs["components/NetClient: WebSocket, WebRTC, wake"]
+    end
+
+    subgraph Server["Relay server: server/, Node.js on Render"]
+        Relay["Rooms, lobby, signaling, fallback forwarding"]
     end
 
     subgraph Program["Game program: C++ compiled to WebAssembly"]
@@ -84,6 +90,7 @@ flowchart LR
         Effects["components/Effects: particles, numbers, shake, glow"]
         Ui["components/Ui: HUD and screens"]
         Audio["components/Audio: generated sound"]
+        Net["components/Net: lobby interface, fake and web backends"]
         Save["core/Save.cpp and SaveFile.cpp: settings and best runs"]
         Data["data/Balance.h and data/Theme.h"]
     end
@@ -109,13 +116,17 @@ flowchart LR
     App -->|"events"| Audio
     App -->|"events"| Effects
     App --> Save
+    App -->|"update, once per frame"| Net
+    Ui -->|"co-op screens read the lobby"| Net
+    Net -->|"commands in, copied state out"| NetJs
+    NetJs <-->|"WebSocket, and WebRTC between players"| Relay
     Data -.-> Modules
     Data -.-> WorldView
     Data -.-> Maps
     Data -.-> Ui
 ```
 
-Solid arrows carry data or calls. Dotted arrows are read-only. The world renderer draws into a low-resolution picture and scales it up. The UI is drawn afterward at full resolution, on top. `Maps/Layout` is the one part of the maps that the simulation can see, which is how a painted car and a solid car always stand in the same place.
+Solid arrows carry data or calls. Dotted arrows are read-only. The three co-op boxes (`Net`, `NetClient` and the relay server) are covered in [section 11](#11-online-co-op); today they carry the lobby only, not the game. The world renderer draws into a low-resolution picture and scales it up. The UI is drawn afterward at full resolution, on top. `Maps/Layout` is the one part of the maps that the simulation can see, which is how a painted car and a solid car always stand in the same place.
 
 ### What each module owns
 
@@ -142,6 +153,9 @@ Solid arrows carry data or calls. Dotted arrows are read-only. The world rendere
 | Platform | [`src/core/Platform.cpp`](../src/core/Platform.cpp), [`DebugSwitch.h`](../src/core/DebugSwitch.h) | The few things that differ between browser and Windows: canvas size, storage, touch events, safe areas, and whether the debug overlay shows | raylib, the browser |
 | Data | [`Balance.h`](../src/data/Balance.h), [`Theme.h`](../src/data/Theme.h) | Every tuning number, every color, and the time-of-day table | Everything |
 | Page shell | [`web/`](../web) | The HTML page, loading bar, WebGL error message, canvas styling, the install button, the offline worker | The WASM file |
+| Co-op lobby interface | [`src/components/Net`](../src/components/Net) | The lobby as the screens see it, the checks on names and codes, and the seam between the lobby logic and a backend (a fake for tests, a web one for the browser) | Ui (co-op screens), NetClient |
+| Browser networking | [`web/components/NetClient`](../web/components/NetClient) | Waking the server, the WebSocket to the relay, WebRTC data channels, the relay fallback, round-trip and message-rate stats | The relay server, other players' browsers |
+| Relay server | [`server/`](../server) | Rooms, room codes, the lobby, signaling, forwarding for pairs whose WebRTC failed, limits, origin check, health check. No game logic | Browsers only |
 
 ### Rules that keep the modules apart
 
@@ -367,7 +381,7 @@ All simulation state lives in one struct, `GameState`, in [`GameState.h`](../src
 struct GameState {
     Rng rng;
     RunState run;
-    Player player;
+    Player players[kMaxPlayers];  // Only the first run.playerCount are in the run.
     Pool<Enemy, kMaxEnemies> enemies;
     Pool<Projectile, kMaxProjectiles> projectiles;
     Pool<EnemyBullet, kMaxEnemyBullets> enemyBullets;
@@ -379,6 +393,8 @@ struct GameState {
     ...
 };
 ```
+
+(A single-player run is a run with one entry of `players` in use. [Section 11](#the-multi-player-simulation) covers 2 to 4 players.)
 
 "Plain data" means numbers, flags and fixed-size arrays. There are no pointers between objects, no virtual functions and no objects that own other objects. Enemies refer to nothing, and nothing refers to enemies except by index. That has three practical benefits:
 
@@ -1205,7 +1221,7 @@ Where a number was measured is stated with it. Counts of test cases come from re
 
 ### Unit tests
 
-The tests use [doctest](https://github.com/doctest/doctest) and run natively, with no window, in `ls_tests`. They live in [`tests/unit`](../tests/unit). The files hold 230 test cases (counted by reading them). The table below is grouped by topic.
+The tests use [doctest](https://github.com/doctest/doctest) and run natively, with no window, in `ls_tests`. They live in [`tests/unit`](../tests/unit). The files hold 342 test cases (counted by reading them, one `TEST_CASE(` each). The table below is grouped by topic.
 
 | File | Cases | What it covers |
 |---|---|---|
@@ -1216,18 +1232,22 @@ The tests use [doctest](https://github.com/doctest/doctest) and run natively, wi
 | [`BossFightTests.cpp`](../tests/unit/BossFightTests.cpp), [`BossHpTests.cpp`](../tests/unit/BossHpTests.cpp) | 5 and 3 | Horde clear, boss appears with a full pool, adds and crates; boss HP from the build |
 | [`AmmoCrateTests.cpp`](../tests/unit/AmmoCrateTests.cpp), [`BladeRingTests.cpp`](../tests/unit/BladeRingTests.cpp), [`ExplosionEventTests.cpp`](../tests/unit/ExplosionEventTests.cpp) | 2, 2 and 1 | The timed ammo crate; blades reach adjacent zombies; a blast that hits nothing still sends its event |
 | [`DashTests.cpp`](../tests/unit/DashTests.cpp) | 19 | Dash distance and direction, cooldown, invulnerability window, no chaining, no dash on the level-up screen, a new run resets it, determinism with dash inputs |
-| [`DifficultyTests.cpp`](../tests/unit/DifficultyTests.cpp) | 6 | Normal changes nothing, harder levels give more health, damage and spawns, boss health follows the level |
+| [`DifficultyTests.cpp`](../tests/unit/DifficultyTests.cpp) | 9 | Normal changes nothing, harder levels give more health, damage and spawns, boss health follows the level |
 | [`CrushTests.cpp`](../tests/unit/CrushTests.cpp) | 19 | The boss crushes what it overlaps and nothing else; a crushed car is not solid, even after the cache refills; the list is hashed and cleared; determinism over a fight with crushing. |
 | [`ObstacleTests.cpp`](../tests/unit/ObstacleTests.cpp) | 26 | Solid cars: layout depends only on map, seed and tile; the cache equals a fresh computation; resolving and sliding; the dash against a car; nothing spawns inside a car; the boss walks through; the Charger crash; zombies reach a player among cars; the stuck rescue; item placement; determinism over cars on both maps; the dash afterimage path |
 | [`EffectsTests.cpp`](../tests/unit/EffectsTests.cpp) | 11 | The flash limiter (never above three flashes in any second), hit pause, screen shake in whole pixels, crowd flash strength, the token budget, damage number merging and the hard cap |
 | [`StateHashTests.cpp`](../tests/unit/StateHashTests.cpp), [`RunResetTests.cpp`](../tests/unit/RunResetTests.cpp) | 5 and 2 | The state hash covers every field that matters (and none that are drawing only); a new run on a used state equals one on a fresh state |
-| [`BotRunTests.cpp`](../tests/unit/BotRunTests.cpp) | 8 | Full runs with a simple bot, including the desert, valid state at every step, determinism through the boss fight |
-| [`SaveTests.cpp`](../tests/unit/SaveTests.cpp) | 18 | Round trip, corrupt text, NaN, clamping, newer versions, large text, difficulty, map |
+| [`BotRunTests.cpp`](../tests/unit/BotRunTests.cpp) | 12 | Full runs with a simple bot, including the desert, valid state at every step, determinism through the boss fight |
+| [`BossMovesTests.cpp`](../tests/unit/BossMovesTests.cpp), [`EndlessTests.cpp`](../tests/unit/EndlessTests.cpp), [`PoolFullTests.cpp`](../tests/unit/PoolFullTests.cpp) | 10, 13 and 6 | The boss move sets per difficulty, Endless mode, and behavior when a pool is full |
+| [`CoopTests.cpp`](../tests/unit/CoopTests.cpp) | 21 | The multi-player simulation: targeting, downed and revive, level-ups that do not pause, scaling, the boss, obstacle windows, the hash ([section 11](#the-multi-player-simulation)) |
+| [`NetLobbyTests.cpp`](../tests/unit/NetLobbyTests.cpp), [`NetWebSnapshotTests.cpp`](../tests/unit/NetWebSnapshotTests.cpp) | 22 and 5 | Names and codes, lobby phases and errors against the fake backend, the backend seam, and the reader of the browser script's JSON |
+| [`SoloGoldenTests.cpp`](../tests/unit/SoloGoldenTests.cpp) | 6 | Fingerprints of whole single-player runs recorded before co-op, which must still match |
+| [`SaveTests.cpp`](../tests/unit/SaveTests.cpp) | 21 | Round trip, corrupt text, NaN, clamping, newer versions, large text, difficulty, map |
 | [`UiFixesTests.cpp`](../tests/unit/UiFixesTests.cpp) | 9 | The debug overlay switch, merging best runs, a missing save versus an unreadable one, the safe write |
 | [`AudioTests.cpp`](../tests/unit/AudioTests.cpp) | 16 | Every sound is clean and ends in silence, music loops join without a click, layers, router limits |
 | [`TestMain.cpp`](../tests/unit/TestMain.cpp) | 2 | Random number generator |
 
-**Measured result.** The last full run passed **284 of 284** unit test cases.
+**Measured result.** The last full run passed **342 of 342** unit test cases.
 
 ### The determinism test
 
@@ -1291,12 +1311,13 @@ These numbers tune the game, but a bot is not a person. A human playtest decides
 - Solid cars ([`solidcars.test.mjs`](../tests/e2e/solidcars.test.mjs)).
 - Crushed cars ([`crush.test.mjs`](../tests/e2e/crush.test.mjs)).
 - Installing and offline play ([`install.test.mjs`](../tests/e2e/install.test.mjs)).
+- Online co-op: the networking layer against a real relay with two browsers, the co-op screens, and the real lobby ([section 11](#testing-co-op)). The server has its own 79 tests, run with `npm test` in `server/`.
 
 The tests also take a **real pixel check** ([`countColorNearCenter`](../tests/e2e/harness.mjs) counts screen pixels of a color). This exists because a state query can pass while nothing is visible on screen (see [bugs](#bugs-worth-knowing-about)).
 
 The functional tests run Chrome with a software renderer, so they check behavior, not speed. [`perf.mjs`](../tests/e2e/perf.mjs) is run by hand and uses the machine's real GPU.
 
-**Measured result.** The last full browser run passed **288 of 288** tests, with none skipped.
+**Measured result.** The last full browser run passed **326 of 326** tests, with none skipped. The 8 real-lobby tests in `coopreal.test.mjs` were added after it, and passed in their own run.
 
 ### Performance
 
@@ -1388,8 +1409,9 @@ Each entry lists what was chosen, what was rejected, and why.
 - Why: no special hosting headers are needed.
 
 **Local-only saves in browser storage, versioned and safe on bad data.**
-- Rejected: accounts, a backend, analytics.
-- Why: nothing to host or run. The parser never trusts the stored text.
+- Rejected: accounts, a backend that stores anything, analytics.
+- Why: nothing to host or run for saves. The parser never trusts the stored text.
+- Note: the co-op relay ([section 11](#11-online-co-op)) is a server, but it is only for the lobby and for passing messages. It keeps no accounts and writes nothing to disk. Single-player still needs no server at all.
 
 ### Art, sound and camera
 
@@ -1582,15 +1604,220 @@ Links are relative to this document.
 | 8 | Balance tool | [`tests/balance`](../tests/balance) |
 | 8 | Browser tests, performance script | [`tests/e2e`](../tests/e2e) |
 | 9 | Look prototypes (shapes, outlines, pixel city): screenshots | [`docs/prototypes`](prototypes) |
-| 11 | Deploy workflow | [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) |
+| 11 | Relay server: rooms, codes, limits, origins, health check | [`server/src`](../server/src), [`server/PROTOCOL.md`](../server/PROTOCOL.md), [`server/test`](../server/test) |
+| 11 | Relay hosting settings (Render, free plan) | [`render.yaml`](../render.yaml) |
+| 11 | Browser networking: wake, lobby, WebRTC, fallback, stats | [`web/components/NetClient`](../web/components/NetClient) ([`NetClient.js`](../web/components/NetClient/NetClient.js), [`NetConfig.js`](../web/components/NetClient/NetConfig.js)) |
+| 11 | C++ lobby interface and its two backends | [`src/components/Net`](../src/components/Net) ([`Net.h`](../src/components/Net/Net.h), [`Backend.h`](../src/components/Net/Backend.h), [`FakeBackend.cpp`](../src/components/Net/FakeBackend.cpp), [`WebBackend.cpp`](../src/components/Net/WebBackend.cpp)) |
+| 11 | Co-op screens | [`src/components/Ui/CoopScreens`](../src/components/Ui/CoopScreens) |
+| 11 | Multi-player simulation: players array, nearest standing player, windows, hash | [`GameState.h`](../src/core/GameState.h), [`Sim.h`](../src/core/Sim.h), [`Sim.cpp`](../src/core/Sim.cpp) (`stateHash`), [`Obstacles`](../src/components/Obstacles) |
+| 11 | Co-op numbers | `kCoop...` and `kRevive...` in [`Balance.h`](../src/data/Balance.h) |
+| 11 | Co-op tests | [`CoopTests.cpp`](../tests/unit/CoopTests.cpp), [`NetLobbyTests.cpp`](../tests/unit/NetLobbyTests.cpp), [`NetWebSnapshotTests.cpp`](../tests/unit/NetWebSnapshotTests.cpp), [`SoloGoldenTests.cpp`](../tests/unit/SoloGoldenTests.cpp), [`netclient`](../tests/e2e/netclient.test.mjs), [`coopreal`](../tests/e2e/coopreal.test.mjs) and [`coopscreens`](../tests/e2e/coopscreens.test.mjs) browser tests |
+| 12 | Deploy workflow | [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) |
 
 ---
 
-## 11. Planned work, not in the code yet
+## 11. Online co-op
+
+Up to four players can share one run. This section covers what is built and what is only planned. The split matters, so here it is first.
+
+**Built:**
+
+- A small relay server in [`server/`](../server): rooms, room codes, a lobby, WebRTC signaling, and a fallback that passes game messages through itself.
+- A browser networking layer, [`NetClient`](../web/components/NetClient), that wakes the server, runs the lobby and opens WebRTC connections with a relay fallback.
+- A C++ lobby interface, [`Net`](../src/components/Net), with a fake backend for tests and a real one for the browser.
+- The co-op screens: Co-op on the title, a menu, a host or guest lobby, and a join screen.
+- A simulation that runs 2 to 4 players.
+
+**Planned (not in the code yet):** running the game itself over the network. That means sending the world from the host to the other players, sending their inputs back, predicting your own movement, and drawing the other players. Pressing Start in a lobby does not start a run yet: the lobby shows "Starting the run..." and stops there. The design for the planned part is in [the end of this section](#planned-running-the-game-over-the-network).
+
+### The message flow
+
+```mermaid
+flowchart LR
+    subgraph HostBrowser["Host's browser"]
+        HostGame["Game (C++ WASM): Net, CoopScreens"]
+        HostJs["NetClient.js"]
+    end
+    subgraph GuestBrowser["Guest's browser"]
+        GuestGame["Game (C++ WASM): Net, CoopScreens"]
+        GuestJs["NetClient.js"]
+    end
+    subgraph Relay["Relay server: server/ on Render"]
+        Http["GET /healthz"]
+        Lobby["Rooms and lobby"]
+        Pass["Signal and frame forwarding"]
+    end
+    Stun["Public STUN servers"]
+
+    HostGame <-->|"polls state each frame"| HostJs
+    GuestGame <-->|"polls state each frame"| GuestJs
+    HostJs -->|"1. wake: HTTP health check"| Http
+    HostJs <-->|"2. WebSocket: lobby, JSON"| Lobby
+    GuestJs <-->|"2. WebSocket: lobby, JSON"| Lobby
+    HostJs <-->|"3. signaling: offer, answer, ICE"| Pass
+    GuestJs <-->|"3. signaling: offer, answer, ICE"| Pass
+    HostJs -.->|"find own public address"| Stun
+    GuestJs -.->|"find own public address"| Stun
+    HostJs <==>|"4a. WebRTC data channels, direct"| GuestJs
+    HostJs <-.->|"4b. only if 4a fails: binary frames via the server"| GuestJs
+```
+
+Solid arrows are used every time. The thick arrow (4a) is the path game messages use when it works. The thin dotted arrow (4b) is the fallback: the same messages go through the relay server instead. The two browsers never need to agree on which path is used, because each side accepts frames from either one.
+
+The steps in order:
+
+1. **Wake.** When the game starts up and the title screen appears, it asks the browser layer to call `GET /healthz` on the server. A server that has been idle on a free plan is asleep, and this call wakes it.
+2. **Lobby.** The host sends `create`, a guest sends `join` with the room code. The server answers everyone in the room with the whole lobby after every change (names, ready marks, who is host).
+3. **Signaling.** When the host presses Start, the room is marked started. The host makes a WebRTC offer for each guest, and the two sides trade the offer, the answer and network candidates through the server. The server passes these along without reading them.
+4. **Game messages.** If the pair's data channels open, messages go straight from browser to browser (4a). If they do not open within 8 seconds, or they fail later, that pair switches to the relay (4b).
+
+The browsers form a star, not a mesh. Every guest talks to the host, and guests do not talk to each other. This matches the planned design below, where the host is the authority.
+
+### The choices
+
+**Host-authoritative, not lockstep and not peer-to-peer with no host.**
+- Chosen: one player's browser (the host) runs the real simulation. The others send it their inputs and get back what to draw. (This is the planned part. The star shape of the connections is built.)
+- Rejected: lockstep. In lockstep every player runs the same simulation and only inputs are sent. The simulation here is deterministic, so it would be possible. It was not chosen because a lockstep step cannot advance until the inputs from every player have arrived, so the whole group runs at the pace of the slowest connection. Every player would also need to run the full simulation, with up to 2,000 zombies, which is the heaviest thing the game does. And a single difference between two browsers' floating-point results would split the runs apart for good. Determinism is only tested inside one build ([section 3](#seeded-random-numbers-and-determinism)), not across browsers.
+- Rejected: peer-to-peer with no host, where each player owns part of the world. Zombies, loot and the boss are shared, and there would be no single answer when two players hit the same zombie.
+- Why: with one host, there is one truth. A guest with a slow phone only has to draw. The cost is that the host's connection decides how good the game is for everyone, and there is no host migration: if the host leaves, the room closes.
+
+**WebRTC data channels, with a WebSocket relay as the fallback.**
+- Chosen: WebRTC data channels between host and each guest, and the relay for any pair that cannot connect.
+- Rejected: WebSocket only. It is simpler, and it is what the fallback uses. But a WebSocket runs on TCP, which resends lost data and delivers it in order. For a fast game this is a problem: one lost packet makes every later packet wait, even though the newer ones make the old one useless. A WebRTC channel can be set to drop late data, like UDP. Sending everything through one server also costs bandwidth on the host's side and an extra hop of delay for every message.
+- Why: direct is faster when it works, and the relay makes sure a bad network does not stop a player from joining.
+
+**A relay fallback with public STUN servers and no TURN.**
+- Chosen: two public STUN servers (Google and Cloudflare). STUN only helps a browser learn its own public address so that a direct connection can be tried. Pairs that cannot connect directly use the relay.
+- Rejected: a TURN server. TURN passes the game traffic for pairs that cannot connect, which is what the relay already does. A TURN service costs money or needs a server of its own to run, and the project has no budget.
+- Cost: the free relay carries the traffic of every pair that fails, and WebSocket traffic is TCP, so those pairs get the TCP behavior described above.
+- Privacy: with WebRTC the players' IP addresses are visible to each other, because a direct connection needs them. This is normal for peer-to-peer games. The STUN servers also see the address of anyone who connects. The relay server sees addresses as any server does. Nothing is stored on disk.
+
+**A thin JavaScript layer with a C++ bridge, not networking in C++.**
+- Chosen: the browser's own `WebSocket`, `RTCPeerConnection` and `fetch` are used from JavaScript in [`NetClient.js`](../web/components/NetClient/NetClient.js). The C++ side only passes simple commands in and copies simple state out.
+- Rejected: networking in C++. The browser's WebRTC is a JavaScript interface, so C++ would need extra glue or a library on top of it, which adds code and download size, to do what the browser already does well.
+- Why: less code, a smaller download, and the lobby logic can be tested against a real server from plain browser tests. The bridge is a seam: C++ asks, JavaScript answers, and neither has to know how the other works.
+
+**The free Render plan, which sleeps when idle.**
+- Chosen: the free plan, in the Singapore region ([`render.yaml`](../render.yaml)).
+- Rejected: a paid always-on plan, because this is a portfolio project with no income.
+- Cost: an idle free server goes to sleep and takes about a minute to wake. The first player to open the co-op menu after a quiet time would wait. So the game wakes the server as soon as it starts up (not when the player presses Co-op), keeps asking for up to 90 seconds, and shows a "Waking server..." state in the meantime. After 70 seconds the screen offers a Retry button. A server on the player's own computer is never woken, because it is never asleep.
+- The server address sits in one place, [`NetConfig.js`](../web/components/NetClient/NetConfig.js). **At the time of writing it still holds a placeholder for the live address**, so the live site would say at once that no server is set, rather than wait for a name that never answers. The Render settings file exists and is ready, but this document does not record a live deploy.
+
+### The relay server
+
+[`server/`](../server) is a small Node.js program with one dependency, the `ws` package. It runs no game logic and stores nothing on disk. The message formats are written down in [`server/PROTOCOL.md`](../server/PROTOCOL.md). In short:
+
+- **Rooms.** A room holds up to 4 players. Each takes a slot from 0 to 3, which is that player's id in every message. The player who creates the room is the host and takes slot 0. A guest leaving frees a slot for the next joiner. If the host leaves, the room closes for everyone. An empty room is deleted, and a room older than 3 hours is closed. Once the host sends `start`, nobody new can join.
+- **Room codes.** 5 characters from `ABCDEFGHJKMNPQRSTUVWXY23456789`: no 0, O, 1, I, L or Z. Zero and O, and one, I and L, look alike on a screen. Z is left out because the game's pixel font draws it like a 2. The code is chosen with `crypto.randomInt`, and a code already in use is never given out again. Joining ignores letter case. The game checks codes with the same alphabet before it asks the server.
+- **Names.** 1 to 12 letters, digits and spaces. The server refuses anything else.
+- **Limits.** A message may be at most 16 KB. Each connection may send 150 messages a second, with room to burst to 300. A steady flood gets warnings, then the socket is closed. The server holds at most 200 rooms and 1,000 connections at a time. A socket that has been silent for 60 seconds is pinged and is closed if it does not answer. All of these can be lowered with environment variables, which is how the tests check them without opening thousands of sockets.
+- **Origins.** A browser always sends an `Origin` header on a WebSocket handshake, and a web page cannot fake it. The server checks it against the `ALLOWED_ORIGINS` list, which `render.yaml` sets to the GitHub Pages address. A refused handshake gets HTTP 403. `localhost` pages and handshakes with no header (a script, not a browser) are allowed only when `NODE_ENV` is not `production`. This stops other websites from using the relay. It does not stop a program that sends its own header, which is fine because the relay holds nothing secret and has its own limits.
+- **Health check.** `GET /healthz` answers `ok`. Render uses it to know the service is alive, and the game uses it to wake a sleeping server. For an allowed origin the answer carries the header that lets the page read it, so the game can tell "awake" from "still waking".
+- **Game messages on the fallback path.** These are binary frames, with the target player id as the first byte. The server never reads the rest. It drops frames for empty slots, for the sender's own id and for senders who are not in a started room.
+
+| File in `server/src` | Does |
+|---|---|
+| [`index.js`](../server/src/index.js) | Starts the server and stops it cleanly when asked |
+| [`server.js`](../server/src/server.js) | Joins the HTTP server, the WebSocket upgrade and one timer for expiry and idle sockets |
+| [`connection.js`](../server/src/connection.js) | One socket. Runs the rate, size, hello and JSON checks in order |
+| [`lobby.js`](../server/src/lobby.js) | The rules for create, join, ready, start, leave, signaling and fallback frames |
+| [`rooms.js`](../server/src/rooms.js) | Rooms, slots, codes, expiry |
+| [`limits.js`](../server/src/limits.js) | The message rate limiter (a token bucket) |
+| [`origin.js`](../server/src/origin.js), [`http.js`](../server/src/http.js), [`config.js`](../server/src/config.js) | The origin check, the health check, and all settings in one place |
+
+### The browser layer
+
+[`NetClient.js`](../web/components/NetClient/NetClient.js) is a plain script that adds one global, `LastStandNet`, to the page. Its top comment explains how the game uses it. It never reads game data: the game gives it bytes, and gets bytes back.
+
+- **Two channels for each pair.** Channel 0 is unordered and never resent, like UDP. It is for data where a late copy is useless (planned: world snapshots and inputs). Channel 1 is ordered and reliable, for rare things that must arrive (planned: run settings, game over, level-up choices). Both channels are created with fixed ids on both sides, so neither side has to wait for the other to announce them. A game message has a flag that picks the channel.
+- **Fallback is per pair.** Each pair of players has its own transport: `pending`, `webrtc` or `relay`. A pair that has no open channel after 8 seconds, or whose connection fails, moves to `relay`. If a channel opens late, it moves back. A pair on WebRTC and a pair on the relay can exist in the same room. Both paths end in the same function, so one side can use WebRTC while the other uses the relay, and they still hear each other.
+- **Only the host makes offers.** So two sides never offer at once.
+- **Wake.** `wake()` calls the health check again and again, up to a time budget, and reports `waking`, `awake` or `unreachable`.
+- **Message size.** A game message can be at most 16 KB minus a two-byte header. The limit is the same on both paths, so a message never works on one path and fails on the other.
+- **Stats for the debug overlay.** The layer measures a round trip to the server and to each peer (small pings that share the channels), counts messages and bytes in each direction per second, and counts messages it had to drop. The C++ side reads these for the `?debug` overlay and for the lobby's transport marks.
+- **How C++ reads it.** Browser events never run inside a game frame, so the game does not take callbacks. Each frame it asks for a list of what changed, then copies the lobby and the numbers into fixed buffers. Nothing needs locking.
+
+### The C++ lobby interface
+
+[`Net.h`](../src/components/Net/Net.h) is the one header the co-op screens use. It has a `Lobby` struct (phase, error, room code, up to four players with name, ready mark, transport and round trip) and a few actions: `wakeServer`, `hostRoom`, `joinRoom`, `setReady`, `startRun`, `leaveRoom`, `retry` and `update`. It has no raylib and no browser code, so unit tests can run it.
+
+`Net.cpp` checks every request before it goes anywhere (names, codes, who may press Start). Then it hands the request to a **backend**:
+
+```cpp
+class Backend {
+public:
+    virtual void wake(Lobby& lobby) = 0;
+    virtual void host(Lobby& lobby, const char* name) = 0;
+    virtual void join(Lobby& lobby, const char* code, const char* name) = 0;
+    virtual void setReady(Lobby& lobby, bool ready) = 0;
+    virtual void start(Lobby& lobby) = 0;
+    virtual void leave(Lobby& lobby) = 0;
+    virtual void update(Lobby& lobby, float dt) = 0;
+};
+```
+
+There are two backends. The **fake** ([`FakeBackend.cpp`](../src/components/Net/FakeBackend.cpp)) pretends to be a server using timers and debug commands, so every phase and every error can be shown and tested with no network. It is what native builds use, and what a browser uses when the page address has `?fakenet`. The **web** one ([`WebBackend.cpp`](../src/components/Net/WebBackend.cpp)) calls `NetClient.js` and copies its answers into the `Lobby`. This is one of the rare places where the game uses a virtual function. It is a real seam: the same screens and the same checks run on both.
+
+Two details worth knowing. The Start button needs the host, at least two players and every player ready, which is stricter than the server (the server lets the host start at any time). And the web backend allocates nothing after startup. It reads the script's JSON with a small scanner that works in a fixed buffer, because the few fields it needs do not justify a JSON library.
+
+The screens are in [`CoopScreens`](../src/components/Ui/CoopScreens): a menu with a saved name, a host or guest lobby with the room code and ready marks, a join screen with clear error messages, and the "Waking server..." state with Retry. A text field with an on-screen keyboard serves touch and gamepad. A joined player sees the same lobby screen as the host, with Start left out.
+
+### The multi-player simulation
+
+The simulation was changed to run 2 to 4 players. `sim::newRun` takes a player count, and `sim::step` takes one `InputFrame` per player:
+
+```cpp
+void step(GameState& state, const InputFrame inputs[], int inputCount);
+```
+
+- **The players array.** `GameState` holds `Player players[kMaxPlayers]` (4), and `run.playerCount` says how many are in use. Each player has their own HP, XP, level, weapons, ammo, dash, rerolls and level-up cards. A player with no input given for a step stands still. A single-player run is a run with one player, and the old one-input `step` still exists for it.
+- **Zombies pick the nearest standing player.** `nearestStanding` returns the closest player who is not downed. A tie goes to the lower slot, so the answer depends on nothing but positions. Looking for a new target for every zombie every step would cost too much with 2,000 zombies, so each zombie looks again every 12 steps, spread out by its id so only a few look in any one step. It also looks at once if its target goes down. The boss aims its attacks at its target, and a boss attack zone hurts every player inside it.
+- **Downed and revive.** A player who reaches 0 HP is **downed**: zombies ignore them, and they cannot move, fire, collect or be hurt. A teammate who stays within 70 units for 3 seconds in total gets them back up with 40% HP and 1.5 seconds of safety. The run ends when every player is down at once.
+- **Level-ups do not pause in co-op.** Pausing for everyone while one player reads cards would be unfair to the others. Instead the player's cards open, their weapons hold fire, and they are shielded from damage for at most 5 seconds, so a slow choice cannot become a hiding place. Rerolls are per player. Single-player level-ups pause the run as before.
+- **Scaling factors.** More players bring more zombies, tougher zombies and a tougher boss. Three tables in [`Balance.h`](../src/data/Balance.h) hold the numbers, read by player count: `kCoopSpawnRate` (1.0, 1.6, 2.2, 2.8), `kCoopZombieHp` (1.0, 1.15, 1.45, 1.7) and `kCoopBossHp` (1.0, 2.2, 2.9, 3.6). A `static_assert` checks that the first entry of each is 1, so a solo run is never scaled. The boss's health is also fitted to the team's average build.
+- **Obstacle windows per player.** Solid cars used to be cached in one window of map tiles around the one player. Now each player has their own window (`ObstacleCache::windows[kMaxPlayers]`), so players far apart each have the cars around them. A place is solid if any window holds its tile. Every window holds the same cars for a tile, because cars come from the map, the seed and the tile only. A new tile is copied from a teammate's window when one has it.
+- **Items and events.** Gems give XP to whoever collects them. Heals and ammo go to whoever picks them up. A magnet and a bomb help the whole team. Events about one player name that player's slot.
+
+**How single-player stays bit-identical.** The state hash ([`Sim.cpp`](../src/core/Sim.cpp), `stateHash`) mixes in the first player's fields in exactly the order it did before co-op. The extra players and the new co-op fields (downed, revive progress, card shield, zombie targets, shot owners) are mixed in at the end, and only when the run has more than one player. This is the same trick the Endless fields use. With one player those fields never change anyway: every zombie chases slot 0, every shot is the first player's, and nobody is downed. So a single-player hash comes out the same as before.
+
+**How the golden runs prove it.** [`SoloGoldenTests.cpp`](../tests/unit/SoloGoldenTests.cpp) holds fingerprints of whole single-player runs on both maps and on several difficulties, including Endless and a boss fight. They were recorded with the game as it was just before co-op was added. The runs take real damage, dash, reroll, take different cards and collect everything. After the change the same seeds and inputs must give the same fingerprints, step for step. If a change to single-player is ever meant, a failure prints the new values to record. A second test in [`CoopTests.cpp`](../tests/unit/CoopTests.cpp) checks that in a single-player run the hash ignores every co-op field.
+
+### Planned: running the game over the network
+
+**Planned.** None of this is in the code yet, and details may change.
+
+- **The host runs the simulation.** Its `sim::step` takes one `InputFrame` per player, which is already the shape this needs: the host fills slot 0 from its own input and the other slots from the inputs that arrive over the network.
+- **Clients send inputs.** Each guest sends its input to the host often, on the unreliable channel. A missed input is replaced by the last one, or by standing still.
+- **About 20 snapshots a second.** The host sends the world as it is, not every 60 Hz step. To keep the messages small, each guest gets only what is near them: the players, and the zombies, shots and pickups in range. Slow changes that must arrive (run settings, game over, level-up choices) go on the reliable channel.
+- **Local prediction of your own movement.** A guest moves its own soldier at once from its own input, and corrects it gently when a snapshot says it is somewhere else. Everything else is drawn from the snapshots, a little behind, with interpolation between them.
+- **Drawing the other players.** The renderer would draw teammates from the snapshots, like it draws zombies now. The HUD is still one-player today and would need a view of the team.
+
+The 16 KB message limit is a reason to keep each snapshot small and to send near things only.
+
+### Testing co-op
+
+Counts below come from reading the test files (a `test(` or `TEST_CASE(` per case), not from a recorded run, and some cases run more than once.
+
+- **Server: 79 tests** in [`server/test`](../server/test), run with `npm test` in `server/`. Handshake and versions (7), rooms and the lobby (20), signaling (6), the binary fallback (10), limits (19), origins (11) and the health check (6). The tests start their own servers on random ports.
+- **Browser networking: 12 tests** in [`netclient.test.mjs`](../tests/e2e/netclient.test.mjs), against the real server with two headless Chrome windows on a bare test page. They cover the address rules, waking, forced relay with 240 messages each way, a mixed pair, errors and leaving. One test tries a **real WebRTC connection between two headless Chrome windows**. If it connects, the test checks that no game message went through the server and that a round trip was measured. If this machine cannot connect, the test still passes on the fallback and says so in its output. Setting `NET_REQUIRE_WEBRTC=1` makes it strict. This document does not record which of the two happened on a given run.
+- **Co-op screens: 21 tests** in [`coopscreens.test.mjs`](../tests/e2e/coopscreens.test.mjs) (16), [`coopscreens-input.test.mjs`](../tests/e2e/coopscreens-input.test.mjs) (4) and [`coopscreens-layout.test.mjs`](../tests/e2e/coopscreens-layout.test.mjs) (1). They use the fake backend and cover every screen, keyboard, mouse, touch and gamepad, and several window sizes. Screenshots are saved in [`tests/e2e/screenshots`](../tests/e2e/screenshots).
+- **Real lobby: 7 tests** in [`coopreal.test.mjs`](../tests/e2e/coopreal.test.mjs). Two game windows, real clicks, the real server: host, join, ready and start (once with WebRTC allowed and once forced through the server), errors, the host leaving, the server disappearing, and the wake on page load.
+- **Unit tests:** [`CoopTests.cpp`](../tests/unit/CoopTests.cpp) (21 cases) for targeting, downed and revive, level-ups, scaling, the boss, obstacle windows and the hash; [`NetLobbyTests.cpp`](../tests/unit/NetLobbyTests.cpp) (22) and [`NetWebSnapshotTests.cpp`](../tests/unit/NetWebSnapshotTests.cpp) (5) for the lobby rules, the fake backend and the reader of the script's JSON; and [`SoloGoldenTests.cpp`](../tests/unit/SoloGoldenTests.cpp) (6).
+
+**Not tested:** real phones, and real home networks with real NAT. The two-browser tests run on one machine, where a direct connection is easy. Co-op gameplay over the network does not exist yet, so nothing tests it.
+
+---
+
+## 12. Planned work, not in the code yet
 
 Everything marked **Planned** here is not in the code now, and details may change.
 
 **Planned:**
+
+- **Co-op gameplay over the network.** Snapshots, inputs, prediction and drawing other players. See [the end of section 11](#planned-running-the-game-over-the-network).
+- **Setting the relay's real address** in `NetConfig.js` once it is deployed.
+
+Ideas for a wider launch, not planned or committed: a TURN server, rate limits by IP address, and host migration.
 
 - **Automatic fast mode and automatic world quality on weak devices.** The effects already drop to a low quality level by themselves (see [effects](#effects-particles-numbers-shake-and-glow)). The world renderer's own hooks exist (its fast mode switch, and its quality level that paints half-size ground chunks and drops lamp light pools, flicker and the vignette), but nothing calls them except the `?debug` command that sets the quality level.
 - **Real phone measurements** of speed, touch, the gamepad and notches. The numbers in [section 8](#performance) come from a laptop. A measurement under CPU throttling is in progress.
