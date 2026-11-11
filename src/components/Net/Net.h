@@ -4,8 +4,9 @@
 // actions below, so they never know whether a real server or a fake one is behind them.
 //
 // This file has no raylib and no browser code, so unit tests can run it. The work itself is
-// done by a Backend (see Backend.h). For now the backend is a fake that pretends to be a
-// server. The browser layer will later swap in one that talks to the relay over a WebSocket.
+// done by a Backend (see Backend.h). In the browser the backend talks to the relay server
+// (WebBackend.cpp). Everywhere else, and in the browser with ?fakenet in the address, it is a
+// fake that pretends to be a server.
 namespace ls::net {
 
 inline constexpr int kMaxPlayers = 4;
@@ -36,22 +37,41 @@ enum class LobbyError {
     Other,              // Anything else, such as a full server or a rate limit.
 };
 
+// How game messages travel between this player and another one. Only the web backend knows.
+enum class Transport {
+    None,     // Not known, or not in a room.
+    Local,    // This player.
+    Pending,  // A direct connection is being tried.
+    WebRtc,   // Direct from browser to browser.
+    Relay,    // Through the server, because the direct connection did not work.
+};
+const char* transportName(Transport transport);
+
 struct LobbyPlayer {
-    int id = -1;            // The slot, 0 to 3. The host is always slot 0.
+    int id = -1;            // The server's slot, 0 to 3. The host is always slot 0.
     char name[kNameMax + 1] = {};
     bool ready = false;
+    // Numbers for the debug overlay. They stay at these values with the fake backend.
+    Transport transport = Transport::None;
+    int rttMs = -1;          // Round trip to this player in milliseconds, or -1 when not measured.
+    int msgsInPerSec = 0;
+    int msgsOutPerSec = 0;
 };
 
 struct Lobby {
     LobbyPhase phase = LobbyPhase::Offline;
     LobbyError error = LobbyError::None;
     char code[kCodeLength + 1] = {};  // The room code, or empty outside a room.
-    int you = -1;                     // This player's slot, or -1 outside a room.
-    int host = -1;                    // The host's slot, or -1 outside a room.
+    // you and host are positions in players[], which the screens use as rows. players are listed
+    // with no gaps, so when someone leaves, the server's slots (players[i].id) can skip a number
+    // while the positions do not.
+    int you = -1;                     // This player's position in players, or -1 outside a room.
+    int host = -1;                    // The host's position in players, or -1 outside a room.
     bool started = false;             // The host has started the run.
     int count = 0;                    // How many entries of players are in use.
     LobbyPlayer players[kMaxPlayers];
     float wakeSeconds = 0.0f;         // How long the server has been waking, for the Retry timeout.
+    int serverRttMs = -1;             // Round trip to the server in milliseconds, or -1.
 };
 
 // ---- Reading ---------------------------------------------------------------------

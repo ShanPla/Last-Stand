@@ -35,17 +35,23 @@
   // call it with made-up pages.
   //   ?server=ws://host:port   overrides the address (for tests and local servers)
   //   ?transport=relay         forces every pair to use the server instead of WebRTC (for tests)
+  //   ?wakebudget=8000         how long, in milliseconds, to keep trying to wake the server (for tests)
   function resolve(hostname, search) {
     var params;
     try { params = new URLSearchParams(search || ''); } catch (error) { params = new URLSearchParams(''); }
     var override = normalizeServer(params.get('server'));
     var local = hostname === 'localhost' || hostname === '127.0.0.1';
     var wsUrl = override || (local ? LOCAL : PLACEHOLDER);
+    var budget = Number(params.get('wakebudget'));
     return {
       wsUrl: wsUrl,
       healthUrl: healthUrlFor(wsUrl),
       forceRelay: params.get('transport') === 'relay',
       isPlaceholder: wsUrl === PLACEHOLDER,
+      // A server on this machine is never asleep, and may not be running at all, so the game does
+      // not wake it when the page loads. A named server (?server=) and the live one are woken.
+      wakeOnLoad: !local || !!override,
+      wakeBudgetMs: budget > 0 && budget <= 600000 ? Math.round(budget) : 0,
     };
   }
 

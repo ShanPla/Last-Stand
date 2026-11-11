@@ -153,7 +153,7 @@ test('a saved name comes back after a reload, and an old save with no name still
   const old = await newContext(desktop);
   const oldPage = await old.newPage();
   await oldPage.addInitScript(() => localStorage.setItem('laststand.save', 'version=1\nmusic=0.500\neffects=0.800\nmap=1\n'));
-  await oldPage.goto(webUrl() + '?debug');
+  await oldPage.goto(webUrl() + '?debug&fakenet');
   await oldPage.waitForFunction(() => document.getElementById('loading-screen').classList.contains('is-done'), null, { timeout: 30000 });
   await waitScreen(oldPage, 'title');
   await toCoop(oldPage);
@@ -451,8 +451,10 @@ test('Join while the server is waking shows the wait, Retry after the timeout, a
   await debug(page, NET.wakeSeconds, 72);
   ui = await frameUi(page);
   assert.ok(hasButton(ui, 'Retry'));
-  await debug(page, NET.wakeMs, 30);
+  // Click first and wake the server after. Waking it first made Retry vanish within a few frames,
+  // and the buttons below it moved up, so a slow click landed on Back.
   await clickButton(page, 'Retry');
+  await debug(page, NET.wakeMs, 30);
   await waitNet(page, (n) => n.phase === PHASE.inLobby, 'the lobby');
   await clickButton(page, 'Leave');
   await waitScreen(page, 'coop-menu');

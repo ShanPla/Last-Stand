@@ -648,18 +648,21 @@ const char* coopScreenName() {
 }
 
 const char* coopDebugJson() {
-    static char json[1024];
+    static char json[2048];
     const net::Lobby& lobby = net::lobby();
     int n = std::snprintf(json, sizeof(json),
                           "{\"sub\":\"%s\",\"phase\":%d,\"error\":%d,\"code\":\"%s\",\"you\":%d,\"host\":%d,\"started\":%d,\"count\":%d,"
                           "\"canStart\":%d,\"wake\":%.1f,\"name\":\"%s\",\"codeText\":\"%s\",\"editing\":%d,\"keys\":%d,\"notice\":\"%s\","
-                          "\"players\":[",
+                          "\"serverRtt\":%d,\"players\":[",
                           coopScreenName(), static_cast<int>(lobby.phase), static_cast<int>(lobby.error), lobby.code, lobby.you, lobby.host,
                           lobby.started ? 1 : 0, lobby.count, net::canStart() ? 1 : 0, static_cast<double>(lobby.wakeSeconds), g_name.text,
-                          g_code.text, textEditing() ? 1 : 0, textKeyboardOpen() ? 1 : 0, g_notice);
-    for (int i = 0; i < lobby.count && n > 0 && n < static_cast<int>(sizeof(json)) - 96; ++i) {
-        n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "%s{\"id\":%d,\"name\":\"%s\",\"ready\":%d}", i > 0 ? "," : "",
-                           lobby.players[i].id, lobby.players[i].name, lobby.players[i].ready ? 1 : 0);
+                          g_code.text, textEditing() ? 1 : 0, textKeyboardOpen() ? 1 : 0, g_notice, lobby.serverRttMs);
+    for (int i = 0; i < lobby.count && n > 0 && n < static_cast<int>(sizeof(json)) - 220; ++i) {
+        const net::LobbyPlayer& player = lobby.players[i];
+        n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n),
+                           "%s{\"id\":%d,\"name\":\"%s\",\"ready\":%d,\"transport\":\"%s\",\"rtt\":%d,\"msgsIn\":%d,\"msgsOut\":%d}", i > 0 ? "," : "",
+                           player.id, player.name, player.ready ? 1 : 0, net::transportName(player.transport), player.rttMs, player.msgsInPerSec,
+                           player.msgsOutPerSec);
     }
     std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "]}");
     return json;

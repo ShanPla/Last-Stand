@@ -1,6 +1,7 @@
 // Shared setup for the co-op screen tests (coopscreens, coopscreens-input, coopscreens-layout).
 // They are three files so that each one finishes well inside the test time limit.
-// There is no real server yet, so the game's fake lobby is driven with debug commands.
+// These tests use the game's fake lobby (the ?fakenet flag) and drive it with debug commands. The real
+// server is tested in coopreal.test.mjs.
 import { before, after } from 'node:test';
 import { mkdir } from 'node:fs/promises';
 import { startServer, launchChrome, openGame, readUi, debug, waitScreen, tapButton, clickButton } from './harness.mjs';
@@ -67,7 +68,7 @@ export async function fast(page) {
 }
 
 // Opens the game on the title, with a fast fake server so tests do not sit and wait.
-export async function open(options = desktop, query = '?debug') {
+export async function open(options = desktop, query = '?debug&fakenet') {
   const session = await openGame(rig.browser, rig.web.url + query, options);
   await waitScreen(session.page, 'title');
   await fast(session.page);

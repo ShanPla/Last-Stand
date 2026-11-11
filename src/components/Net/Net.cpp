@@ -9,7 +9,7 @@ namespace ls::net {
 namespace {
 
 Lobby g_lobby;
-Backend* g_backend = nullptr;  // Null means the fake.
+Backend* g_backend = nullptr;  // Null means the default.
 
 // What retry() repeats. Only the last request is kept.
 enum class Request { None, Wake, Host, Join };
@@ -17,7 +17,7 @@ Request g_lastRequest = Request::None;
 char g_lastName[kNameMax + 1] = {};
 char g_lastCode[kCodeLength + 1] = {};
 
-Backend& backend() { return g_backend ? *g_backend : fakeBackend(); }
+Backend& backend() { return g_backend ? *g_backend : defaultBackend(); }
 
 bool isLetter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
@@ -64,6 +64,17 @@ void forget() {
 }  // namespace
 
 const Lobby& lobby() { return g_lobby; }
+
+const char* transportName(Transport transport) {
+    switch (transport) {
+        case Transport::Local: return "local";
+        case Transport::Pending: return "pending";
+        case Transport::WebRtc: return "webrtc";
+        case Transport::Relay: return "relay";
+        case Transport::None: break;
+    }
+    return "none";
+}
 
 bool canStart() {
     if (g_lobby.phase != LobbyPhase::InLobby || g_lobby.started) return false;

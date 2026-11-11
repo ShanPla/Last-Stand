@@ -7,8 +7,8 @@
 // Net.cpp owns the Lobby and checks every request (names, codes, who may start) before it
 // reaches a backend. A backend only has to carry the request out and update the Lobby it is
 // given as answers arrive. The fake backend (FakeBackend.cpp) answers from a timer. The real
-// one will send the protocol's JSON messages from the browser and fill the Lobby in from the
-// server's `room`, `started`, `closed` and `error` messages.
+// one (WebBackend.cpp) asks the browser's networking script to talk to the relay, and copies
+// what that script knows into the Lobby every frame.
 namespace ls::net {
 
 class Backend {
@@ -31,10 +31,14 @@ public:
     virtual void debug(Lobby& lobby, int op, int value) { (void)lobby; (void)op; (void)value; }
 };
 
-// The fake. It is what Net uses until setBackend() is called with another.
+// The fake.
 Backend& fakeBackend();
 
-// Swaps the backend. Null puts the fake back. Used by the browser layer, and by tests.
+// What Net uses until setBackend() is called with another: the real one in the browser, and
+// the fake in the browser with ?fakenet in the address, and in every native build.
+Backend& defaultBackend();
+
+// Swaps the backend. Null puts the default back. Used by tests.
 void setBackend(Backend* backend);
 
 }  // namespace ls::net

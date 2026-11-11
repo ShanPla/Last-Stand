@@ -7,37 +7,17 @@
 //   LastStandNet.shared()          the one client the game uses
 //
 // ---------------------------------------------------------------------------------------
-// BRIDGE PLAN (for whoever connects this to C++ later; none of it is written yet)
+// HOW THE GAME USES THIS
 //
-// C++ calls JS (EM_JS functions, or ccall into a small JS library). `net` is
-// LastStandNet.shared():
-//   ls_net_wake()                 -> net.wake()               call when the title screen shows
-//   ls_net_create(name)           -> net.create(name)
-//   ls_net_join(code, name)       -> net.join(code, name)
-//   ls_net_ready(on)              -> net.setReady(on)
-//   ls_net_start()                -> net.start()              host only
-//   ls_net_leave()                -> net.leave()              also clears an Error phase
-//   ls_net_send(to, ptr, len, reliable)
-//        -> net.send(to, HEAPU8.subarray(ptr, ptr + len), reliable)   the bytes are copied at once
-//   ls_net_phase()  -> net.phaseIndex()     0 Offline, 1 Waking, 2 Connecting, 3 InLobby,
-//                                           4 Starting, 5 Error
-//   ls_net_error()  -> net.errorIndex()     -1 none, 0 ServerUnreachable, 1 NotFound, 2 Full,
-//                                           3 Started, 4 BadName, 5 HostLeft, 6 Version, 7 Other
-//   ls_net_snapshot(buf, cap) -> copies net.snapshotJson() into buf as UTF-8, returns its length
-//   ls_net_events(buf, cap)   -> same for net.takeEventsJson(): a JSON array of the events since
-//                                the last call (room, started, closed, error, server-lost,
-//                                peer-dropped, transport, wake, phase). Poll it once per frame.
-//   ls_net_my_id() -> net.myId() (-1 when not in a room)   ls_net_is_host() -> net.isHost()
-//   ls_net_stats(buf, cap)    -> same for net.statsJson()   (debug overlay)
+// The C++ side is src/components/Net/WebBackend.cpp. It calls the shared client through small
+// EM_JS functions: wake(), create(name), join(code, name), setReady(on), start(), leave(), and
+// every frame takeEventsJson() (to learn that something changed), then snapshotJson() and
+// statsJson() (to copy the lobby and the numbers for the debug overlay). Browser events never
+// run inside a C++ frame, so the game polls and needs no locking.
 //
-// JS calls C++ (functions the C++ side exports with EXPORTED_FUNCTIONS):
-//   ls_net_inbox() -> uint8_t*   a buffer of at least 16384 bytes that C++ owns
-//   ls_net_on_message(from, len) JS first copies the bytes to the inbox, then calls this
-//        net.onMessage = function (from, bytes) {
-//          var p = Module._ls_net_inbox(); Module.HEAPU8.set(bytes, p); Module._ls_net_on_message(from, bytes.length);
-//        };
-// Messages are only delivered between frames (browser events never run inside a C++ frame),
-// so C++ needs no locking. Lobby state is polled, not pushed, for the same reason.
+// Not connected yet (planned, for the run itself): sending and receiving game messages. C++
+// would call net.send(to, bytes, reliable) and set net.onMessage to copy each message into a
+// buffer that C++ owns.
 //
 // How the states map to the C++ lobby interface:
 //   phases  Offline | Waking | Connecting | InLobby | Starting | Error
@@ -106,6 +86,8 @@
     for (key in (userOptions || {})) if (userOptions[key] !== undefined) opt[key] = userOptions[key];
 
     var cfg = opt.config || Config.fromPage();
+    // ?wakebudget=ms on the page shortens the wake, so tests do not wait a minute and a half.
+    if (!(userOptions && userOptions.wakeBudgetMs !== undefined) && cfg.wakeBudgetMs) opt.wakeBudgetMs = cfg.wakeBudgetMs;
     var canRtc = typeof global.RTCPeerConnection === 'function';
     var forceRelay = !!cfg.forceRelay || !canRtc;
 
