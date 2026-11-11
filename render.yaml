@@ -1,0 +1,19 @@
+# Render Blueprint for the Last Stand co-op relay (the Node server in server/).
+services:
+  - type: web
+    name: last-stand-relay
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ALLOWED_ORIGINS
+        value: https://shanpla.github.io
+      # Render reads this to pick the Node version; it matches "engines" in server/package.json.
+      - key: NODE_VERSION
+        value: "22"
