@@ -28,8 +28,7 @@ PassiveSlot* findPassive(Player& player, PassiveId id) {
 }
 
 // Lists every card the player could take right now.
-int collectCandidates(GameState& state, Card* out, int maxCards) {
-    Player& player = state.player;
+int collectCandidates(Player& player, Card* out, int maxCards) {
     int count = 0;
     const auto add = [&](const Card& card) {
         if (count < maxCards) out[count++] = card;
@@ -62,109 +61,133 @@ int collectCandidates(GameState& state, Card* out, int maxCards) {
     return count;
 }
 
-void buildOffers(GameState& state) {
+// Draws from the run's one random stream, so in co-op the order players level up in is
+// part of the run, like everything else.
+void buildOffers(GameState& state, int slot) {
+    Player& player = state.players[slot];
     Card candidates[kWeaponTypes + kPassiveTypes + 8];
-    const int candidateCount = collectCandidates(state, candidates, static_cast<int>(std::size(candidates)));
-    RunState& run = state.run;
-    run.offerCount = 0;
+    const int candidateCount = collectCandidates(player, candidates, static_cast<int>(std::size(candidates)));
+    player.offerCount = 0;
 
     // Evolutions are always shown first, because they are the build's payoff.
     int remaining = candidateCount;
-    for (int i = 0; i < remaining && run.offerCount < kOffersPerLevel;) {
+    for (int i = 0; i < remaining && player.offerCount < kOffersPerLevel;) {
         if (candidates[i].kind == CardKind::Evolution) {
-            run.offers[run.offerCount++] = candidates[i];
+            player.offers[player.offerCount++] = candidates[i];
             candidates[i] = candidates[--remaining];
         } else {
             ++i;
         }
     }
-    while (run.offerCount < kOffersPerLevel && remaining > 0) {
+    while (player.offerCount < kOffersPerLevel && remaining > 0) {
         const int pick = state.rng.below(remaining);
-        run.offers[run.offerCount++] = candidates[pick];
+        player.offers[player.offerCount++] = candidates[pick];
         candidates[pick] = candidates[--remaining];
     }
     // A finished build still gets a useful choice.
-    if (run.offerCount == 0) {
-        run.offers[run.offerCount++] = Card{CardKind::Heal, WeaponId::Rifle, PassiveId::Damage, 1};
+    if (player.offerCount == 0) {
+        player.offers[player.offerCount++] = Card{CardKind::Heal, WeaponId::Rifle, PassiveId::Damage, 1};
     }
 }
 
 }  // namespace
 
-void addXp(GameState& state, int amount) {
-    Player& player = state.player;
+void addXp(GameState& state, int slot, int amount) {
+    Player& player = state.players[slot];
     player.xp += amount;
     while (player.xp >= player.xpToNext) {
         player.xp -= player.xpToNext;
         player.level++;
         player.xpToNext = balance::xpForLevel(player.level);
-        state.run.pendingLevels++;
+        player.pendingLevels++;
     }
 }
 
 void update(GameState& state) {
     RunState& run = state.run;
-    if (run.phase == RunPhase::Playing && run.pendingLevels > 0 && state.player.hp > 0.0f) {
-        buildOffers(state);
-        run.phase = RunPhase::LevelUp;
-        pushEvent(state, EventType::LevelUp, state.player.pos, static_cast<float>(state.player.level));
+    if (!state.isCoop()) {
+        Player& player = state.firstPlayer();
+        if (run.phase == RunPhase::Playing && player.pendingLevels > 0 && player.hp > 0.0f) {
+            buildOffers(state, 0);
+            run.phase = RunPhase::LevelUp;
+            pushPlayerEvent(state, EventType::LevelUp, 0, player.pos, static_cast<float>(player.level));
+        }
+        return;
+    }
+    // Co-op, in slot order. A player who is down or at 0 HP gets their cards once back up.
+    for (int slot = 0; slot < state.playerCount(); ++slot) {
+        Player& player = state.players[slot];
+        if (player.cardsOpen || player.pendingLevels <= 0 || player.downed || player.hp <= 0.0f) continue;
+        buildOffers(state, slot);
+        player.cardsOpen = true;
+        player.cardShield = balance::kCoopCardShieldSeconds;
+        pushPlayerEvent(state, EventType::LevelUp, slot, player.pos, static_cast<float>(player.level));
     }
 }
 
-void choose(GameState& state, int index) {
-    RunState& run = state.run;
-    if (run.phase != RunPhase::LevelUp || index < 0 || index >= run.offerCount) return;
-    const Card card = run.offers[index];
-    Player& player = state.player;
+bool choosing(const GameState& state, int slot) {
+    if (state.isCoop()) return state.players[slot].cardsOpen;
+    return slot == 0 && state.run.phase == RunPhase::LevelUp;
+}
+
+void choose(GameState& state, int slot, int index) {
+    Player& player = state.players[slot];
+    if (!choosing(state, slot) || index < 0 || index >= player.offerCount) return;
+    const Card card = player.offers[index];
 
     switch (card.kind) {
         case CardKind::Weapon:
             if (WeaponSlot* held = findWeapon(player, card.weapon)) {
                 held->level = card.newLevel;
-                weapons::refill(state, *held);
+                weapons::refill(player, *held);
             } else {
-                weapons::grant(state, card.weapon);
+                weapons::grant(state, slot, card.weapon);
             }
             break;
         case CardKind::Passive:
             if (PassiveSlot* held = findPassive(player, card.passive)) {
                 held->level = card.newLevel;
             } else if (player.passiveCount < kMaxHeldPassives) {
-                PassiveSlot& slot = player.passives[player.passiveCount++];
-                slot.id = card.passive;
-                slot.level = 1;
+                PassiveSlot& passive = player.passives[player.passiveCount++];
+                passive.id = card.passive;
+                passive.level = 1;
             }
-            recomputeStats(state);
+            recomputeStats(state, slot);
             break;
         case CardKind::Evolution:
             if (WeaponSlot* held = findWeapon(player, card.weapon)) {
                 held->evolved = true;
-                pushEvent(state, EventType::EvolutionGained, player.pos, 0.0f, static_cast<uint8_t>(card.weapon));
+                pushPlayerEvent(state, EventType::EvolutionGained, slot, player.pos, 0.0f, static_cast<uint8_t>(card.weapon));
             }
             break;
         case CardKind::Heal:
-            player::heal(state, player.maxHp * balance::kHealCardFraction);
+            player::heal(state, slot, player.maxHp * balance::kHealCardFraction);
             break;
     }
 
-    run.pendingLevels--;
-    if (run.pendingLevels > 0) {
-        buildOffers(state);
-        pushEvent(state, EventType::LevelUp, player.pos, static_cast<float>(player.level));
+    player.pendingLevels--;
+    if (player.pendingLevels > 0) {
+        // The next level's cards follow at once. In co-op the card shield keeps running, so a
+        // pile of levels can't make it last longer than one shield.
+        buildOffers(state, slot);
+        pushPlayerEvent(state, EventType::LevelUp, slot, player.pos, static_cast<float>(player.level));
+    } else if (state.isCoop()) {
+        player.cardsOpen = false;
+        player.cardShield = 0.0f;
     } else {
-        run.phase = RunPhase::Playing;
+        state.run.phase = RunPhase::Playing;
     }
 }
 
-void reroll(GameState& state) {
-    RunState& run = state.run;
-    if (run.phase != RunPhase::LevelUp || run.rerollsLeft <= 0) return;
-    run.rerollsLeft--;
-    buildOffers(state);
+void reroll(GameState& state, int slot) {
+    Player& player = state.players[slot];
+    if (!choosing(state, slot) || player.rerollsLeft <= 0) return;
+    player.rerollsLeft--;
+    buildOffers(state, slot);
 }
 
-void recomputeStats(GameState& state) {
-    Player& player = state.player;
+void recomputeStats(GameState& state, int slot) {
+    Player& player = state.players[slot];
     PlayerStats stats;
     stats.moveSpeed = balance::kPlayerSpeed;
     stats.pickupRange = balance::kPlayerPickupRange;

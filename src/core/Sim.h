@@ -6,7 +6,7 @@
 
 namespace ls {
 
-// One step of player input. A saved list of these, plus the seed, replays a run.
+// One step of one player's input. A saved list of these, plus the seed, replays a run.
 struct InputFrame {
     float moveX = 0.0f;
     float moveY = 0.0f;
@@ -17,14 +17,21 @@ struct InputFrame {
 
 namespace sim {
 
+// Starts a run for 1 to kMaxPlayers players. The host's choices of map, difficulty and mode
+// hold for the whole run and every player in it.
 void newRun(GameState& state, uint64_t seed, Difficulty difficulty = Difficulty::Normal, maps::MapId map = maps::kDefaultMap,
-            RunMode mode = RunMode::Story);
+            RunMode mode = RunMode::Story, int playerCount = 1);
 
 // Changes the map under a run in progress, as the title screen's picker does behind its demo.
 void setMap(GameState& state, maps::MapId map);
 
-// Advances the run by one fixed step. Same state and input give the same result.
-void step(GameState& state, const InputFrame& input);
+// Advances the run by one fixed step, with one input per player: inputs[slot] belongs to the
+// player in that slot. A player with no input given, because inputCount is smaller than the
+// number of players, stands still that step. Same state and inputs give the same result.
+void step(GameState& state, const InputFrame inputs[], int inputCount);
+
+// A single-player step: the one input is the first player's.
+inline void step(GameState& state, const InputFrame& input) { step(state, &input, 1); }
 
 // A fingerprint of the run, for checking that two runs match exactly.
 uint64_t stateHash(const GameState& state);

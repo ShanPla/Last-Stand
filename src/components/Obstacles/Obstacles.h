@@ -7,8 +7,8 @@
 // a zombie that is about to walk into one turns toward its nearer corner.
 namespace ls::obstacles {
 
-// Brings the cached lists up to date around the player, leaving out flattened cars. Runs first
-// in every step, and costs nothing until the player crosses into a new tile.
+// Brings the cached lists up to date around every player, leaving out flattened cars. Runs first
+// in every step, and costs nothing until a player crosses into a new tile.
 void update(GameState& state);
 
 // Throws the cache away, for a new run or a different map.

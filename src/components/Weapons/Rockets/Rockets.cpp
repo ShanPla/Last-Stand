@@ -7,12 +7,12 @@
 
 namespace ls::weapons {
 
-bool fireRockets(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
-    const Vec2 origin = state.player.pos;
+bool fireRockets(GameState& state, int owner, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
+    const Vec2 origin = state.players[owner].pos;
     const int target = enemies::nearest(state, origin, balance::kWeaponRange);
     if (target < 0) return false;
 
-    const Vec2 aim = normalizedOr(state.enemies[target].pos - origin, state.player.facing);
+    const Vec2 aim = normalizedOr(state.enemies[target].pos - origin, state.players[owner].facing);
     const float baseAngle = std::atan2(aim.y, aim.x);
     // The rockets leave in a fan, then curve in on their targets by themselves.
     const float firstOffset = -0.5f * static_cast<float>(stats.count - 1) * balance::kRocketFanStepRadians;
@@ -30,8 +30,9 @@ bool fireRockets(GameState& state, const WeaponSlot& slot, const balance::Weapon
         shot->kind = ProjectileKind::Rocket;
         shot->source = slot.id;
         shot->evolved = slot.evolved;
+        shot->owner = static_cast<uint8_t>(owner);
     }
-    markFired(state, slot, aim);
+    markFired(state, owner, slot, aim);
     return true;
 }
 

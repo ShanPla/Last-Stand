@@ -8,7 +8,7 @@
 namespace ls::enemies {
 
 Vec2 spitterVelocity(GameState& state, Enemy& enemy) {
-    const Vec2 toPlayer = state.player.pos - enemy.pos;
+    const Vec2 toPlayer = targetOf(state, enemy).pos - enemy.pos;
     const float dist = length(toPlayer);
     const Vec2 dir = normalizedOr(toPlayer, Vec2{1.0f, 0.0f});
 

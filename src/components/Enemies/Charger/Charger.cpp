@@ -1,18 +1,20 @@
 #include "components/Enemies/Charger/Charger.h"
 
+#include "components/Enemies/Enemies.h"
 #include "components/Obstacles/Obstacles.h"
 #include "data/Balance.h"
 
 namespace ls::enemies {
 
 Vec2 chargerVelocity(GameState& state, Enemy& enemy) {
-    const Vec2 toPlayer = state.player.pos - enemy.pos;
+    const Vec2 targetPos = targetOf(state, enemy).pos;
+    const Vec2 toPlayer = targetPos - enemy.pos;
     switch (enemy.state) {
         case kChargerChase:
             // It only charges with a clear run at the player, or a car between them would make
             // it useless. Once it has locked on, stepping behind a car makes it crash.
             if (lengthSq(toPlayer) < balance::kChargerTriggerDistance * balance::kChargerTriggerDistance &&
-                !obstacles::lineBlocked(state, enemy.pos, state.player.pos, enemy.radius * balance::kZombieCarRadiusShare)) {
+                !obstacles::lineBlocked(state, enemy.pos, targetPos, enemy.radius * balance::kZombieCarRadiusShare)) {
                 // The aim is locked now and never updated, so the player can dodge the dash.
                 enemy.state = kChargerTelegraph;
                 enemy.timer = balance::kChargerTelegraphSeconds;

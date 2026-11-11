@@ -7,8 +7,8 @@
 
 namespace ls::weapons {
 
-bool fireGrenadeLauncher(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
-    const Vec2 origin = state.player.pos;
+bool fireGrenadeLauncher(GameState& state, int owner, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
+    const Vec2 origin = state.players[owner].pos;
     const float maxLob = stats.speed * stats.duration;
     const float reach = maxLob * balance::kShortRangeSlack;
 
@@ -23,14 +23,14 @@ bool fireGrenadeLauncher(GameState& state, const WeaponSlot& slot, const balance
     }
     if (chosenCount == 0) return false;
 
-    Vec2 firstAim = state.player.facing;
+    Vec2 firstAim = state.players[owner].facing;
     for (int i = 0; i < stats.count; ++i) {
         Projectile* shot = state.projectiles.add();
         if (!shot) break;
         // With more grenades than targets, the extras reuse targets and scatter a little.
         const bool repeated = i >= chosenCount;
         const Vec2 toTarget = state.enemies[chosen[i % chosenCount]].pos - origin;
-        Vec2 dir = normalizedOr(toTarget, state.player.facing);
+        Vec2 dir = normalizedOr(toTarget, state.players[owner].facing);
         if (repeated) {
             const float angle = std::atan2(dir.y, dir.x) +
                                 state.rng.range(-balance::kGrenadeScatterRadians, balance::kGrenadeScatterRadians);
@@ -49,8 +49,9 @@ bool fireGrenadeLauncher(GameState& state, const WeaponSlot& slot, const balance
         shot->kind = ProjectileKind::Grenade;
         shot->source = slot.id;
         shot->evolved = slot.evolved;
+        shot->owner = static_cast<uint8_t>(owner);
     }
-    markFired(state, slot, firstAim);
+    markFired(state, owner, slot, firstAim);
     return true;
 }
 

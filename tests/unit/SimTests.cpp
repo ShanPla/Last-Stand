@@ -90,27 +90,27 @@ TEST_CASE("player moves at full speed, and diagonals are not faster") {
     input.moveX = 1.0f;
     input.moveY = 1.0f;
     sim::step(*state, input);
-    CHECK(length(state->player.pos) == doctest::Approx(balance::kPlayerSpeed * kDt).epsilon(0.001));
+    CHECK(length(state->firstPlayer().pos) == doctest::Approx(balance::kPlayerSpeed * kDt).epsilon(0.001));
 }
 
 TEST_CASE("an enemy touching the player deals damage, then invulnerability blocks repeats") {
     auto state = makeRun();
     enemies::spawn(*state, EnemyType::Walker, Vec2{1.0f, 0.0f}, false);
-    const float startHp = state->player.hp;
+    const float startHp = state->firstPlayer().hp;
     sim::step(*state, InputFrame{});
-    const float afterFirst = state->player.hp;
+    const float afterFirst = state->firstPlayer().hp;
     CHECK(afterFirst < startHp);
     sim::step(*state, InputFrame{});
-    CHECK(state->player.hp == afterFirst);
+    CHECK(state->firstPlayer().hp == afterFirst);
 }
 
 TEST_CASE("armor reduces damage but never below the minimum") {
     auto state = makeRun();
-    state->player.stats.armor = 100.0f;
+    state->firstPlayer().stats.armor = 100.0f;
     enemies::spawn(*state, EnemyType::Walker, Vec2{1.0f, 0.0f}, false);
-    const float startHp = state->player.hp;
+    const float startHp = state->firstPlayer().hp;
     sim::step(*state, InputFrame{});
-    CHECK(startHp - state->player.hp == doctest::Approx(balance::kMinDamageTaken));
+    CHECK(startHp - state->firstPlayer().hp == doctest::Approx(balance::kMinDamageTaken));
 }
 
 TEST_CASE("a shot is used up when its pierce runs out, and not before") {
@@ -118,10 +118,10 @@ TEST_CASE("a shot is used up when its pierce runs out, and not before") {
     // path, far enough apart that it cannot touch both at once.
     const auto fire = [](int pierce, float& firstHp, float& secondHp, int& shotsLeft) {
         auto state = makeRun();
-        state->player.weaponCount = 0;
-        state->player.maxHp = 1.0e6f;
-        state->player.hp = 1.0e6f;
-        state->player.xpToNext = 1 << 30;
+        state->firstPlayer().weaponCount = 0;
+        state->firstPlayer().maxHp = 1.0e6f;
+        state->firstPlayer().hp = 1.0e6f;
+        state->firstPlayer().xpToNext = 1 << 30;
         Enemy* first = enemies::spawn(*state, EnemyType::Walker, Vec2{300.0f, 0.0f}, false);
         Enemy* second = enemies::spawn(*state, EnemyType::Walker, Vec2{360.0f, 0.0f}, false);
         REQUIRE(first != nullptr);
@@ -172,7 +172,7 @@ TEST_CASE("killing an enemy counts the kill and drops a gem with its XP") {
     auto state = makeRun();
     Enemy* enemy = enemies::spawn(*state, EnemyType::Brute, Vec2{400.0f, 0.0f}, false);
     REQUIRE(enemy != nullptr);
-    enemies::hit(*state, 0, 100000.0f, WeaponId::Rifle, Vec2{});
+    enemies::hit(*state, 0, 100000.0f, WeaponId::Rifle, 0, Vec2{});
     enemies::removeDead(*state);
     CHECK(state->run.kills == 1);
     CHECK(state->enemies.count == 0);
@@ -181,11 +181,11 @@ TEST_CASE("killing an enemy counts the kill and drops a gem with its XP") {
 
 TEST_CASE("collecting enough XP opens level-up, and a choice resumes play") {
     auto state = makeRun();
-    upgrades::addXp(*state, balance::xpForLevel(1));
-    CHECK(state->player.level == 2);
+    upgrades::addXp(*state, 0, balance::xpForLevel(1));
+    CHECK(state->firstPlayer().level == 2);
     sim::step(*state, InputFrame{});
     REQUIRE(state->run.phase == RunPhase::LevelUp);
-    CHECK(state->run.offerCount == kOffersPerLevel);
+    CHECK(state->firstPlayer().offerCount == kOffersPerLevel);
 
     // The run is paused until a card is chosen.
     const uint32_t tick = state->run.tick;
@@ -200,8 +200,8 @@ TEST_CASE("collecting enough XP opens level-up, and a choice resumes play") {
 
 TEST_CASE("several levels at once offer cards one level at a time") {
     auto state = makeRun();
-    upgrades::addXp(*state, balance::xpForLevel(1) + balance::xpForLevel(2));
-    CHECK(state->run.pendingLevels == 2);
+    upgrades::addXp(*state, 0, balance::xpForLevel(1) + balance::xpForLevel(2));
+    CHECK(state->firstPlayer().pendingLevels == 2);
     sim::step(*state, InputFrame{});
     REQUIRE(state->run.phase == RunPhase::LevelUp);
     InputFrame pick;
@@ -214,45 +214,45 @@ TEST_CASE("several levels at once offer cards one level at a time") {
 
 TEST_CASE("rerolls are limited to two per run") {
     auto state = makeRun();
-    upgrades::addXp(*state, balance::xpForLevel(1));
+    upgrades::addXp(*state, 0, balance::xpForLevel(1));
     sim::step(*state, InputFrame{});
     InputFrame reroll;
     reroll.reroll = true;
     sim::step(*state, reroll);
     sim::step(*state, reroll);
-    CHECK(state->run.rerollsLeft == 0);
+    CHECK(state->firstPlayer().rerollsLeft == 0);
     sim::step(*state, reroll);
-    CHECK(state->run.rerollsLeft == 0);
+    CHECK(state->firstPlayer().rerollsLeft == 0);
 }
 
 TEST_CASE("a level 5 weapon with its passive is offered an evolution first") {
     auto state = makeRun();
-    state->player.weapons[0].level = kMaxLevelPerItem;
-    state->player.passives[0].id = PassiveId::FireRate;
-    state->player.passives[0].level = 1;
-    state->player.passiveCount = 1;
-    upgrades::addXp(*state, balance::xpForLevel(1));
+    state->firstPlayer().weapons[0].level = kMaxLevelPerItem;
+    state->firstPlayer().passives[0].id = PassiveId::FireRate;
+    state->firstPlayer().passives[0].level = 1;
+    state->firstPlayer().passiveCount = 1;
+    upgrades::addXp(*state, 0, balance::xpForLevel(1));
     sim::step(*state, InputFrame{});
     REQUIRE(state->run.phase == RunPhase::LevelUp);
-    CHECK(state->run.offers[0].kind == CardKind::Evolution);
-    CHECK(state->run.offers[0].weapon == WeaponId::Rifle);
+    CHECK(state->firstPlayer().offers[0].kind == CardKind::Evolution);
+    CHECK(state->firstPlayer().offers[0].weapon == WeaponId::Rifle);
 
     InputFrame pick;
     pick.chooseCard = 0;
     sim::step(*state, pick);
-    CHECK(state->player.weapons[0].evolved);
+    CHECK(state->firstPlayer().weapons[0].evolved);
 }
 
 TEST_CASE("evolved weapons are not offered the evolution again") {
     auto state = makeRun();
-    state->player.weapons[0].level = kMaxLevelPerItem;
-    state->player.weapons[0].evolved = true;
-    state->player.passives[0].id = PassiveId::FireRate;
-    state->player.passiveCount = 1;
-    upgrades::addXp(*state, balance::xpForLevel(1));
+    state->firstPlayer().weapons[0].level = kMaxLevelPerItem;
+    state->firstPlayer().weapons[0].evolved = true;
+    state->firstPlayer().passives[0].id = PassiveId::FireRate;
+    state->firstPlayer().passiveCount = 1;
+    upgrades::addXp(*state, 0, balance::xpForLevel(1));
     sim::step(*state, InputFrame{});
-    for (int i = 0; i < state->run.offerCount; ++i) {
-        CHECK(state->run.offers[i].kind != CardKind::Evolution);
+    for (int i = 0; i < state->firstPlayer().offerCount; ++i) {
+        CHECK(state->firstPlayer().offers[i].kind != CardKind::Evolution);
     }
 }
 
@@ -322,9 +322,9 @@ TEST_CASE("the state hash sees every kind of state that a later step reads") {
         sim::step(*base, botInput(*base));
         base->events.clear();
     }
-    weapons::grant(*base, WeaponId::Shotgun);
-    base->player.passives[0] = PassiveSlot{PassiveId::Damage, 1};
-    base->player.passiveCount = 1;
+    weapons::grant(*base, 0, WeaponId::Shotgun);
+    base->firstPlayer().passives[0] = PassiveSlot{PassiveId::Damage, 1};
+    base->firstPlayer().passiveCount = 1;
     Enemy* enemy = enemies::spawn(*base, EnemyType::Charger, Vec2{500.0f, 100.0f}, false);
     REQUIRE(enemy != nullptr);
     Projectile* shot = base->projectiles.add();
@@ -342,20 +342,20 @@ TEST_CASE("the state hash sees every kind of state that a later step reads") {
     // Each change alone must change the hash. None of these moves anything yet, which is
     // exactly the kind of difference that is invisible until a later step.
     const std::vector<std::pair<const char*, void (*)(GameState&)>> changes = {
-        {"magazine", [](GameState& s) { s.player.weapons[0].magazine += 1; }},
-        {"reserve", [](GameState& s) { s.player.weapons[0].reserve += 1; }},
-        {"weapon cooldown", [](GameState& s) { s.player.weapons[0].cooldown += 0.5f; }},
-        {"reload", [](GameState& s) { s.player.weapons[0].reloadLeft += 0.5f; }},
-        {"weapon level", [](GameState& s) { s.player.weapons[1].level += 1; }},
-        {"evolved", [](GameState& s) { s.player.weapons[1].evolved = !s.player.weapons[1].evolved; }},
-        {"passive level", [](GameState& s) { s.player.passives[0].level += 1; }},
-        {"player stats", [](GameState& s) { s.player.stats.armor += 1.0f; }},
-        {"player facing", [](GameState& s) { s.player.facing = Vec2{0.0f, 1.0f}; }},
-        {"offers", [](GameState& s) { s.run.offers[0].newLevel += 1; }},
-        {"rerolls", [](GameState& s) { s.run.rerollsLeft += 1; }},
+        {"magazine", [](GameState& s) { s.firstPlayer().weapons[0].magazine += 1; }},
+        {"reserve", [](GameState& s) { s.firstPlayer().weapons[0].reserve += 1; }},
+        {"weapon cooldown", [](GameState& s) { s.firstPlayer().weapons[0].cooldown += 0.5f; }},
+        {"reload", [](GameState& s) { s.firstPlayer().weapons[0].reloadLeft += 0.5f; }},
+        {"weapon level", [](GameState& s) { s.firstPlayer().weapons[1].level += 1; }},
+        {"evolved", [](GameState& s) { s.firstPlayer().weapons[1].evolved = !s.firstPlayer().weapons[1].evolved; }},
+        {"passive level", [](GameState& s) { s.firstPlayer().passives[0].level += 1; }},
+        {"player stats", [](GameState& s) { s.firstPlayer().stats.armor += 1.0f; }},
+        {"player facing", [](GameState& s) { s.firstPlayer().facing = Vec2{0.0f, 1.0f}; }},
+        {"offers", [](GameState& s) { s.firstPlayer().offers[0].newLevel += 1; }},
+        {"rerolls", [](GameState& s) { s.firstPlayer().rerollsLeft += 1; }},
         {"damage credit", [](GameState& s) { s.run.damageByWeapon[3] += 1.0f; }},
         {"wave accumulator", [](GameState& s) { s.run.waveAccumulators[5] += 0.25f; }},
-        {"blade angle", [](GameState& s) { s.run.bladeAngle += 0.1f; }},
+        {"blade angle", [](GameState& s) { s.firstPlayer().bladeAngle += 0.1f; }},
         {"next elite", [](GameState& s) { s.run.nextEliteEvent += 1; }},
         {"next drop", [](GameState& s) { s.run.nextPickupDropKills += 1; }},
         {"boss phase", [](GameState& s) { s.run.bossPhase += 1; }},

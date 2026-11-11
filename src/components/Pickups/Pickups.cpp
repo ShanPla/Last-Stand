@@ -38,43 +38,66 @@ void removeKeepingOrder(GameState& state, int index) {
     state.pickups.count--;
 }
 
-void applyPickup(GameState& state, PickupType type, Vec2 pos) {
+// The bomb clears the screen. In co-op it clears every standing player's screen, because
+// a bomb helps the whole team: each zombie near the bomb or near any standing player is hit
+// once. With one player only the bomb's own spot counts, as it always has.
+void detonateBomb(GameState& state, Vec2 pos) {
+    Vec2 centers[kMaxPlayers + 1];
+    int centerCount = 0;
+    centers[centerCount++] = pos;
+    if (state.isCoop()) {
+        for (int slot = 0; slot < state.playerCount(); ++slot) {
+            if (standing(state, slot)) centers[centerCount++] = state.players[slot].pos;
+        }
+    }
+    const float radiusSq = balance::kBombRadius * balance::kBombRadius;
+    for (int i = 0; i < state.enemies.count; ++i) {
+        const Enemy& enemy = state.enemies[i];
+        bool inside = false;
+        for (int c = 0; c < centerCount && !inside; ++c) inside = distanceSq(enemy.pos, centers[c]) <= radiusSq;
+        if (!inside) continue;
+        // The boss would melt in one bomb, so it only loses a small share.
+        float damage = balance::kBombDamage;
+        if (enemy.type == EnemyType::Boss) damage = std::min(damage, enemy.maxHp * balance::kBombBossMaxHpFraction);
+        enemies::damageNoCredit(state, i, damage);
+    }
+    for (int c = 0; c < centerCount; ++c) pushEvent(state, EventType::BombBlast, centers[c], balance::kBombRadius);
+}
+
+// Heal and ammo go to the player who picked them up. Magnet and bomb help the whole team.
+void applyPickup(GameState& state, int slot, PickupType type, Vec2 pos) {
     switch (type) {
         case PickupType::Heal:
-            player::heal(state, state.player.maxHp * balance::kHealPickupFraction);
+            player::heal(state, slot, state.players[slot].maxHp * balance::kHealPickupFraction);
             break;
         case PickupType::Magnet:
+            // Every gem flies to whoever is nearest, so the whole team shares the pull.
             for (Gem& gem : state.gems) gem.attracted = true;
             break;
-        case PickupType::Bomb: {
-            const float radiusSq = balance::kBombRadius * balance::kBombRadius;
-            for (int i = 0; i < state.enemies.count; ++i) {
-                const Enemy& enemy = state.enemies[i];
-                if (distanceSq(enemy.pos, pos) > radiusSq) continue;
-                // The boss would melt in one bomb, so it only loses a small share.
-                float damage = balance::kBombDamage;
-                if (enemy.type == EnemyType::Boss) damage = std::min(damage, enemy.maxHp * balance::kBombBossMaxHpFraction);
-                enemies::damageNoCredit(state, i, damage);
-            }
-            pushEvent(state, EventType::BombBlast, pos, balance::kBombRadius);
+        case PickupType::Bomb:
+            detonateBomb(state, pos);
             break;
-        }
         case PickupType::Ammo:
-            weapons::addAmmoFraction(state, balance::kAmmoCrateFraction);
+            weapons::addAmmoFraction(state, slot, balance::kAmmoCrateFraction);
             break;
         case PickupType::Count:
             break;
     }
 }
 
+// A pickup goes to the first standing player in reach, in slot order.
 void collectPickups(GameState& state) {
     const float reachSq = balance::kPickupCollectRadius * balance::kPickupCollectRadius;
     for (int i = state.pickups.count - 1; i >= 0; --i) {
         const Pickup pickup = state.pickups[i];
-        if (distanceSq(pickup.pos, state.player.pos) > reachSq) continue;
+        int taker = -1;
+        for (int slot = 0; slot < state.playerCount() && taker < 0; ++slot) {
+            if (standing(state, slot) && distanceSq(pickup.pos, state.players[slot].pos) <= reachSq) taker = slot;
+        }
+        if (taker < 0) continue;
         removeKeepingOrder(state, i);
-        applyPickup(state, pickup.type, pickup.pos);
-        pushEvent(state, EventType::PickupCollected, pickup.pos, 0.0f, static_cast<uint8_t>(pickup.type));
+        applyPickup(state, taker, pickup.type, pickup.pos);
+        pushPlayerEvent(state, EventType::PickupCollected, taker, pickup.pos, 0.0f, static_cast<uint8_t>(pickup.type));
     }
 }
 
@@ -92,7 +115,9 @@ void dropGem(GameState& state, Vec2 pos, int xp) {
     if (xp <= 0) return;
     Gem* gem = state.gems.add();
     if (!gem) {
-        upgrades::addXp(state, xp);
+        // The XP goes to the standing player nearest to the drop, who would most likely have got it.
+        const int nearest = nearestStanding(state, pos);
+        upgrades::addXp(state, nearest < 0 ? 0 : nearest, xp);
         return;
     }
     gem->pos = obstacles::placeItem(state, pos);
@@ -150,24 +175,45 @@ void mergeGems(GameState& state) {
 }
 
 void update(GameState& state) {
-    Player& player = state.player;
-    const float range = player.stats.pickupRange;
     const float collectDistance = balance::kPlayerRadius + balance::kGemCollectMargin;
+    const int players = state.playerCount();
 
     for (int i = state.gems.count - 1; i >= 0; --i) {
         Gem& gem = state.gems[i];
         gem.prevPos = gem.pos;
-        const Vec2 toPlayer = player.pos - gem.pos;
-        const float distSq = lengthSq(toPlayer);
-        if (!gem.attracted && distSq < range * range) gem.attracted = true;
+        // Gems belong to whoever collects them. Two players matter for each gem: the nearest
+        // standing one, who collects it when close enough, and the nearest one whose pickup
+        // range reaches it, who pulls it in. With one player both are that player.
+        int nearest = -1;
+        float nearestSq = 0.0f;
+        int puller = -1;
+        float pullerSq = 0.0f;
+        for (int slot = 0; slot < players; ++slot) {
+            if (!standing(state, slot)) continue;
+            const Player& player = state.players[slot];
+            const float distSq = lengthSq(player.pos - gem.pos);
+            if (nearest < 0 || distSq < nearestSq) {
+                nearest = slot;
+                nearestSq = distSq;
+            }
+            const float range = player.stats.pickupRange;
+            if (distSq < range * range && (puller < 0 || distSq < pullerSq)) {
+                puller = slot;
+                pullerSq = distSq;
+            }
+        }
+        if (nearest < 0) continue;  // Everyone is down. The run ends at the end of this step.
+        if (!gem.attracted && puller >= 0) gem.attracted = true;
         if (gem.attracted) {
+            // A magnet pulls gems from out of everyone's range, to the nearest player.
+            const Vec2 toPlayer = state.players[puller >= 0 ? puller : nearest].pos - gem.pos;
             gem.pos += normalizedOr(toPlayer, Vec2{}) * (balance::kGemAttractSpeed * kDt);
         }
-        if (distSq < collectDistance * collectDistance) {
+        if (nearestSq < collectDistance * collectDistance) {
             const int xp = gem.xp;
-            pushEvent(state, EventType::GemCollected, gem.pos, static_cast<float>(xp));
+            pushPlayerEvent(state, EventType::GemCollected, nearest, gem.pos, static_cast<float>(xp));
             state.gems.removeAt(i);
-            upgrades::addXp(state, xp);
+            upgrades::addXp(state, nearest, xp);
         }
     }
 

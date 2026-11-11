@@ -13,16 +13,45 @@ namespace ls::waves {
 
 namespace {
 
+// Where a group of zombies appears: on a ring just out of sight of a player.
 Vec2 spawnPoint(GameState& state, float extraDistance = 0.0f) {
-    return state.player.pos + fromAngle(state.rng.range(0.0f, kTau)) * (balance::kSpawnRadius + extraDistance);
+    const float radius = balance::kSpawnRadius + extraDistance;
+    if (!state.isCoop()) return state.firstPlayer().pos + fromAngle(state.rng.range(0.0f, kTau)) * radius;
+
+    // Co-op: the ring of one standing player, picked at random for each group, so every player
+    // gets their share of zombies wherever they are, and a player who wanders off alone is not
+    // left in peace. The pick uses the run's own random stream, so replays still match.
+    int standingSlots[kMaxPlayers];
+    int count = 0;
+    for (int slot = 0; slot < state.playerCount(); ++slot) {
+        if (standing(state, slot)) standingSlots[count++] = slot;
+    }
+    const int anchor = count > 0 ? standingSlots[state.rng.below(count)] : 0;
+    const Vec2 dir = fromAngle(state.rng.range(0.0f, kTau));
+    Vec2 point = state.players[anchor].pos + dir * radius;
+    // A point on one player's ring can be right in front of a teammate. Then it is pushed out
+    // to that teammate's ring, so nobody sees zombies appear out of thin air.
+    for (int i = 0; i < count; ++i) {
+        const Vec2 other = state.players[standingSlots[i]].pos;
+        if (standingSlots[i] != anchor && distanceSq(point, other) < radius * radius) {
+            point = other + normalizedOr(point - other, dir) * radius;
+        }
+    }
+    return point;
 }
 
 }  // namespace
 
 float bossHpForBuild(const GameState& state) {
-    const float strength = weapons::estimatedBossDps(state) / balance::kBossReferenceDps;
+    // Fitted to the build of the player, or in co-op to the team's average build. The team
+    // factor then adds health for each extra player.
+    float dps = 0.0f;
+    for (int slot = 0; slot < state.playerCount(); ++slot) dps += weapons::estimatedBossDps(state.players[slot]);
+    if (state.isCoop()) dps /= static_cast<float>(state.playerCount());
+    const float strength = dps / balance::kBossReferenceDps;
     const float hp = balance::kBossHpAtReferenceDps * std::pow(strength, balance::kBossHpScalePower);
-    return clampf(hp, balance::kBossHpMin, balance::kBossHpMax) * balance::difficultyTuning(state.run.difficulty).enemyHp;
+    const float team = state.isCoop() ? balance::coopBossHp(state.playerCount()) : 1.0f;
+    return clampf(hp, balance::kBossHpMin, balance::kBossHpMax) * balance::difficultyTuning(state.run.difficulty).enemyHp * team;
 }
 
 float rowRate(int rowIndex, float seconds) {
@@ -81,7 +110,9 @@ void spawnBoss(GameState& state) {
     // The horde clears when the boss arrives. Its attacks must be readable, and
     // shots must reach it rather than being soaked up by leftover zombies.
     state.enemies.clear();
-    pushEvent(state, EventType::BombBlast, state.player.pos, balance::kBombRadius);
+    for (int slot = 0; slot < state.playerCount(); ++slot) {
+        pushEvent(state, EventType::BombBlast, state.players[slot].pos, balance::kBombRadius);
+    }
     const Vec2 pos = spawnPoint(state, balance::kBossSpawnExtra);
     if (Enemy* boss = enemies::spawn(state, EnemyType::Boss, pos, false)) {
         boss->maxHp = bossHpForBuild(state);
@@ -109,7 +140,9 @@ void update(GameState& state) {
     const bool tableRuns = !(endless(run) && run.bossSpawned);
     const float tableTime = tableSeconds(state);
     const float spawnRate = balance::difficultyTuning(run.difficulty).spawnRate;
-    const float rateScale = endless(run) ? spawnRate * balance::endlessSpawnGrowth(seconds) : spawnRate;
+    float rateScale = endless(run) ? spawnRate * balance::endlessSpawnGrowth(seconds) : spawnRate;
+    // More players, more zombies. One player is never scaled, not even by 1.
+    if (state.isCoop()) rateScale *= balance::coopSpawnRate(state.playerCount());
     const int rowCount = static_cast<int>(std::size(balance::kWaves));
     for (int i = 0; tableRuns && i < rowCount; ++i) {
         const balance::WaveRow& row = balance::kWaves[i];
@@ -139,7 +172,8 @@ void update(GameState& state) {
         // A few Walkers keep XP coming during the fight. The wave table never uses
         // the last accumulator, because it has fewer rows than the array has slots.
         float& adds = run.waveAccumulators[std::size(run.waveAccumulators) - 1];
-        adds += balance::kBossAddsPerSecond * kDt;
+        adds += state.isCoop() ? balance::kBossAddsPerSecond * balance::coopSpawnRate(state.playerCount()) * kDt
+                               : balance::kBossAddsPerSecond * kDt;
         while (adds >= 1.0f) {
             adds -= 1.0f;
             spawnWave(state, EnemyType::Walker, spawnPoint(state), false);
@@ -149,12 +183,16 @@ void update(GameState& state) {
     // Crates normally come from kills, and a player with empty guns gets few kills.
     // Timed crates mean ammo keeps arriving anyway, faster during the boss fight, so
     // no run can become unwinnable. Stress tests skip this like the rest of the waves.
+    // Ammo is each player's own, so in co-op every standing player gets a crate of their own.
     const float crateSeconds = run.bossSpawned ? balance::kBossAmmoCrateSeconds : balance::kTimedAmmoCrateSeconds;
     const float crateDistance = run.bossSpawned ? balance::kBossAmmoCrateDistance : balance::kTimedAmmoCrateDistance;
     // Rounded, because the division can land just under a whole number of steps.
     if (run.tick % static_cast<uint32_t>(std::lround(crateSeconds / kDt)) == 0) {
-        const Vec2 offset = fromAngle(state.rng.range(0.0f, kTau)) * crateDistance;
-        pickups::spawnPickup(state, state.player.pos + offset, PickupType::Ammo);
+        for (int slot = 0; slot < state.playerCount(); ++slot) {
+            if (!standing(state, slot)) continue;
+            const Vec2 offset = fromAngle(state.rng.range(0.0f, kTau)) * crateDistance;
+            pickups::spawnPickup(state, state.players[slot].pos + offset, PickupType::Ammo);
+        }
     }
 }
 

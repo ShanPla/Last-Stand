@@ -7,7 +7,7 @@ namespace ls::pickups {
 // Moves gems, collects them and pickups, and merges gems when too many exist.
 void update(GameState& state);
 
-// Adds a gem. When the pool is full, the XP goes straight to the player, so no
+// Adds a gem. When the pool is full, the XP goes straight to the nearest player, so no
 // reward is ever lost.
 void dropGem(GameState& state, Vec2 pos, int xp);
 

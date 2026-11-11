@@ -24,10 +24,10 @@ constexpr float kHpForPhase[3] = {1.0f, 0.5f, 0.2f};
 std::unique_ptr<GameState> bossRun(Difficulty difficulty, Vec2 bossPos, int phase, uint64_t seed = 21) {
     auto state = std::make_unique<GameState>();
     sim::newRun(*state, seed, difficulty);
-    state->player.weaponCount = 0;
-    state->player.pos = Vec2{};
-    state->player.prevPos = Vec2{};
-    state->player.invulnerable = 0.0f;
+    state->firstPlayer().weaponCount = 0;
+    state->firstPlayer().pos = Vec2{};
+    state->firstPlayer().prevPos = Vec2{};
+    state->firstPlayer().invulnerable = 0.0f;
     Enemy* boss = enemies::spawn(*state, EnemyType::Boss, bossPos, false);
     REQUIRE(boss != nullptr);
     state->run.bossSpawned = true;
@@ -62,15 +62,15 @@ int stepsFor(float seconds) { return static_cast<int>(std::floor(seconds / kDt +
 
 // Moves the player as a person at plain walking speed would, ignoring cars.
 void walkPlayer(GameState& state, Vec2 dir) {
-    state.player.pos += normalizedOr(dir, Vec2{}) * balance::kPlayerSpeed * kDt;
-    state.player.prevPos = state.player.pos;
+    state.firstPlayer().pos += normalizedOr(dir, Vec2{}) * balance::kPlayerSpeed * kDt;
+    state.firstPlayer().prevPos = state.firstPlayer().pos;
 }
 
 // Starts one attack, then plays it out with the player either standing still or moving as
 // `move` says. Returns the health the player lost.
 template <typename Move>
 float playAttack(GameState& state, BossAttack attack, float seconds, Move move) {
-    const float startHp = state.player.hp;
+    const float startHp = state.firstPlayer().hp;
     enemies::update(state);  // Sets the phase from the boss's health before the attack starts.
     state.zones.clear();
     state.enemyBullets.clear();
@@ -79,7 +79,7 @@ float playAttack(GameState& state, BossAttack attack, float seconds, Move move) 
         move(state, i);
         stepFight(state);
     }
-    return startHp - state.player.hp;
+    return startHp - state.firstPlayer().hp;
 }
 
 void standStill(GameState&, int) {}
@@ -188,10 +188,10 @@ TEST_CASE("the boss follows its own difficulty's cycle, with that difficulty's n
                 // Keep the boss in this phase and the player alive, so the cycle keeps going.
                 Enemy& keep = bossOf(*state);
                 keep.hp = keep.maxHp * kHpForPhase[phase];
-                state->player.hp = state->player.maxHp;
+                state->firstPlayer().hp = state->firstPlayer().maxHp;
                 // A fixed way off, so ring bullets leave the boss before they reach the player.
-                state->player.pos = keep.pos + Vec2{600.0f, 0.0f};
-                state->player.prevPos = state->player.pos;
+                state->firstPlayer().pos = keep.pos + Vec2{600.0f, 0.0f};
+                state->firstPlayer().prevPos = state->firstPlayer().pos;
             }
             REQUIRE(static_cast<int>(started.size()) == wanted);
             for (int i = 0; i < wanted; ++i) {
@@ -216,7 +216,7 @@ TEST_CASE("every attack shows its warning for at least the telegraph time before
                 auto state = bossRun(level, Vec2{-500.0f, 0.0f}, phase);
                 enemies::update(*state);
                 state->zones.clear();
-                const float startHp = state->player.hp;
+                const float startHp = state->firstPlayer().hp;
                 enemies::startBossAttack(*state, bossOf(*state), attack);
 
                 int firstHarm = -1;
@@ -236,7 +236,7 @@ TEST_CASE("every attack shows its warning for at least the telegraph time before
                         CHECK(chargeRun + 1 >= telegraphSteps);
                         dashes++;
                     }
-                    const bool harm = state->enemyBullets.count > 0 || boss.state == enemies::kBossDash || state->player.hp < startHp;
+                    const bool harm = state->enemyBullets.count > 0 || boss.state == enemies::kBossDash || state->firstPlayer().hp < startHp;
                     if (harm && firstHarm < 0) firstHarm = i + 1;
                     for (const Zone& zone : state->zones) CHECK(zone.maxLife == doctest::Approx(moves.telegraphSeconds));
                     if (firstHarm >= 0 && boss.state == enemies::kBossWalk) break;
@@ -308,7 +308,7 @@ TEST_CASE("the spiral is dodged by stepping into a gap and backing away, and hit
                 walkPlayer(s, Vec2{0.0f, 1.0f});
                 return;
             }
-            walkPlayer(s, s.player.pos - bossOf(s).pos);
+            walkPlayer(s, s.firstPlayer().pos - bossOf(s).pos);
         });
         CHECK(mostBullets >= hell.spiralArms[phase] * 2);
         CHECK(lost == doctest::Approx(0.0f));
@@ -362,7 +362,7 @@ TEST_CASE("a boss fight on every difficulty is the same for the same seed and in
                 if (state->run.phase == RunPhase::LevelUp) input.chooseCard = 0;
                 sim::step(*state, input);
                 state->events.clear();
-                state->player.hp = state->player.maxHp;  // Stay alive, so every phase is seen.
+                state->firstPlayer().hp = state->firstPlayer().maxHp;  // Stay alive, so every phase is seen.
                 // Walk the boss through its phases, the same way in both runs.
                 for (Enemy& enemy : state->enemies) {
                     if (enemy.type != EnemyType::Boss) continue;
@@ -418,7 +418,7 @@ TEST_CASE("on Hard and Hell, a player running away still can't leave the boss ou
         int stepsInRange = 0;
         constexpr int kSteps = 3600;
         for (int i = 0; i < kSteps; ++i) {
-            state->player.hp = state->player.maxHp;
+            state->firstPlayer().hp = state->firstPlayer().maxHp;
             run.chooseCard = state->run.phase == RunPhase::LevelUp ? 0 : -1;
             // The last phase stands still the most, so it is the hardest case for the boss.
             for (Enemy& enemy : state->enemies) {
@@ -427,7 +427,7 @@ TEST_CASE("on Hard and Hell, a player running away still can't leave the boss ou
             sim::step(*state, run);
             state->events.clear();
             for (const Enemy& enemy : state->enemies) {
-                if (enemy.type == EnemyType::Boss && distance(enemy.pos, state->player.pos) < balance::kWeaponRange) stepsInRange++;
+                if (enemy.type == EnemyType::Boss && distance(enemy.pos, state->firstPlayer().pos) < balance::kWeaponRange) stepsInRange++;
             }
         }
         MESSAGE("boss in weapon range for ", stepsInRange, " of ", kSteps, " steps");

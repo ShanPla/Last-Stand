@@ -6,25 +6,26 @@
 
 namespace ls::weapons {
 
-void updateBlades(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
-    RunState& run = state.run;
-    run.bladeAngle += stats.speed * kDt;
+void updateBlades(GameState& state, int owner, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
+    Player& player = state.players[owner];
+    player.bladeAngle += stats.speed * kDt;
     // Keep the angle small, so float precision does not drift on long runs.
-    if (run.bladeAngle > kTau) run.bladeAngle -= kTau;
+    if (player.bladeAngle > kTau) player.bladeAngle -= kTau;
 
-    const Vec2 center = state.player.pos;
+    const Vec2 center = player.pos;
     for (int blade = 0; blade < stats.count; ++blade) {
-        const float angle = run.bladeAngle + kTau * static_cast<float>(blade) / static_cast<float>(stats.count);
+        const float angle = player.bladeAngle + kTau * static_cast<float>(blade) / static_cast<float>(stats.count);
         const Vec2 offset = fromAngle(angle) * bladeOrbitRadius(blade, stats);
         const Vec2 pos = center + offset;
         state.enemyGrid.query(pos, balance::kBladeRadius + balance::kLargestEnemyRadius, [&](int index) {
             Enemy& enemy = state.enemies[index];
-            // The per-enemy cooldown stops one zombie being cut on every step.
+            // The per-enemy cooldown stops one zombie being cut on every step. It belongs to the
+            // zombie, so in co-op it also briefly spares it from a teammate's blades.
             if (enemy.hp <= 0.0f || enemy.bladeCooldown > 0.0f) return false;
             const float touch = enemy.radius + balance::kBladeRadius;
             if (distanceSq(enemy.pos, pos) >= touch * touch) return false;
             const Vec2 push = normalizedOr(offset, Vec2{}) * balance::kShotKnockback;
-            enemies::hit(state, index, stats.damage, slot.id, push);
+            enemies::hit(state, index, stats.damage, slot.id, owner, push);
             enemy.bladeCooldown = stats.cooldown;
             return false;
         });

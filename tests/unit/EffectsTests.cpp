@@ -195,7 +195,7 @@ TEST_CASE("a big hit shows up even when the pool is full of small ones") {
 TEST_CASE("the boss starts further out than zombies do") {
     auto state = std::make_unique<GameState>();
     sim::newRun(*state, 11);
-    state->player.pos = Vec2{100.0f, -40.0f};
+    state->firstPlayer().pos = Vec2{100.0f, -40.0f};
     state->run.nextEliteEvent = 1000;  // Skips elites, so only the boss arrives.
     state->run.tick = static_cast<uint32_t>(balance::kRunSeconds / kDt);
     waves::update(*state);
@@ -204,7 +204,7 @@ TEST_CASE("the boss starts further out than zombies do") {
     for (const Enemy& enemy : state->enemies) {
         if (enemy.type != EnemyType::Boss) continue;
         found = true;
-        CHECK(distance(enemy.pos, state->player.pos) == doctest::Approx(balance::kSpawnRadius + balance::kBossSpawnExtra).epsilon(0.001));
+        CHECK(distance(enemy.pos, state->firstPlayer().pos) == doctest::Approx(balance::kSpawnRadius + balance::kBossSpawnExtra).epsilon(0.001));
     }
     CHECK(found);
 }

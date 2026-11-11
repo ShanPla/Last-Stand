@@ -55,13 +55,13 @@ const char* variantName(int variant) {
 std::unique_ptr<GameState> makeArena(WeaponId weapon, int variant, int crowd, uint64_t seed, Difficulty difficulty) {
     auto state = std::make_unique<GameState>();
     sim::newRun(*state, seed, difficulty, gameMap());
-    state->player.weaponCount = 0;
-    state->player.xpToNext = 1 << 30;  // No level-up screens.
-    weapons::grant(*state, weapon);
-    WeaponSlot& slot = state->player.weapons[0];
+    state->firstPlayer().weaponCount = 0;
+    state->firstPlayer().xpToNext = 1 << 30;  // No level-up screens.
+    weapons::grant(*state, 0, weapon);
+    WeaponSlot& slot = state->firstPlayer().weapons[0];
     slot.level = static_cast<uint8_t>(variant == kEvolvedVariant ? kMaxLevelPerItem : variant + 1);
     slot.evolved = variant == kEvolvedVariant;
-    weapons::refill(*state, slot);
+    weapons::refill(state->firstPlayer(), slot);
     state->run.tick = kStartTick;
     sim::setStressTargets(*state, crowd, 0);
     return state;
@@ -77,11 +77,11 @@ void makeCrowdTough(GameState& state) {
 // Runs the arena. With tough zombies and ammo supplied, this is the weapon's real output.
 double measureDps(WeaponId weapon, int variant, int crowd, uint64_t seed, Difficulty difficulty) {
     auto state = makeArena(weapon, variant, crowd, seed, difficulty);
-    WeaponSlot& slot = state->player.weapons[0];
+    WeaponSlot& slot = state->firstPlayer().weapons[0];
     const int id = static_cast<int>(weapon);
     float before = 0.0f;
     for (int step = 0; step < kWarmUpSteps + kMeasureSteps; ++step) {
-        slot.reserve = weapons::effectiveStats(*state, slot).maxReserve;
+        slot.reserve = weapons::effectiveStats(state->firstPlayer(), slot).maxReserve;
         sim::step(*state, InputFrame{});
         state->events.clear();
         makeCrowdTough(*state);
@@ -92,9 +92,9 @@ double measureDps(WeaponId weapon, int variant, int crowd, uint64_t seed, Diffic
 
 double measureKillsPerMinute(WeaponId weapon, int variant, uint64_t seed, Difficulty difficulty) {
     auto state = makeArena(weapon, variant, kKillCrowd, seed, difficulty);
-    WeaponSlot& slot = state->player.weapons[0];
+    WeaponSlot& slot = state->firstPlayer().weapons[0];
     for (int step = 0; step < kKillSteps; ++step) {
-        slot.reserve = weapons::effectiveStats(*state, slot).maxReserve;
+        slot.reserve = weapons::effectiveStats(state->firstPlayer(), slot).maxReserve;
         sim::step(*state, InputFrame{});
         state->events.clear();
         // Drops are not the weapon's doing. A bomb picked up from a corpse would kill the whole
@@ -107,8 +107,8 @@ double measureKillsPerMinute(WeaponId weapon, int variant, uint64_t seed, Diffic
 // One full load and no crates, against the tough dense crowd, until the gun is empty.
 void measureLoad(WeaponId weapon, int variant, uint64_t seed, Difficulty difficulty, SoloCell& cell) {
     auto state = makeArena(weapon, variant, kDenseCrowd, seed, difficulty);
-    const WeaponSlot& slot = state->player.weapons[0];
-    if (weapons::effectiveStats(*state, slot).magazine <= 0) return;
+    const WeaponSlot& slot = state->firstPlayer().weapons[0];
+    if (weapons::effectiveStats(state->firstPlayer(), slot).magazine <= 0) return;
     const int id = static_cast<int>(weapon);
     int step = 0;
     int emptyAt = -1;

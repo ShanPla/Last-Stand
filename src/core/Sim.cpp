@@ -18,7 +18,7 @@ namespace {
 
 // Debug only: keeps a known number of objects alive for performance measurement.
 void applyStressTargets(GameState& state) {
-    const Vec2 center = state.player.pos;
+    const Vec2 center = state.firstPlayer().pos;
     while (state.enemies.count < state.run.debugEnemyTarget) {
         const Vec2 pos = center + fromAngle(state.rng.range(0.0f, kTau)) * state.rng.range(120.0f, 650.0f);
         if (!enemies::spawn(state, EnemyType::Walker, pos, false)) break;
@@ -35,16 +35,29 @@ void applyStressTargets(GameState& state) {
         shot->life = 1.5f;
         shot->pierce = 2;
     }
-    // The stress test must keep running, so the player can't die or level up.
+    // The stress test must keep running, so nobody can die or level up.
     if (state.run.debugEnemyTarget > 0) {
-        state.player.hp = state.player.maxHp;
-        state.run.pendingLevels = 0;
+        for (int slot = 0; slot < state.playerCount(); ++slot) {
+            state.players[slot].hp = state.players[slot].maxHp;
+            state.players[slot].pendingLevels = 0;
+        }
+    }
+}
+
+// A card or a reroll from one player's input. If both arrive in one step, the card wins and
+// the reroll is not spent. The card index means a card on screen now, and a reroll would
+// swap it for one the player hasn't seen.
+void answerCards(GameState& state, int slot, const InputFrame& input) {
+    if (input.chooseCard >= 0) {
+        upgrades::choose(state, slot, input.chooseCard);
+    } else if (input.reroll) {
+        upgrades::reroll(state, slot);
     }
 }
 
 }  // namespace
 
-void newRun(GameState& state, uint64_t seed, Difficulty difficulty, maps::MapId map, RunMode mode) {
+void newRun(GameState& state, uint64_t seed, Difficulty difficulty, maps::MapId map, RunMode mode, int playerCount) {
     state.rng = Rng{};
     state.rng.seed(seed);
     state.run = RunState{};
@@ -52,7 +65,7 @@ void newRun(GameState& state, uint64_t seed, Difficulty difficulty, maps::MapId 
     state.run.difficulty = difficulty;
     state.run.map = map;
     state.run.mode = mode;
-    state.run.rerollsLeft = balance::kStartingRerolls;
+    state.run.playerCount = playerCount < 1 ? 1 : (playerCount > kMaxPlayers ? kMaxPlayers : playerCount);
     state.run.nextPickupDropKills = balance::kKillsPerPickupDrop;
     state.enemies.clear();
     state.projectiles.clear();
@@ -61,14 +74,25 @@ void newRun(GameState& state, uint64_t seed, Difficulty difficulty, maps::MapId 
     state.gems.clear();
     state.pickups.clear();
     state.events.clear();
-    player::reset(state);
-    upgrades::recomputeStats(state);
-    state.player.hp = state.player.maxHp;
-    weapons::grant(state, WeaponId::Rifle);
+    // Every slot is cleared, so a slot left over from a bigger run holds nothing stale.
+    for (int slot = 0; slot < kMaxPlayers; ++slot) player::reset(state, slot);
+    const int count = state.playerCount();
+    for (int slot = 0; slot < count; ++slot) {
+        Player& player = state.players[slot];
+        // A team starts in a small ring around the middle. One player starts in the middle.
+        if (count > 1) player.pos = fromAngle(kTau * static_cast<float>(slot) / static_cast<float>(count)) * balance::kCoopStartSpread;
+        player.rerollsLeft = balance::kStartingRerolls;
+        upgrades::recomputeStats(state, slot);
+        player.hp = player.maxHp;
+        weapons::grant(state, slot, WeaponId::Rifle);
+    }
     obstacles::invalidate(state);
     obstacles::update(state);
-    obstacles::resolveCircle(state, state.player.pos, balance::kPlayerRadius);
-    state.player.prevPos = state.player.pos;
+    for (int slot = 0; slot < count; ++slot) {
+        Player& player = state.players[slot];
+        obstacles::resolveCircle(state, player.pos, balance::kPlayerRadius);
+        player.prevPos = player.pos;
+    }
 }
 
 void setMap(GameState& state, maps::MapId map) {
@@ -79,41 +103,59 @@ void setMap(GameState& state, maps::MapId map) {
     obstacles::update(state);
 }
 
-void step(GameState& state, const InputFrame& input) {
+void step(GameState& state, const InputFrame inputs[], int inputCount) {
     RunState& run = state.run;
     if (run.phase == RunPhase::Won || run.phase == RunPhase::Dead) return;
+    const InputFrame idle;
+    const auto inputOf = [&](int slot) -> const InputFrame& { return slot < inputCount ? inputs[slot] : idle; };
+    const int count = state.playerCount();
 
+    // Single-player only: the run waits on the level-up screen until a card is taken.
     if (run.phase == RunPhase::LevelUp) {
-        // If both arrive in one step, the card wins and the reroll is not spent. The card
-        // index means a card on screen now, and a reroll would swap it for an unseen one.
-        if (input.chooseCard >= 0) {
-            upgrades::choose(state, input.chooseCard);
-        } else if (input.reroll) {
-            upgrades::reroll(state);
-        }
+        answerCards(state, 0, inputOf(0));
         return;
+    }
+    // Co-op: each player answers their own cards when ready, and the run goes on meanwhile.
+    if (state.isCoop()) {
+        for (int slot = 0; slot < count; ++slot) {
+            if (state.players[slot].cardsOpen) answerCards(state, slot, inputOf(slot));
+        }
     }
 
     run.tick++;
     obstacles::update(state);
     applyStressTargets(state);
-    player::update(state, input.moveX, input.moveY, input.dash);
+    for (int slot = 0; slot < count; ++slot) {
+        const InputFrame& input = inputOf(slot);
+        player::update(state, slot, input.moveX, input.moveY, input.dash);
+    }
     waves::update(state);
     enemies::update(state);
     weapons::update(state);
     enemies::updateBullets(state);
     pickups::update(state);
     enemies::removeDead(state);
-    if (run.debugEnemyTarget > 0) run.pendingLevels = 0;
+    if (run.debugEnemyTarget > 0) {
+        for (int slot = 0; slot < count; ++slot) state.players[slot].pendingLevels = 0;
+    }
     upgrades::update(state);
 
-    // One rule for a step with a lethal hit: death beats everything else in that step.
-    // All damage to the player has landed by now, so this HP is final. A boss killed in
-    // the same step still counts as killed, but the run is a loss, not a win. Otherwise
-    // the result would depend only on the order of the calls above.
-    if (state.player.hp <= 0.0f) {
+    // One rule for a step with a lethal hit: it is decided here, after all damage of the step
+    // has landed, so the result never depends on the order of the calls above. A boss killed in
+    // the same step still counts as killed, but the run is a loss, not a win.
+    if (!state.isCoop()) {
+        // Single-player: 0 HP ends the run, and death beats everything else in that step.
+        Player& player = state.firstPlayer();
+        if (player.hp <= 0.0f) {
+            run.phase = RunPhase::Dead;
+            pushPlayerEvent(state, EventType::PlayerDied, 0, player.pos);
+        }
+        return;
+    }
+    // Co-op: 0 HP puts a player down, and the run ends only when the whole team is down at once.
+    if (player::downAndRevive(state)) {
         run.phase = RunPhase::Dead;
-        pushEvent(state, EventType::PlayerDied, state.player.pos);
+        pushEvent(state, EventType::PlayerDied, state.firstPlayer().pos);
     }
 }
 
@@ -142,16 +184,72 @@ uint64_t stateHash(const GameState& state) {
     };
     const auto mixVec = [&](Vec2 v) { mix(v.x); mix(v.y); };
 
+    // The fields that every player has had since before co-op. A player's cards, rerolls and
+    // blade angle are not here, because they used to belong to the run and are mixed in where
+    // the run's used to be.
+    const auto mixPlayer = [&](const Player& player) {
+        mixVec(player.pos);
+        mixVec(player.facing);
+        mixVec(player.aim);
+        mix(player.hp);
+        mix(player.maxHp);
+        mix(player.invulnerable);
+        mix(player.dashLeft);
+        mix(player.dashCooldown);
+        mix(player.dashInvulnerable);
+        mixVec(player.dashDir);
+        mix(player.level);
+        mix(player.xp);
+        mix(player.xpToNext);
+        mix(player.stats.damageMult);
+        mix(player.stats.cooldownMult);
+        mix(player.stats.areaMult);
+        mix(player.stats.moveSpeed);
+        mix(player.stats.pickupRange);
+        mix(player.stats.armor);
+        mix(player.weaponCount);
+        for (int i = 0; i < player.weaponCount; ++i) {
+            const WeaponSlot& slot = player.weapons[i];
+            mix(slot.id);
+            mix(slot.level);
+            mix(slot.evolved);
+            mix(slot.cooldown);
+            mix(slot.magazine);
+            mix(slot.reserve);
+            mix(slot.reloadLeft);
+            mix(slot.dryReported);
+        }
+        mix(player.passiveCount);
+        for (int i = 0; i < player.passiveCount; ++i) {
+            mix(player.passives[i].id);
+            mix(player.passives[i].level);
+        }
+    };
+    const auto mixCards = [&](const Player& player) {
+        mix(player.rerollsLeft);
+        mix(player.pendingLevels);
+        mix(player.offerCount);
+        for (const Card& card : player.offers) {
+            mix(card.kind);
+            mix(card.weapon);
+            mix(card.passive);
+            mix(card.newLevel);
+        }
+    };
+
     // Everything below can change what a later step does. What is left out is only
     // for drawing: previous positions (derived from the last step), hit flashes,
     // the event list (cleared by its reader), the enemy grid (rebuilt each step) and the
-    // obstacle cache (worked out from the map, the seed, the player's tile and the crushed list).
+    // obstacle cache (worked out from the map, the seed, the players' tiles and the crushed list).
     // A new field that a step reads must be added here, or the determinism tests
     // cannot see it.
     mixBytes(&state.rng.state, sizeof(state.rng.state));
     mixBytes(&state.rng.stream, sizeof(state.rng.stream));
 
+    // The order below is exactly the order from before co-op, so a single-player run keeps
+    // every fingerprint it had then, and tests can compare it with hashes recorded back then.
     const RunState& run = state.run;
+    const Player& first = state.firstPlayer();
     mix(run.phase);
     mix(run.difficulty);
     mix(run.map);
@@ -159,20 +257,12 @@ uint64_t stateHash(const GameState& state) {
     mix(run.tick);
     mix(run.nextId);
     mix(run.kills);
-    mix(run.rerollsLeft);
-    mix(run.pendingLevels);
-    mix(run.offerCount);
-    for (const Card& card : run.offers) {
-        mix(card.kind);
-        mix(card.weapon);
-        mix(card.passive);
-        mix(card.newLevel);
-    }
+    mixCards(first);
     for (float damage : run.damageByWeapon) mix(damage);
     for (float owed : run.waveAccumulators) mix(owed);
     mix(run.nextEliteEvent);
     mix(run.nextPickupDropKills);
-    mix(run.bladeAngle);
+    mix(first.bladeAngle);
     mix(run.bossSpawned);
     mix(run.bossPhase);
     mix(run.bossStep);
@@ -195,43 +285,7 @@ uint64_t stateHash(const GameState& state) {
         mix(run.lastBossKillTick);
     }
 
-    const Player& player = state.player;
-    mixVec(player.pos);
-    mixVec(player.facing);
-    mixVec(player.aim);
-    mix(player.hp);
-    mix(player.maxHp);
-    mix(player.invulnerable);
-    mix(player.dashLeft);
-    mix(player.dashCooldown);
-    mix(player.dashInvulnerable);
-    mixVec(player.dashDir);
-    mix(player.level);
-    mix(player.xp);
-    mix(player.xpToNext);
-    mix(player.stats.damageMult);
-    mix(player.stats.cooldownMult);
-    mix(player.stats.areaMult);
-    mix(player.stats.moveSpeed);
-    mix(player.stats.pickupRange);
-    mix(player.stats.armor);
-    mix(player.weaponCount);
-    for (int i = 0; i < player.weaponCount; ++i) {
-        const WeaponSlot& slot = player.weapons[i];
-        mix(slot.id);
-        mix(slot.level);
-        mix(slot.evolved);
-        mix(slot.cooldown);
-        mix(slot.magazine);
-        mix(slot.reserve);
-        mix(slot.reloadLeft);
-        mix(slot.dryReported);
-    }
-    mix(player.passiveCount);
-    for (int i = 0; i < player.passiveCount; ++i) {
-        mix(player.passives[i].id);
-        mix(player.passives[i].level);
-    }
+    mixPlayer(first);
 
     mix(state.enemies.count);
     for (const Enemy& enemy : state.enemies) {
@@ -301,6 +355,29 @@ uint64_t stateHash(const GameState& state) {
     for (const Pickup& pickup : state.pickups) {
         mixVec(pickup.pos);
         mix(pickup.type);
+    }
+
+    // Co-op adds more players and a few fields, mixed in last and only for a co-op run, the
+    // same way as the Endless fields above. With one player these never change: every zombie
+    // chases slot 0, every shot is the first player's, and nobody is ever downed.
+    if (state.isCoop()) {
+        mix(run.playerCount);
+        for (int slot = 0; slot < run.playerCount; ++slot) {
+            const Player& player = state.players[slot];
+            if (slot > 0) {
+                mixPlayer(player);
+                mixCards(player);
+                mix(player.bladeAngle);
+            }
+            for (float damage : player.damageByWeapon) mix(damage);
+            mix(player.reviveProgress);
+            mix(player.cardShield);
+            mix(player.downed);
+            mix(player.cardsOpen);
+        }
+        for (const Enemy& enemy : state.enemies) mix(enemy.target);
+        for (const Projectile& shot : state.projectiles) mix(shot.owner);
+        for (const Zone& zone : state.zones) mix(zone.owner);
     }
     return hash;
 }

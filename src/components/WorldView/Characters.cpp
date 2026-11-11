@@ -91,7 +91,7 @@ ZombieLook lookOf(const GameState& state, const Enemy& enemy, const ScreenPoint&
     const Figure figure = figureOf(state, enemy);
     const int step = stepForEnemy(enemy, feet.scale);
 
-    Vec2 toward = state.player.pos - enemy.pos;
+    Vec2 toward = state.firstPlayer().pos - enemy.pos;
     bool flashing = false;
     int pose;
     const int frames = enemy.type == EnemyType::Boss ? kBossWalkFrames : kWalkFrames;
@@ -372,30 +372,30 @@ bool isHeldGun(WeaponId weapon) { return weapon != WeaponId::Blades && weapon !=
 
 WeaponId heldGun(const GameState& state) {
     if (g_soldierState.seenAny) return g_soldierState.gun;
-    for (int i = 0; i < state.player.weaponCount; ++i) {
-        if (isHeldGun(state.player.weapons[i].id)) return state.player.weapons[i].id;
+    for (int i = 0; i < state.firstPlayer().weaponCount; ++i) {
+        if (isHeldGun(state.firstPlayer().weapons[i].id)) return state.firstPlayer().weapons[i].id;
     }
     return WeaponId::Rifle;
 }
 
 bool gunEvolved(const GameState& state, WeaponId gun) {
-    for (int i = 0; i < state.player.weaponCount; ++i) {
-        if (state.player.weapons[i].id == gun) return state.player.weapons[i].evolved;
+    for (int i = 0; i < state.firstPlayer().weaponCount; ++i) {
+        if (state.firstPlayer().weapons[i].id == gun) return state.firstPlayer().weapons[i].evolved;
     }
     return false;
 }
 
 // True while the gun in his hands is reloading.
 bool reloading(const GameState& state, WeaponId gun) {
-    for (int i = 0; i < state.player.weaponCount; ++i) {
-        if (state.player.weapons[i].id == gun) return state.player.weapons[i].reloadLeft > 0.0f;
+    for (int i = 0; i < state.firstPlayer().weaponCount; ++i) {
+        if (state.firstPlayer().weapons[i].id == gun) return state.firstPlayer().weapons[i].reloadLeft > 0.0f;
     }
     return false;
 }
 
 Heading soldierHeading(const GameState& state) {
-    if (g_soldierState.sinceFired < kAimHoldSeconds) return headingFrom(state.player.aim);
-    return headingFrom(g_soldierState.moving ? state.player.facing : state.player.aim);
+    if (g_soldierState.sinceFired < kAimHoldSeconds) return headingFrom(state.firstPlayer().aim);
+    return headingFrom(g_soldierState.moving ? state.firstPlayer().facing : state.firstPlayer().aim);
 }
 
 // Index 0 aims straight up the screen, and the last straight down. Left is mirrored.
@@ -467,7 +467,7 @@ void drawSoldierShadow(const GameState& state, const ScreenPoint& feet, const Da
 }
 
 void drawSoldier(const GameState& state, const ScreenPoint& feet, uint8_t strength) {
-    const Player& player = state.player;
+    const Player& player = state.firstPlayer();
     const uint32_t tick = state.run.tick;
     const int x = roundToInt(feet.x);
     const int y = roundToInt(feet.y);
@@ -515,7 +515,7 @@ void drawSoldier(const GameState& state, const ScreenPoint& feet, uint8_t streng
 // really went. A dash into a car goes nowhere, so it leaves no copies.
 // Reduced motion or no flicker keeps only two, steady and without the fade-out blink.
 void drawDashTrail(const View& view, const GameState& state, Vec2 playerWorld) {
-    const Player& player = state.player;
+    const Player& player = state.firstPlayer();
     if (player.dashLeft <= 0.0f) {
         g_dashPath.clear();
         return;
@@ -551,7 +551,7 @@ void drawMuzzleFlash(const GameState& state, const ScreenPoint& feet) {
     const WeaponId gun = heldGun(state);
     if (gun == WeaponId::Flamethrower || gun == WeaponId::Tesla) return;
     if (reloading(state, gun)) return;
-    const Vec2 aim = state.player.aim;
+    const Vec2 aim = state.firstPlayer().aim;
     const float along = 1.0f - 0.28f * std::abs(aim.y);
     const float length = gunLength(gun) * along + 1.0f;
     const float aimY = aim.y * kTiltSquash;

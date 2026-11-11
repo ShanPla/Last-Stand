@@ -7,12 +7,12 @@
 
 namespace ls::weapons {
 
-bool fireRifle(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
-    const Vec2 origin = state.player.pos;
+bool fireRifle(GameState& state, int owner, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
+    const Vec2 origin = state.players[owner].pos;
     const int target = enemies::nearest(state, origin, balance::kWeaponRange);
     if (target < 0) return false;
 
-    const Vec2 aim = normalizedOr(state.enemies[target].pos - origin, state.player.facing);
+    const Vec2 aim = normalizedOr(state.enemies[target].pos - origin, state.players[owner].facing);
     const float baseAngle = std::atan2(aim.y, aim.x);
     // Bullets are centered on the aim line, so an odd count has one dead ahead.
     const float firstOffset = -0.5f * static_cast<float>(stats.count - 1) * balance::kBulletSpreadRadians;
@@ -30,8 +30,9 @@ bool fireRifle(GameState& state, const WeaponSlot& slot, const balance::WeaponLe
         shot->kind = ProjectileKind::Bullet;
         shot->source = slot.id;
         shot->evolved = slot.evolved;
+        shot->owner = static_cast<uint8_t>(owner);
     }
-    markFired(state, slot, aim);
+    markFired(state, owner, slot, aim);
     return true;
 }
 

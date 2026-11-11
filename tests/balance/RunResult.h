@@ -27,9 +27,14 @@ struct PressureBin {
     int steps = 0;
 };
 
-// Everything the report needs from one finished game.
+// Everything the report needs from one finished game. In co-op the numbers about one player,
+// such as level, damage taken and weapons, are the first player's. The others play the same
+// profile, so the first stands for them.
 struct RunResult {
     uint64_t seed = 0;
+    int players = 1;
+    int downs = 0;    // Co-op: times any player went down.
+    int revives = 0;  // Co-op: times a teammate got one back up.
     RunPhase outcome = RunPhase::Playing;  // Playing means the step limit ran out.
     float endSeconds = 0.0f;
     int level = 0;

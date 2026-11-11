@@ -33,7 +33,7 @@ TEST_CASE("ammo crates land on a timer, even with no kills") {
     for (int i = 0; i < steps; ++i) {
         // Keeps the run alive and empty, so that every crate comes from the timer.
         state->enemies.clear();
-        state->player.hp = state->player.maxHp;
+        state->firstPlayer().hp = state->firstPlayer().maxHp;
         InputFrame input;
         if (state->run.phase == RunPhase::LevelUp) input.chooseCard = 0;
         sim::step(*state, input);
@@ -49,5 +49,5 @@ TEST_CASE("timed ammo crates land close enough to reach") {
     state->run.tick = static_cast<uint32_t>(std::lround(balance::kTimedAmmoCrateSeconds / kDt)) - 1;
     sim::step(*state, InputFrame{});
     REQUIRE(countAmmoCrates(*state) == 1);
-    CHECK(distance(state->pickups[0].pos, state->player.pos) == doctest::Approx(balance::kTimedAmmoCrateDistance));
+    CHECK(distance(state->pickups[0].pos, state->firstPlayer().pos) == doctest::Approx(balance::kTimedAmmoCrateDistance));
 }

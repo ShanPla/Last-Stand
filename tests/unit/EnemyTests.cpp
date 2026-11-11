@@ -43,7 +43,7 @@ int countType(const GameState& state, EnemyType type) {
 
 // Kills the enemy at this index and runs the death handling.
 void kill(GameState& state, int index) {
-    enemies::hit(state, index, 1.0e9f, WeaponId::Rifle, Vec2{});
+    enemies::hit(state, index, 1.0e9f, WeaponId::Rifle, 0, Vec2{});
     enemies::removeDead(state);
 }
 
@@ -72,7 +72,7 @@ int totalGemXp(const GameState& state) {
 
 TEST_CASE("walker, brute, bloater and crawler walk straight at the player") {
     auto state = makeRun();
-    state->player.pos = Vec2{0.0f, 0.0f};
+    state->firstPlayer().pos = Vec2{0.0f, 0.0f};
     const EnemyType types[] = {EnemyType::Walker, EnemyType::Brute, EnemyType::Bloater, EnemyType::Crawler};
     for (EnemyType type : types) {
         state->enemies.clear();
@@ -87,7 +87,7 @@ TEST_CASE("walker, brute, bloater and crawler walk straight at the player") {
 
 TEST_CASE("runner keeps its speed, weaves sideways, and weaves out of step with other runners") {
     auto state = makeRun();
-    state->player.pos = Vec2{0.0f, 0.0f};
+    state->firstPlayer().pos = Vec2{0.0f, 0.0f};
     enemies::spawn(*state, EnemyType::Runner, Vec2{600.0f, 0.0f}, false);
     enemies::spawn(*state, EnemyType::Runner, Vec2{600.0f, 0.0f}, false);
     float maxSideways = 0.0f;
@@ -112,7 +112,7 @@ TEST_CASE("runner keeps its speed, weaves sideways, and weaves out of step with 
 
 TEST_CASE("charger chases, telegraphs with a locked aim, dashes, recovers, then chases again") {
     auto state = makeRun();
-    state->player.pos = Vec2{0.0f, 0.0f};
+    state->firstPlayer().pos = Vec2{0.0f, 0.0f};
     REQUIRE(enemies::spawn(*state, EnemyType::Charger, Vec2{300.0f, 0.0f}, false) != nullptr);
 
     // Far away it just chases, and the state stays at the start value.
@@ -129,7 +129,7 @@ TEST_CASE("charger chases, telegraphs with a locked aim, dashes, recovers, then 
     CHECK(lockedDir.y == doctest::Approx(0.0f));
 
     // The player moves away. The dash must still go along the locked direction.
-    state->player.pos = Vec2{0.0f, 200.0f};
+    state->firstPlayer().pos = Vec2{0.0f, 200.0f};
     const Vec2 telegraphPos = state->enemies[0].pos;
     int telegraphSteps = 0;
     int dashSteps = 0;
@@ -173,7 +173,7 @@ TEST_CASE("charger chases, telegraphs with a locked aim, dashes, recovers, then 
 
 TEST_CASE("spitter fires bullets at the player on its interval") {
     auto state = makeRun();
-    state->player.pos = Vec2{0.0f, 0.0f};
+    state->firstPlayer().pos = Vec2{0.0f, 0.0f};
     REQUIRE(enemies::spawn(*state, EnemyType::Spitter, Vec2{500.0f, 0.0f}, false) != nullptr);
     // Bullets are not moved here, so each one is still at the spot where it was fired.
     const int steps = static_cast<int>(10.0f / kDt);
@@ -184,7 +184,7 @@ TEST_CASE("spitter fires bullets at the player on its interval") {
     for (const EnemyBullet& bullet : state->enemyBullets) {
         CHECK(length(bullet.vel) == doctest::Approx(balance::kSpitterBulletSpeed).epsilon(0.001));
         CHECK(bullet.damage == doctest::Approx(balance::kSpitterBulletDamage));
-        const Vec2 toPlayer = normalizedOr(state->player.pos - bullet.pos, Vec2{});
+        const Vec2 toPlayer = normalizedOr(state->firstPlayer().pos - bullet.pos, Vec2{});
         CHECK(dot(toPlayer, normalizedOr(bullet.vel, Vec2{})) > 0.999f);
     }
 }
@@ -192,14 +192,14 @@ TEST_CASE("spitter fires bullets at the player on its interval") {
 TEST_CASE("spitter closes in to its keep distance, backs away when too close, and then holds the range") {
     for (const float startDistance : {800.0f, 120.0f}) {
         auto state = makeRun();
-        state->player.pos = Vec2{0.0f, 0.0f};
+        state->firstPlayer().pos = Vec2{0.0f, 0.0f};
         REQUIRE(enemies::spawn(*state, EnemyType::Spitter, Vec2{startDistance, 0.0f}, false) != nullptr);
         for (int i = 0; i < 60 * 20; ++i) {
             enemies::update(*state);
             state->enemyBullets.clear();
-            state->player.hp = state->player.maxHp;
+            state->firstPlayer().hp = state->firstPlayer().maxHp;
         }
-        const float dist = length(state->enemies[0].pos - state->player.pos);
+        const float dist = length(state->enemies[0].pos - state->firstPlayer().pos);
         CHECK(dist > balance::kSpitterKeepDistance - balance::kSpitterDistanceBand - 5.0f);
         // Circling slowly drifts outward, so the upper limit is looser.
         CHECK(dist < balance::kSpitterKeepDistance + balance::kSpitterDistanceBand + 60.0f);
@@ -351,7 +351,7 @@ TEST_CASE("a full pickup pool always loses the oldest pickup, however many drops
 
 TEST_CASE("the wave table spawns each type at the right time, and the boss waits for 10:00") {
     auto state = makeRun();
-    state->player.pos = Vec2{0.0f, 0.0f};
+    state->firstPlayer().pos = Vec2{0.0f, 0.0f};
 
     float firstSeen[static_cast<int>(EnemyType::Count)];
     float firstAllowed[static_cast<int>(EnemyType::Count)];
@@ -397,7 +397,7 @@ TEST_CASE("the wave table spawns each type at the right time, and the boss waits
 
 TEST_CASE("the boss spawns once at 10:00 with an event, even if the enemy pool is full") {
     auto state = makeRun();
-    state->player.pos = Vec2{0.0f, 0.0f};
+    state->firstPlayer().pos = Vec2{0.0f, 0.0f};
     while (state->enemies.count < kMaxEnemies) {
         REQUIRE(enemies::spawn(*state, EnemyType::Walker, Vec2{2000.0f, 0.0f}, false) != nullptr);
     }
@@ -430,7 +430,7 @@ TEST_CASE("the boss spawns once at 10:00 with an event, even if the enemy pool i
 
 TEST_CASE("boss phase follows its HP, copies the HP fraction, and sends one event per change") {
     auto state = makeRun();
-    state->player.pos = Vec2{3000.0f, 0.0f};  // Far away, so no contact damage.
+    state->firstPlayer().pos = Vec2{3000.0f, 0.0f};  // Far away, so no contact damage.
     Enemy* boss = spawnBoss(*state, Vec2{0.0f, 0.0f});
     const float maxHp = boss->maxHp;
 
@@ -453,7 +453,7 @@ TEST_CASE("boss phase follows its HP, copies the HP fraction, and sends one even
 
     // A hit that skips a phase still sends an event for each phase passed.
     state = makeRun();
-    state->player.pos = Vec2{3000.0f, 0.0f};
+    state->firstPlayer().pos = Vec2{3000.0f, 0.0f};
     spawnBoss(*state, Vec2{0.0f, 0.0f});
     state->enemies[0].hp = state->enemies[0].maxHp * 0.1f;
     enemies::update(*state);
@@ -464,7 +464,7 @@ TEST_CASE("boss phase follows its HP, copies the HP fraction, and sends one even
 TEST_CASE("boss circles: the first lands on the player, the rest nearby, all hostile telegraphs") {
     for (int phase = 0; phase < 3; ++phase) {
         auto state = makeRun();
-        state->player.pos = Vec2{500.0f, 200.0f};
+        state->firstPlayer().pos = Vec2{500.0f, 200.0f};
         Enemy* boss = spawnBoss(*state, Vec2{0.0f, 0.0f});
         state->run.bossPhase = static_cast<uint8_t>(phase);
         boss->state = enemies::kBossWalk;
@@ -481,7 +481,7 @@ TEST_CASE("boss circles: the first lands on the player, the rest nearby, all hos
             CHECK(zone.life == doctest::Approx(kNormalBoss.telegraphSeconds));
             CHECK(zone.maxLife == doctest::Approx(kNormalBoss.telegraphSeconds));
             CHECK(zone.damage == doctest::Approx(kNormalBoss.circleDamage));
-            CHECK(distance(zone.a, state->player.pos) <= balance::kBossCircleScatter + 0.01f);
+            CHECK(distance(zone.a, state->firstPlayer().pos) <= balance::kBossCircleScatter + 0.01f);
         }
         CHECK(enemies::nextBossAttack(*state) == balance::BossAttack::Line);
     }
@@ -489,7 +489,7 @@ TEST_CASE("boss circles: the first lands on the player, the rest nearby, all hos
 
 TEST_CASE("boss line points from the boss at the player, with two more lines in the last phase") {
     auto state = makeRun();
-    state->player.pos = Vec2{0.0f, 600.0f};
+    state->firstPlayer().pos = Vec2{0.0f, 600.0f};
     Enemy* boss = spawnBoss(*state, Vec2{0.0f, 0.0f});
     boss->state = enemies::kBossWalk;
     state->run.bossStep = 1;  // Line.
@@ -523,7 +523,7 @@ TEST_CASE("boss line points from the boss at the player, with two more lines in 
 
 TEST_CASE("boss bullet ring stands still to charge, then fires an even ring") {
     auto state = makeRun();
-    state->player.pos = Vec2{3000.0f, 0.0f};
+    state->firstPlayer().pos = Vec2{3000.0f, 0.0f};
     Enemy* boss = spawnBoss(*state, Vec2{0.0f, 0.0f});
     boss->state = enemies::kBossWalk;
     state->run.bossStep = 2;  // Ring.
@@ -555,7 +555,7 @@ TEST_CASE("boss bullet ring stands still to charge, then fires an even ring") {
 
 TEST_CASE("boss dash telegraphs standing still, then dashes along a locked direction for the dash time") {
     auto state = makeRun();
-    state->player.pos = Vec2{0.0f, 2000.0f};
+    state->firstPlayer().pos = Vec2{0.0f, 2000.0f};
     Enemy* boss = spawnBoss(*state, Vec2{0.0f, 0.0f});
     state->enemies[0].hp = boss->maxHp * 0.5f;  // Phase 1.
     boss->state = enemies::kBossWalk;
@@ -566,7 +566,7 @@ TEST_CASE("boss dash telegraphs standing still, then dashes along a locked direc
     REQUIRE(state->enemies[0].state == enemies::kBossDashCharge);
     const Vec2 lockedDir = state->enemies[0].dir;
     CHECK(lockedDir.y == doctest::Approx(1.0f));
-    state->player.pos = Vec2{2000.0f, 0.0f};  // Moving away must not change the aim.
+    state->firstPlayer().pos = Vec2{2000.0f, 0.0f};  // Moving away must not change the aim.
 
     int chargeSteps = 0;
     while (state->enemies[0].state == enemies::kBossDashCharge && chargeSteps < 200) {
@@ -591,7 +591,7 @@ TEST_CASE("boss dash telegraphs standing still, then dashes along a locked direc
 TEST_CASE("the boss cycles through every attack, and only dashes from phase 1") {
     for (int phase = 0; phase < 3; ++phase) {
         auto state = makeRun();
-        state->player.pos = Vec2{0.0f, 0.0f};
+        state->firstPlayer().pos = Vec2{0.0f, 0.0f};
         Enemy* boss = spawnBoss(*state, Vec2{1500.0f, 0.0f});
         static const float hpForPhase[3] = {1.0f, 0.5f, 0.2f};
         boss->hp = boss->maxHp * hpForPhase[phase];
@@ -617,7 +617,7 @@ TEST_CASE("the boss cycles through every attack, and only dashes from phase 1") 
             if (state->enemies[0].state == enemies::kBossDash) sawDash = true;
             state->zones.clear();
             state->enemyBullets.clear();
-            state->player.hp = state->player.maxHp;  // Stay alive so the boss keeps cycling.
+            state->firstPlayer().hp = state->firstPlayer().maxHp;  // Stay alive so the boss keeps cycling.
             state->events.clear();
         }
         CHECK(state->run.bossPhase == phase);
@@ -634,7 +634,7 @@ TEST_CASE("the boss cycles through every attack, and only dashes from phase 1") 
 TEST_CASE("killing the boss sends BossKilled and wins the run") {
     auto state = makeRun();
     spawnBoss(*state, Vec2{300.0f, 0.0f});
-    enemies::hit(*state, 0, 1.0e9f, WeaponId::Rifle, Vec2{500.0f, 0.0f});
+    enemies::hit(*state, 0, 1.0e9f, WeaponId::Rifle, 0, Vec2{500.0f, 0.0f});
     enemies::removeDead(*state);
     CHECK(state->run.phase == RunPhase::Won);
     CHECK(countEvents(*state, EventType::BossKilled) == 1);
@@ -648,7 +648,7 @@ TEST_CASE("killing the boss sends BossKilled and wins the run") {
 TEST_CASE("the boss takes no knockback") {
     auto state = makeRun();
     spawnBoss(*state, Vec2{300.0f, 0.0f});
-    enemies::hit(*state, 0, 1.0f, WeaponId::Rifle, Vec2{900.0f, 0.0f});
+    enemies::hit(*state, 0, 1.0f, WeaponId::Rifle, 0, Vec2{900.0f, 0.0f});
     CHECK(state->enemies[0].knock.x == doctest::Approx(0.0f));
 }
 
@@ -658,7 +658,7 @@ TEST_CASE("the boss takes no knockback") {
 
 TEST_CASE("a pickup is collected only inside the collect radius, and sends an event") {
     auto state = makeRun();
-    state->player.hp = 50.0f;
+    state->firstPlayer().hp = 50.0f;
     state->pickups.add()->pos = Vec2{balance::kPickupCollectRadius + 20.0f, 0.0f};
     pickups::update(*state);
     CHECK(state->pickups.count == 1);
@@ -673,16 +673,16 @@ TEST_CASE("a pickup is collected only inside the collect radius, and sends an ev
 
 TEST_CASE("heal pickup restores a share of max HP and never goes over it") {
     auto state = makeRun();
-    state->player.hp = 40.0f;
+    state->firstPlayer().hp = 40.0f;
     Pickup* heal = state->pickups.add();
     heal->type = PickupType::Heal;
     pickups::update(*state);
-    CHECK(state->player.hp == doctest::Approx(40.0f + state->player.maxHp * balance::kHealPickupFraction));
+    CHECK(state->firstPlayer().hp == doctest::Approx(40.0f + state->firstPlayer().maxHp * balance::kHealPickupFraction));
 
-    state->player.hp = state->player.maxHp - 1.0f;
+    state->firstPlayer().hp = state->firstPlayer().maxHp - 1.0f;
     state->pickups.add()->type = PickupType::Heal;
     pickups::update(*state);
-    CHECK(state->player.hp == doctest::Approx(state->player.maxHp));
+    CHECK(state->firstPlayer().hp == doctest::Approx(state->firstPlayer().maxHp));
 }
 
 TEST_CASE("magnet pickup attracts every gem") {

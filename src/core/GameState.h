@@ -33,6 +33,10 @@ inline constexpr int kMaxHeldWeapons = 6;
 inline constexpr int kMaxHeldPassives = 6;
 inline constexpr int kMaxLevelPerItem = 5;
 inline constexpr int kOffersPerLevel = 3;
+// Co-op: up to four players share one run. Single-player is simply a run with one player.
+inline constexpr int kMaxPlayers = 4;
+// Marks an event that is about no player in particular, such as a zombie being hit.
+inline constexpr uint8_t kNoPlayer = 0xFF;
 
 enum class EnemyType : uint8_t { Walker, Runner, Brute, Spitter, Bloater, Crawler, Charger, Boss, Count };
 enum class WeaponId : uint8_t { Rifle, Shotgun, Smg, Sniper, Flamethrower, GrenadeLauncher, Rockets, Landmines, Tesla, Blades, Count };
@@ -62,10 +66,11 @@ struct Enemy {
     float bladeCooldown = 0.0f;  // Stops one Combat Blade hitting every step.
     uint32_t id = 0;     // Stays the same when the pool moves this item.
     EnemyType type = EnemyType::Walker;
-    uint16_t stuck = 0;  // Steps since it last got closer to the player, while cars were in the way.
+    uint16_t stuck = 0;  // Steps since it last got closer to its target, while cars were in the way.
     uint8_t stuckQueued = 0;  // Checks spent waiting behind other zombies, which don't count as stuck.
     uint8_t state = 0;   // Meaning depends on the enemy type's behaviour.
     bool elite = false;
+    uint8_t target = 0;  // Slot of the player it chases. Always 0 with one player.
 };
 
 struct Projectile {
@@ -81,6 +86,7 @@ struct Projectile {
     ProjectileKind kind = ProjectileKind::Bullet;
     WeaponId source = WeaponId::Rifle;
     bool evolved = false;
+    uint8_t owner = 0;       // Slot of the player who fired it, who gets the damage credit.
 };
 
 struct EnemyBullet {
@@ -106,6 +112,7 @@ struct Zone {
     bool evolved = false;
     bool hostile = false;
     bool applied = false;     // True once single-hit zones have dealt damage.
+    uint8_t owner = 0;        // Slot of the player whose weapon made it. Unused for boss attacks.
 };
 
 struct Gem {
@@ -146,6 +153,18 @@ struct PlayerStats {
     float armor = 0.0f;
 };
 
+enum class CardKind : uint8_t { Weapon, Passive, Evolution, Heal };
+
+// One level-up choice.
+struct Card {
+    CardKind kind = CardKind::Heal;
+    WeaponId weapon = WeaponId::Rifle;    // For Weapon and Evolution cards.
+    PassiveId passive = PassiveId::Damage;  // For Passive cards.
+    uint8_t newLevel = 1;
+};
+
+// Everything one player owns. In co-op every player has their own XP, build, ammo, health,
+// dash, cards and rerolls, so none of this is shared.
 struct Player {
     Vec2 pos;
     Vec2 prevPos;
@@ -168,16 +187,19 @@ struct Player {
     int weaponCount = 0;
     PassiveSlot passives[kMaxHeldPassives];
     int passiveCount = 0;
-};
-
-enum class CardKind : uint8_t { Weapon, Passive, Evolution, Heal };
-
-// One level-up choice.
-struct Card {
-    CardKind kind = CardKind::Heal;
-    WeaponId weapon = WeaponId::Rifle;    // For Weapon and Evolution cards.
-    PassiveId passive = PassiveId::Damage;  // For Passive cards.
-    uint8_t newLevel = 1;
+    // Level-up cards. In single-player they pause the run. In co-op they don't: see cardsOpen.
+    int rerollsLeft = 0;
+    int pendingLevels = 0;
+    Card offers[kOffersPerLevel];
+    int offerCount = 0;
+    float bladeAngle = 0.0f;  // How far this player's Combat Blades have turned.
+    // This player's share of run.damageByWeapon, for a results screen that shows each player.
+    float damageByWeapon[static_cast<int>(WeaponId::Count)] = {};
+    // Co-op only. A single-player run never changes these, so they keep their starting values.
+    float reviveProgress = 0.0f;  // Seconds a teammate has stood close while this player was down.
+    float cardShield = 0.0f;      // Seconds of safety left while choosing a card.
+    bool downed = false;          // At 0 HP and waiting for a teammate. Zombies ignore a downed player.
+    bool cardsOpen = false;       // Cards are offered. The run goes on, and this player's weapons hold fire.
 };
 
 enum class RunPhase : uint8_t { Playing, LevelUp, Won, Dead };
@@ -192,18 +214,14 @@ struct RunState {
     RunMode mode = RunMode::Story;
     maps::MapId map = maps::kDefaultMap;  // Decides where the solid cars stand.
     uint64_t seed = 0;
-    uint32_t tick = 0;       // Steps played. Does not advance during level-up.
+    uint32_t tick = 0;       // Steps played. Does not advance during a single-player level-up.
     uint32_t nextId = 1;
-    int kills = 0;
-    int rerollsLeft = 0;
-    int pendingLevels = 0;
-    Card offers[kOffersPerLevel];
-    int offerCount = 0;
-    float damageByWeapon[static_cast<int>(WeaponId::Count)] = {};
+    int playerCount = 1;     // Players in this run, from 1 to kMaxPlayers. Set once, by newRun.
+    int kills = 0;           // The whole team's.
+    float damageByWeapon[static_cast<int>(WeaponId::Count)] = {};  // The whole team's.
     float waveAccumulators[32] = {};  // Fractional spawns owed, per wave table row.
     int nextEliteEvent = 0;
     int nextPickupDropKills = 0;
-    float bladeAngle = 0.0f;
     bool bossSpawned = false;  // A boss is in the fight now. In Endless it goes back to false when the boss dies.
     uint8_t bossPhase = 0;
     uint8_t bossStep = 0;    // Which attack of the phase's cycle comes next. See balance::kBossMoves.
@@ -228,19 +246,24 @@ enum class EventType : uint8_t {
     Explosion,  // detail is the weapon that made it. value is the blast radius.
     PlayerDashed,  // At the spot the dash started. The direction is in player.dashDir.
     ZombieUnstuck,  // A zombie was stuck among cars and got moved. Only the balance tool counts these.
-    CarCrushed,  // At the middle of the car. detail is its maps::CarSprite. value is how far away the player was.
+    CarCrushed,  // At the middle of the car. detail is its maps::CarSprite. value is how far away the nearest player was.
     BossAttack,  // A boss warning just started. detail is its balance::BossAttack. Only sound reads it.
+    PlayerDowned,   // Co-op: a player reached 0 HP and waits for a teammate.
+    PlayerRevived,  // Co-op: a teammate got a downed player back up.
 };
 
 struct SimEvent {
     EventType type = EventType::EnemyHit;
     uint8_t detail = 0;  // Weapon, enemy type or pickup type, depending on the event.
     bool flag = false;   // For EnemyHit: true when the hit was on an elite.
+    // The player it happened to or was done by, for events about one player such as a hit, a
+    // shot, a level-up or a pickup. kNoPlayer for every other event.
+    uint8_t player = kNoPlayer;
     Vec2 pos;
     float value = 0.0f;  // Damage amount, or XP amount.
 };
 
-// The solid cars around the player, so a zombie's collision check is one array lookup rather
+// The solid cars around each player, so a zombie's collision check is one array lookup rather
 // than a walk through the map's layout. See components/Obstacles.
 inline constexpr int kObstacleWindow = 5;  // Tiles across. Reaches past where zombies spawn.
 
@@ -252,17 +275,24 @@ struct ObstacleTile {
     maps::Obstacle items[maps::kMaxObstaclesPerTile];
 };
 
-struct ObstacleCache {
+// The tiles around one player.
+struct ObstacleWindow {
     ObstacleTile tiles[kObstacleWindow * kObstacleWindow];
     int centerX = 0;
     int centerY = 0;
     bool ready = false;
 };
 
+// One window per player, so players far apart each have the cars around them. A place is
+// solid if any window holds its tile, and every window holds the same cars for a tile.
+struct ObstacleCache {
+    ObstacleWindow windows[kMaxPlayers];
+};
+
 struct GameState {
     Rng rng;
     RunState run;
-    Player player;
+    Player players[kMaxPlayers];  // Only the first run.playerCount are in the run.
     Pool<Enemy, kMaxEnemies> enemies;
     Pool<Projectile, kMaxProjectiles> projectiles;
     Pool<EnemyBullet, kMaxEnemyBullets> enemyBullets;
@@ -271,12 +301,39 @@ struct GameState {
     Pool<Pickup, kMaxPickups> pickups;
     Pool<SimEvent, kMaxEvents> events;  // Cleared by whoever reads them.
     SpatialHash<kMaxEnemies> enemyGrid;
-    // Worked out only from the map, the seed, the player's tile and the crushed list, all of
+    // Worked out only from the map, the seed, the players' tiles and the crushed list, all of
     // which are hashed. So it can't make two runs differ, and it stays out of the state hash.
     ObstacleCache obstacleCache;
 
     float timeSeconds() const { return static_cast<float>(run.tick) * kDt; }
+    int playerCount() const { return run.playerCount; }
+    bool isCoop() const { return run.playerCount > 1; }
+    // Slot 0, the only player of a single-player run. Screens that show one player, such as
+    // the HUD, show this one until co-op has screens of its own.
+    Player& firstPlayer() { return players[0]; }
+    const Player& firstPlayer() const { return players[0]; }
 };
+
+// A standing player is one who is not downed. Only standing players are chased, collect
+// things, fire and revive others. In single-player the player is always standing, because
+// 0 HP ends the run instead.
+inline bool standing(const GameState& state, int slot) { return !state.players[slot].downed; }
+
+// The standing player nearest to a point, or -1 when everyone is down. Equal distances go to
+// the lower slot, so the answer depends on nothing but the positions.
+inline int nearestStanding(const GameState& state, Vec2 pos) {
+    int best = -1;
+    float bestDistSq = 0.0f;
+    for (int slot = 0; slot < state.run.playerCount; ++slot) {
+        if (!standing(state, slot)) continue;
+        const float distSq = distanceSq(state.players[slot].pos, pos);
+        if (best < 0 || distSq < bestDistSq) {
+            best = slot;
+            bestDistSq = distSq;
+        }
+    }
+    return best;
+}
 
 // The list is shared by every step of a frame, and hits are pushed before the kills,
 // level-ups and deaths of the same step. So frequent events stop early, which keeps
@@ -306,6 +363,18 @@ inline void pushEvent(GameState& state, EventType type, Vec2 pos, float value = 
         event->value = value;
         event->detail = detail;
         event->flag = flag;
+    }
+}
+
+// The same, for an event about one player. It names that player's slot.
+inline void pushPlayerEvent(GameState& state, EventType type, int slot, Vec2 pos, float value = 0.0f, uint8_t detail = 0) {
+    if (state.events.count >= eventLimit(type)) return;
+    if (SimEvent* event = state.events.add()) {
+        event->type = type;
+        event->pos = pos;
+        event->value = value;
+        event->detail = detail;
+        event->player = static_cast<uint8_t>(slot);
     }
 }
 

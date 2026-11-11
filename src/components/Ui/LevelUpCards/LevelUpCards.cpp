@@ -178,7 +178,7 @@ int heldPassiveLevel(const Player& player, PassiveId id) {
 }
 
 void describe(const GameState& state, const Card& card, CardInfo& info) {
-    const Player& player = state.player;
+    const Player& player = state.firstPlayer();
     switch (card.kind) {
         case CardKind::Weapon: {
             const int from = heldWeaponLevel(player, card.weapon);
@@ -532,7 +532,7 @@ LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal) {
     const Layout& l = layout();
     const input::Snapshot& in = input();
     const float u = l.u;
-    const int count = std::max(1, state.run.offerCount);
+    const int count = std::max(1, state.firstPlayer().offerCount);
     g_openTime += dtReal;
     const bool ready = g_openTime >= kInputDelaySeconds;
     const float readiness = std::min(1.0f, g_openTime / kInputDelaySeconds);
@@ -546,7 +546,7 @@ LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal) {
     textShadowed("LEVEL UP", l.centerX(), m.titleY, titleSize, theme::kUiAccent, font::Align::Center, 4.0f * u);
     char subtitle[96];
     const char* how = in.lastDevice == input::Device::Touch ? "Tap a card to choose" : (in.lastDevice == input::Device::Gamepad ? "D-pad to select, A to choose" : "Arrow keys to select, Enter to choose");
-    std::snprintf(subtitle, sizeof(subtitle), "Level %d reached  -  %s", state.player.level, how);
+    std::snprintf(subtitle, sizeof(subtitle), "Level %d reached  -  %s", state.firstPlayer().level, how);
     const float subSize = font::fitSize(subtitle, 18.0f * u, l.width());
     text(subtitle, l.centerX(), m.titleY + titleSize + 4.0f * u, subSize, theme::kUiTextDim, font::Align::Center);
     // A thin line fills while the input delay runs, so the wait looks deliberate.
@@ -560,7 +560,7 @@ LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal) {
     // Navigation. Items 0..count-1 are the cards, and count is the reroll button. With no
     // rerolls left the button is disabled and draws no highlight, so focus must never land
     // on it: it would look as if nothing is selected and Enter did nothing.
-    const bool rerollUsable = state.run.rerollsLeft > 0;
+    const bool rerollUsable = state.firstPlayer().rerollsLeft > 0;
     const int items = rerollUsable ? count + 1 : count;
     if (g_nav.selected >= items) g_nav.selected = count - 1;  // The last reroll was just used while it had focus.
     if (ready) {
@@ -579,7 +579,7 @@ LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal) {
     // Cards.
     const bool showSelection = in.lastDevice != input::Device::Touch;
     for (int i = 0; i < count; ++i) {
-        const Card& card = state.run.offers[i];
+        const Card& card = state.firstPlayer().offers[i];
         CardInfo info;
         describe(state, card, info);
         const Rectangle r = m.cards[i];
@@ -599,7 +599,7 @@ LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal) {
 
     // Reroll button.
     char rerollLabel[32];
-    const int left = state.run.rerollsLeft;
+    const int left = state.firstPlayer().rerollsLeft;
     std::snprintf(rerollLabel, sizeof(rerollLabel), left > 0 ? "Reroll  (%d left)" : "No rerolls left", left);
     const bool wasEnabled = inputEnabled();
     setInputEnabled(ready);

@@ -69,18 +69,18 @@ Obstacle findLoneCar(MapId map, uint64_t seed, float clearance) {
 std::unique_ptr<GameState> runAround(MapId map, uint64_t seed, const Obstacle& car, Vec2 playerOffset) {
     auto state = std::make_unique<GameState>();
     sim::newRun(*state, seed, Difficulty::Normal, map);
-    state->player.weaponCount = 0;
-    state->player.xpToNext = 1 << 30;
-    state->player.pos = car.center + playerOffset;
-    state->player.prevPos = state->player.pos;
+    state->firstPlayer().weaponCount = 0;
+    state->firstPlayer().xpToNext = 1 << 30;
+    state->firstPlayer().pos = car.center + playerOffset;
+    state->firstPlayer().prevPos = state->firstPlayer().pos;
     obstacles::update(*state);
     return state;
 }
 
 // Holds the world still apart from what a test does: no spawns and no damage.
 void keepAlive(GameState& state) {
-    state.player.hp = state.player.maxHp;
-    state.run.pendingLevels = 0;
+    state.firstPlayer().hp = state.firstPlayer().maxHp;
+    state.firstPlayer().pendingLevels = 0;
     state.run.tick = 1;
     state.run.nextEliteEvent = 1 << 20;
     state.events.clear();
@@ -106,7 +106,7 @@ std::vector<Obstacle> freshList(const GameState& state, int x, int y) {
 
 void checkCacheIsFresh(const GameState& state) {
     int checked = 0;
-    for (const ObstacleTile& tile : state.obstacleCache.tiles) {
+    for (const ObstacleTile& tile : state.obstacleCache.windows[0].tiles) {
         if (!tile.valid) continue;
         const std::vector<Obstacle> fresh = freshList(state, tile.tileX, tile.tileY);
         REQUIRE(tile.count == static_cast<int>(fresh.size()));
@@ -121,10 +121,10 @@ void checkCacheIsFresh(const GameState& state) {
 
 // Walks far enough for the whole window of tiles to be filled again, then comes back.
 void walkAwayAndBack(GameState& state) {
-    const Vec2 home = state.player.pos;
-    state.player.pos = home + Vec2{maps::kChunkWorldSize * 7.0f, maps::kChunkWorldSize * 7.0f};
+    const Vec2 home = state.firstPlayer().pos;
+    state.firstPlayer().pos = home + Vec2{maps::kChunkWorldSize * 7.0f, maps::kChunkWorldSize * 7.0f};
     obstacles::update(state);
-    state.player.pos = home;
+    state.firstPlayer().pos = home;
     obstacles::update(state);
 }
 
@@ -135,10 +135,10 @@ std::unique_ptr<GameState> bossFight(MapId map, uint64_t seed, int steps, std::v
     sim::newRun(*state, seed, Difficulty::Normal, map);
     state->run.tick = static_cast<uint32_t>(balance::kRunSeconds / kDt) - 1;
     state->run.nextEliteEvent = 1 << 20;
-    state->player.xpToNext = 1 << 30;
+    state->firstPlayer().xpToNext = 1 << 30;
     for (int step = 0; step < steps; ++step) {
-        state->player.hp = state->player.maxHp;
-        state->run.pendingLevels = 0;
+        state->firstPlayer().hp = state->firstPlayer().maxHp;
+        state->firstPlayer().pendingLevels = 0;
         InputFrame input;
         const float angle = static_cast<float>(step) * 0.004f;
         input.moveX = std::cos(angle);
@@ -286,7 +286,7 @@ TEST_CASE("a car over a tile's edge leaves every list it was in") {
             REQUIRE(found);
             auto state = runAround(map, seed, car, Vec2{-car.half.x - 100.0f, 0.0f});
             crushOnly(*state, car);
-            for (const ObstacleTile& tile : state->obstacleCache.tiles) {
+            for (const ObstacleTile& tile : state->obstacleCache.windows[0].tiles) {
                 if (!tile.valid) continue;
                 for (int i = 0; i < tile.count; ++i) CHECK_FALSE(maps::isCar(CarId{car.texelX, car.texelY}, tile.items[i]));
             }
@@ -323,8 +323,8 @@ TEST_CASE("other cars are still solid after a crush") {
         crushOnly(*state, crushed);
         // Every other car around the player, which is what the cache can answer for.
         int checked = 0;
-        const int playerTileX = maps::tileOf(state->player.pos.x);
-        const int playerTileY = maps::tileOf(state->player.pos.y);
+        const int playerTileX = maps::tileOf(state->firstPlayer().pos.x);
+        const int playerTileY = maps::tileOf(state->firstPlayer().pos.y);
         for (int y = playerTileY - 1; y <= playerTileY + 1; ++y) {
             for (int x = playerTileX - 1; x <= playerTileX + 1; ++x) {
                 for (const Obstacle& car : carsIn(map, 73, x, y)) {
@@ -378,7 +378,7 @@ TEST_CASE("a Charger can start a charge over a crushed car, and doesn't crash on
             Enemy* charger = enemies::spawn(*state, EnemyType::Charger, car.center - Vec2{0.0f, car.half.y + 60.0f}, false);
             REQUIRE(charger);
             if (crushed) crushOnly(*state, car);
-            const bool lineClear = !obstacles::lineBlocked(*state, charger->pos, state->player.pos, charger->radius * balance::kZombieCarRadiusShare);
+            const bool lineClear = !obstacles::lineBlocked(*state, charger->pos, state->firstPlayer().pos, charger->radius * balance::kZombieCarRadiusShare);
             charger->state = enemies::kChargerDash;
             charger->dir = Vec2{0.0f, 1.0f};
             charger->timer = 2.0f;
@@ -386,7 +386,7 @@ TEST_CASE("a Charger can start a charge over a crushed car, and doesn't crash on
             float furthest = charger->pos.y;
             for (int step = 0; step < 30 && !crashed; ++step) {
                 keepAlive(*state);
-                state->player.invulnerable = 10.0f;
+                state->firstPlayer().invulnerable = 10.0f;
                 sim::step(*state, InputFrame{});
                 if (state->enemies.count == 0) break;
                 crashed = state->enemies[0].state == enemies::kChargerRecover;
@@ -409,7 +409,7 @@ TEST_CASE("a new run forgets crushed cars, and so does a change of map") {
     crushOnly(*state, car);
     sim::newRun(*state, 89, Difficulty::Normal, MapId::City);
     CHECK(state->run.crushedCount == 0);
-    state->player.pos = car.center - Vec2{car.half.x + 100.0f, 0.0f};
+    state->firstPlayer().pos = car.center - Vec2{car.half.x + 100.0f, 0.0f};
     obstacles::update(*state);
     CHECK(obstacles::overlapsCar(*state, car.center, 4.0f));
     checkCacheIsFresh(*state);
@@ -451,7 +451,7 @@ TEST_CASE("each crushed car pushes one event, with its place, even in a flood of
         CHECK(event.pos.x == car.center.x);
         CHECK(event.pos.y == car.center.y);
         CHECK(event.detail == static_cast<uint8_t>(car.sprite));
-        CHECK(event.value == doctest::Approx(distance(car.center, state->player.pos)));
+        CHECK(event.value == doctest::Approx(distance(car.center, state->firstPlayer().pos)));
 
         // It can't go flat twice, however long the boss stands on it.
         obstacles::crushUnder(*state, car.center, 1.0f);
@@ -521,10 +521,10 @@ TEST_CASE("the fastest boss in a very long fight can't fill the crushed list") {
             for (const Vec2 heading : {Vec2{1.0f, 0.0f}, Vec2{0.0f, 1.0f}, Vec2{0.8f, 0.6f}}) {
                 auto state = std::make_unique<GameState>();
                 sim::newRun(*state, seed, Difficulty::Normal, map);
-                Vec2 at = state->player.pos;
+                Vec2 at = state->firstPlayer().pos;
                 for (int step = 0; step < kSteps; ++step) {
                     at += heading * (kFastestBossPerSecond * kDt);
-                    state->player.pos = at;
+                    state->firstPlayer().pos = at;
                     obstacles::update(*state);
                     obstacles::crushUnder(*state, at, reach);
                     if (step % 256 == 0) state->events.clear();

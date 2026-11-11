@@ -21,18 +21,18 @@ constexpr float kHugeHp = 1.0e5f;
 std::unique_ptr<GameState> emptyRun(uint64_t seed = 1) {
     auto state = std::make_unique<GameState>();
     sim::newRun(*state, seed);
-    state->player.weaponCount = 0;
-    state->player.maxHp = kHugeHp;
-    state->player.hp = kHugeHp;
+    state->firstPlayer().weaponCount = 0;
+    state->firstPlayer().maxHp = kHugeHp;
+    state->firstPlayer().hp = kHugeHp;
     return state;
 }
 
 // A run holding one weapon, at the given level.
 std::unique_ptr<GameState> soloRun(WeaponId id, int level = 1) {
     auto state = emptyRun();
-    weapons::grant(*state, id);
-    state->player.weapons[0].level = static_cast<uint8_t>(level);
-    weapons::refill(*state, state->player.weapons[0]);
+    weapons::grant(*state, 0, id);
+    state->firstPlayer().weapons[0].level = static_cast<uint8_t>(level);
+    weapons::refill(state->firstPlayer(), state->firstPlayer().weapons[0]);
     return state;
 }
 
@@ -74,39 +74,39 @@ float credited(const GameState& state, WeaponId id) { return state.run.damageByW
 
 TEST_CASE("one trigger pull uses one round, however many bullets it fires") {
     auto state = soloRun(WeaponId::Rifle, 5);
-    const balance::WeaponLevel stats = weapons::effectiveStats(*state, state->player.weapons[0]);
+    const balance::WeaponLevel stats = weapons::effectiveStats(state->firstPlayer(), state->firstPlayer().weapons[0]);
     REQUIRE(stats.count == 3);
     addTarget(*state, Vec2{0.0f, 300.0f});
     step(*state);
-    CHECK(state->player.weapons[0].magazine == stats.magazine - 1);
+    CHECK(state->firstPlayer().weapons[0].magazine == stats.magazine - 1);
     CHECK(state->projectiles.count == 3);
     CHECK(countEvents(*state, EventType::WeaponFired) == 1);
     // The gun points at the target, and the event names the weapon.
-    CHECK(state->player.aim.y == doctest::Approx(1.0f).epsilon(0.01));
+    CHECK(state->firstPlayer().aim.y == doctest::Approx(1.0f).epsilon(0.01));
     CHECK(state->events[state->events.count - 1].detail == static_cast<uint8_t>(WeaponId::Rifle));
     // It is cooling down now, so the next step does not use another round.
     step(*state);
-    CHECK(state->player.weapons[0].magazine == stats.magazine - 1);
+    CHECK(state->firstPlayer().weapons[0].magazine == stats.magazine - 1);
 }
 
 TEST_CASE("a gun with no target waits, ready, and uses nothing") {
     auto state = soloRun(WeaponId::Rifle);
-    const int magazine = state->player.weapons[0].magazine;
+    const int magazine = state->firstPlayer().weapons[0].magazine;
     step(*state, 90);
-    CHECK(state->player.weapons[0].magazine == magazine);
-    CHECK(state->player.weapons[0].cooldown <= 0.0f);
+    CHECK(state->firstPlayer().weapons[0].magazine == magazine);
+    CHECK(state->firstPlayer().weapons[0].cooldown <= 0.0f);
     CHECK(state->projectiles.count == 0);
     CHECK(countEvents(*state, EventType::WeaponFired) == 0);
     // As soon as a target appears, it fires on the very next step.
     addTarget(*state, Vec2{300.0f, 0.0f});
     step(*state);
-    CHECK(state->player.weapons[0].magazine == magazine - 1);
+    CHECK(state->firstPlayer().weapons[0].magazine == magazine - 1);
 }
 
 TEST_CASE("reloading moves rounds from the reserve and blocks firing") {
     auto state = soloRun(WeaponId::Rifle);
-    WeaponSlot& slot = state->player.weapons[0];
-    const balance::WeaponLevel stats = weapons::effectiveStats(*state, slot);
+    WeaponSlot& slot = state->firstPlayer().weapons[0];
+    const balance::WeaponLevel stats = weapons::effectiveStats(state->firstPlayer(), slot);
     slot.magazine = 1;
     slot.reserve = 50;
     addTarget(*state, Vec2{500.0f, 0.0f});
@@ -139,7 +139,7 @@ TEST_CASE("reloading moves rounds from the reserve and blocks firing") {
 
 TEST_CASE("a dry gun stops firing and reports it once") {
     auto state = soloRun(WeaponId::Smg);
-    WeaponSlot& slot = state->player.weapons[0];
+    WeaponSlot& slot = state->firstPlayer().weapons[0];
     slot.magazine = 0;
     slot.reserve = 0;
     addTarget(*state, Vec2{300.0f, 0.0f});
@@ -159,8 +159,8 @@ TEST_CASE("a dry gun stops firing and reports it once") {
 
 TEST_CASE("a dry Rifle still fires free, slower and weaker shots") {
     auto state = soloRun(WeaponId::Rifle);
-    WeaponSlot& slot = state->player.weapons[0];
-    const balance::WeaponLevel stats = weapons::effectiveStats(*state, slot);
+    WeaponSlot& slot = state->firstPlayer().weapons[0];
+    const balance::WeaponLevel stats = weapons::effectiveStats(state->firstPlayer(), slot);
     slot.magazine = 0;
     slot.reserve = 0;
     addTarget(*state, Vec2{300.0f, 0.0f});
@@ -186,31 +186,31 @@ TEST_CASE("a dry Rifle still fires free, slower and weaker shots") {
 
 TEST_CASE("an ammo crate adds a fraction of the reserve, never past the maximum") {
     auto state = emptyRun();
-    weapons::grant(*state, WeaponId::Rifle);
-    weapons::grant(*state, WeaponId::Tesla);
-    WeaponSlot& rifle = state->player.weapons[0];
-    const int maxReserve = weapons::effectiveStats(*state, rifle).maxReserve;
+    weapons::grant(*state, 0, WeaponId::Rifle);
+    weapons::grant(*state, 0, WeaponId::Tesla);
+    WeaponSlot& rifle = state->firstPlayer().weapons[0];
+    const int maxReserve = weapons::effectiveStats(state->firstPlayer(), rifle).maxReserve;
     rifle.reserve = 0;
     rifle.dryReported = true;
-    weapons::addAmmoFraction(*state, 0.5f);
+    weapons::addAmmoFraction(*state, 0, 0.5f);
     CHECK(rifle.reserve == maxReserve / 2);
     CHECK_FALSE(rifle.dryReported);
-    weapons::addAmmoFraction(*state, 0.9f);
+    weapons::addAmmoFraction(*state, 0, 0.9f);
     CHECK(rifle.reserve == maxReserve);
     // Tesla uses no ammo, so a crate leaves it alone.
-    CHECK(state->player.weapons[1].reserve == 0);
-    CHECK(state->player.weapons[1].magazine == 0);
+    CHECK(state->firstPlayer().weapons[1].reserve == 0);
+    CHECK(state->firstPlayer().weapons[1].magazine == 0);
 }
 
 TEST_CASE("gaining a level refills the magazine and reserve for the new level") {
     auto state = soloRun(WeaponId::Rifle);
-    WeaponSlot& slot = state->player.weapons[0];
+    WeaponSlot& slot = state->firstPlayer().weapons[0];
     slot.magazine = 0;
     slot.reserve = 0;
     slot.reloadLeft = 0.5f;
     slot.dryReported = true;
     slot.level = kMaxLevelPerItem;
-    weapons::refill(*state, slot);
+    weapons::refill(state->firstPlayer(), slot);
     const balance::WeaponLevel stats = balance::kWeaponLevels[static_cast<int>(WeaponId::Rifle)][kMaxLevelPerItem - 1];
     CHECK(slot.magazine == stats.magazine);
     CHECK(slot.reserve == stats.maxReserve);
@@ -220,10 +220,10 @@ TEST_CASE("gaining a level refills the magazine and reserve for the new level") 
 
 TEST_CASE("a new weapon starts with a full magazine and reserve") {
     auto state = emptyRun();
-    weapons::grant(*state, WeaponId::Shotgun);
+    weapons::grant(*state, 0, WeaponId::Shotgun);
     const balance::WeaponLevel stats = balance::kWeaponLevels[static_cast<int>(WeaponId::Shotgun)][0];
-    CHECK(state->player.weapons[0].magazine == stats.magazine);
-    CHECK(state->player.weapons[0].reserve == stats.maxReserve);
+    CHECK(state->firstPlayer().weapons[0].magazine == stats.magazine);
+    CHECK(state->firstPlayer().weapons[0].reserve == stats.maxReserve);
 }
 
 TEST_CASE("every weapon damages a zombie and is credited for it") {
@@ -251,13 +251,13 @@ TEST_CASE("the Sniper beam hits every zombie in the line, once, and misses the r
     addTarget(*state, Vec2{400.0f, 0.0f}, kHugeHp * 2.0f);  // The toughest one, so it is aimed at.
     addTarget(*state, Vec2{250.0f, 200.0f});
     step(*state);
-    const float damage = weapons::effectiveStats(*state, state->player.weapons[0]).damage;
+    const float damage = weapons::effectiveStats(state->firstPlayer(), state->firstPlayer().weapons[0]).damage;
     CHECK(lost(state->enemies[0]) == doctest::Approx(damage));
     CHECK(lost(state->enemies[1]) == doctest::Approx(damage));
     CHECK(lost(state->enemies[2]) == doctest::Approx(damage));
     CHECK(lost(state->enemies[3]) == 0.0f);
     CHECK(countZones(*state, ZoneKind::SniperBeam) == 1);
-    CHECK(state->player.weapons[0].magazine == balance::kWeaponLevels[static_cast<int>(WeaponId::Sniper)][0].magazine - 1);
+    CHECK(state->firstPlayer().weapons[0].magazine == balance::kWeaponLevels[static_cast<int>(WeaponId::Sniper)][0].magazine - 1);
     // The beam is only drawn afterwards, so a later step must not hurt anyone again.
     step(*state);
     CHECK(lost(state->enemies[0]) == doctest::Approx(damage));
@@ -265,7 +265,7 @@ TEST_CASE("the Sniper beam hits every zombie in the line, once, and misses the r
 
 TEST_CASE("Tesla chains from zombie to zombie within its jump range, up to its count") {
     auto state = soloRun(WeaponId::Tesla);
-    const balance::WeaponLevel stats = weapons::effectiveStats(*state, state->player.weapons[0]);
+    const balance::WeaponLevel stats = weapons::effectiveStats(state->firstPlayer(), state->firstPlayer().weapons[0]);
     REQUIRE(stats.count == 3);
     addTarget(*state, Vec2{100.0f, 0.0f});
     addTarget(*state, Vec2{200.0f, 0.0f});
@@ -279,7 +279,7 @@ TEST_CASE("Tesla chains from zombie to zombie within its jump range, up to its c
     CHECK(countZones(*state, ZoneKind::TeslaLink) == 3);
     CHECK(credited(*state, WeaponId::Tesla) == doctest::Approx(stats.damage * 3.0f));
     // Tesla uses no ammo.
-    CHECK(state->player.weapons[0].magazine == 0);
+    CHECK(state->firstPlayer().weapons[0].magazine == 0);
     CHECK(countEvents(*state, EventType::WeaponDry) == 0);
 }
 
@@ -288,7 +288,7 @@ TEST_CASE("Tesla never hits the same zombie twice in one chain") {
     addTarget(*state, Vec2{100.0f, 0.0f});
     addTarget(*state, Vec2{150.0f, 0.0f});
     step(*state);
-    const float damage = weapons::effectiveStats(*state, state->player.weapons[0]).damage;
+    const float damage = weapons::effectiveStats(state->firstPlayer(), state->firstPlayer().weapons[0]).damage;
     CHECK(lost(state->enemies[0]) == doctest::Approx(damage));
     CHECK(lost(state->enemies[1]) == doctest::Approx(damage));
     CHECK(countZones(*state, ZoneKind::TeslaLink) == 2);
@@ -296,7 +296,7 @@ TEST_CASE("Tesla never hits the same zombie twice in one chain") {
 
 TEST_CASE("the Shotgun fires count pellets across the cone with one round") {
     auto state = soloRun(WeaponId::Shotgun);
-    const balance::WeaponLevel stats = weapons::effectiveStats(*state, state->player.weapons[0]);
+    const balance::WeaponLevel stats = weapons::effectiveStats(state->firstPlayer(), state->firstPlayer().weapons[0]);
     addTarget(*state, Vec2{150.0f, 0.0f});
     step(*state);
     REQUIRE(state->projectiles.count == stats.count);
@@ -310,7 +310,7 @@ TEST_CASE("the Shotgun fires count pellets across the cone with one round") {
         CHECK(pellet.source == WeaponId::Shotgun);
     }
     CHECK(highest - lowest == doctest::Approx(balance::kShotgunConeRadians).epsilon(0.01));
-    CHECK(state->player.weapons[0].magazine == stats.magazine - 1);
+    CHECK(state->firstPlayer().weapons[0].magazine == stats.magazine - 1);
 }
 
 TEST_CASE("the Shotgun ignores a zombie beyond its reach") {
@@ -318,12 +318,12 @@ TEST_CASE("the Shotgun ignores a zombie beyond its reach") {
     addTarget(*state, Vec2{balance::kWeaponRange - 10.0f, 0.0f});
     step(*state, 5);
     CHECK(state->projectiles.count == 0);
-    CHECK(state->player.weapons[0].magazine == balance::kWeaponLevels[static_cast<int>(WeaponId::Shotgun)][0].magazine);
+    CHECK(state->firstPlayer().weapons[0].magazine == balance::kWeaponLevels[static_cast<int>(WeaponId::Shotgun)][0].magazine);
 }
 
 TEST_CASE("a grenade explodes when the fuse ends, hurting the area but not far zombies") {
     auto state = soloRun(WeaponId::GrenadeLauncher);
-    const balance::WeaponLevel stats = weapons::effectiveStats(*state, state->player.weapons[0]);
+    const balance::WeaponLevel stats = weapons::effectiveStats(state->firstPlayer(), state->firstPlayer().weapons[0]);
     addTarget(*state, Vec2{200.0f, 0.0f});
     addTarget(*state, Vec2{240.0f, 0.0f});
     addTarget(*state, Vec2{200.0f, 400.0f});  // Far outside the blast.
@@ -399,10 +399,10 @@ TEST_CASE("a mine explodes when a zombie comes close, and vanishes harmlessly wh
 
 TEST_CASE("mines are dropped behind the player, and only while a zombie is in range") {
     auto state = soloRun(WeaponId::Landmines);
-    state->player.facing = Vec2{0.0f, 1.0f};
+    state->firstPlayer().facing = Vec2{0.0f, 1.0f};
     step(*state, 10);
     CHECK(state->projectiles.count == 0);
-    CHECK(state->player.weapons[0].magazine == balance::kWeaponLevels[static_cast<int>(WeaponId::Landmines)][0].magazine);
+    CHECK(state->firstPlayer().weapons[0].magazine == balance::kWeaponLevels[static_cast<int>(WeaponId::Landmines)][0].magazine);
 
     addTarget(*state, Vec2{0.0f, 600.0f});
     step(*state);
@@ -444,10 +444,10 @@ TEST_CASE("a rocket turns toward its target at a limited rate, then explodes on 
 
 TEST_CASE("combat blades spin, and hit a touching zombie once per cooldown") {
     auto state = soloRun(WeaponId::Blades);
-    const balance::WeaponLevel stats = weapons::effectiveStats(*state, state->player.weapons[0]);
+    const balance::WeaponLevel stats = weapons::effectiveStats(state->firstPlayer(), state->firstPlayer().weapons[0]);
     Enemy& target = addTarget(*state, Vec2{stats.area, 0.0f});
     step(*state);
-    CHECK(state->run.bladeAngle == doctest::Approx(stats.speed * kDt));
+    CHECK(state->firstPlayer().bladeAngle == doctest::Approx(stats.speed * kDt));
     CHECK(lost(target) == doctest::Approx(stats.damage));
     CHECK(target.bladeCooldown > 0.0f);
     step(*state, 3);
@@ -455,8 +455,8 @@ TEST_CASE("combat blades spin, and hit a touching zombie once per cooldown") {
 
     // With the cooldown over, a blade that is touching it cuts again.
     target.bladeCooldown = 0.0f;
-    const float nextAngle = state->run.bladeAngle + stats.speed * kDt;
-    target.pos = state->player.pos + fromAngle(nextAngle) * stats.area;
+    const float nextAngle = state->firstPlayer().bladeAngle + stats.speed * kDt;
+    target.pos = state->firstPlayer().pos + fromAngle(nextAngle) * stats.area;
     step(*state);
     CHECK(lost(target) == doctest::Approx(stats.damage * 2.0f));
 }
@@ -465,7 +465,7 @@ TEST_CASE("a hostile boss circle hurts a player inside it and not one outside") 
     for (const bool inside : {true, false}) {
         CAPTURE(inside);
         auto state = emptyRun();
-        state->player.hp = 100.0f;
+        state->firstPlayer().hp = 100.0f;
         Zone* zone = state->zones.add();
         zone->kind = ZoneKind::BossCircle;
         zone->hostile = true;
@@ -476,13 +476,13 @@ TEST_CASE("a hostile boss circle hurts a player inside it and not one outside") 
         zone->damage = 26.0f;
         step(*state, 3);
         // Nothing lands until the telegraph is over.
-        CHECK(state->player.hp == 100.0f);
+        CHECK(state->firstPlayer().hp == 100.0f);
         step(*state, 4);
         CHECK(state->zones.count == 0);
         if (inside) {
-            CHECK(state->player.hp < 100.0f);
+            CHECK(state->firstPlayer().hp < 100.0f);
         } else {
-            CHECK(state->player.hp == 100.0f);
+            CHECK(state->firstPlayer().hp == 100.0f);
         }
     }
 }
@@ -491,7 +491,7 @@ TEST_CASE("a hostile boss line hurts a player along the line, by its half width"
     for (const bool inside : {true, false}) {
         CAPTURE(inside);
         auto state = emptyRun();
-        state->player.hp = 100.0f;
+        state->firstPlayer().hp = 100.0f;
         Zone* zone = state->zones.add();
         zone->kind = ZoneKind::BossLine;
         zone->hostile = true;
@@ -504,16 +504,16 @@ TEST_CASE("a hostile boss line hurts a player along the line, by its half width"
         step(*state, 3);
         CHECK(state->zones.count == 0);
         if (inside) {
-            CHECK(state->player.hp < 100.0f);
+            CHECK(state->firstPlayer().hp < 100.0f);
         } else {
-            CHECK(state->player.hp == 100.0f);
+            CHECK(state->firstPlayer().hp == 100.0f);
         }
     }
 }
 
 TEST_CASE("player zones expire after their life and do not hurt the player") {
     auto state = emptyRun();
-    state->player.hp = 100.0f;
+    state->firstPlayer().hp = 100.0f;
     Zone* zone = state->zones.add();
     zone->kind = ZoneKind::Explosion;
     zone->a = Vec2{};
@@ -522,12 +522,12 @@ TEST_CASE("player zones expire after their life and do not hurt the player") {
     zone->damage = 50.0f;
     step(*state, 5);
     CHECK(state->zones.count == 0);
-    CHECK(state->player.hp == 100.0f);
+    CHECK(state->firstPlayer().hp == 100.0f);
 }
 
 TEST_CASE("a flame passes through a zombie but hits it only once") {
     auto state = soloRun(WeaponId::Flamethrower);
-    const balance::WeaponLevel stats = weapons::effectiveStats(*state, state->player.weapons[0]);
+    const balance::WeaponLevel stats = weapons::effectiveStats(state->firstPlayer(), state->firstPlayer().weapons[0]);
     addTarget(*state, Vec2{120.0f, 0.0f});
     step(*state);
     REQUIRE(state->projectiles.count == 1);
@@ -536,7 +536,7 @@ TEST_CASE("a flame passes through a zombie but hits it only once") {
     CHECK(flame.pierce == stats.pierce);
     CHECK(flame.radius == doctest::Approx(balance::kFlameRadius * stats.area / balance::kFlameBaseArea));
     // No further flames, so only this one can hurt the zombie while it flies through.
-    state->player.weapons[0].cooldown = 100.0f;
+    state->firstPlayer().weapons[0].cooldown = 100.0f;
     step(*state, 60);
     CHECK(lost(state->enemies[0]) == doctest::Approx(stats.damage));
 }
@@ -553,13 +553,13 @@ TEST_CASE("same seed gives the same run with every weapon in use") {
         for (int run = 0; run < 2; ++run) {
             auto state = std::make_unique<GameState>();
             sim::newRun(*state, 4242);
-            for (const WeaponId id : set) weapons::grant(*state, id);
-            for (int i = 0; i < state->player.weaponCount; ++i) {
-                state->player.weapons[i].level = 3;
-                weapons::refill(*state, state->player.weapons[i]);
+            for (const WeaponId id : set) weapons::grant(*state, 0, id);
+            for (int i = 0; i < state->firstPlayer().weaponCount; ++i) {
+                state->firstPlayer().weapons[i].level = 3;
+                weapons::refill(state->firstPlayer(), state->firstPlayer().weapons[i]);
             }
-            state->player.maxHp = kHugeHp;
-            state->player.hp = kHugeHp;
+            state->firstPlayer().maxHp = kHugeHp;
+            state->firstPlayer().hp = kHugeHp;
             for (int s = 0; s < 60 * 45; ++s) {
                 InputFrame input;
                 const float angle = static_cast<float>(state->run.tick) * 0.01f;

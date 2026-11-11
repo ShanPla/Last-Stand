@@ -619,4 +619,34 @@ inline constexpr float kTimedAmmoCrateDistance = 110.0f;
 inline constexpr float kBombDamage = 1200.0f;
 inline constexpr float kBombRadius = 760.0f;
 
+// --- Co-op -------------------------------------------------------------------
+// Up to four players in one run. Each table is read by player count minus one, so its first
+// entry is single-player, which must stay 1 so a solo run is the same as before co-op.
+// More players bring more guns, so more zombies come and the boss has more health.
+// Zombies spawn around one player at a time, so each player meets fewer than a solo player
+// would, and teammates' guns help too. Spawn rate alone made co-op far easier for the bots,
+// so zombie health carries part of the load. The boss is fought by the whole team at once and
+// only chases one of them, so it needs a bigger share. Tuned with the balance tool's bots.
+inline constexpr float kCoopSpawnRate[kMaxPlayers] = {1.0f, 1.6f, 2.2f, 2.8f};
+inline constexpr float kCoopZombieHp[kMaxPlayers] = {1.0f, 1.15f, 1.45f, 1.7f};
+inline constexpr float kCoopBossHp[kMaxPlayers] = {1.0f, 2.2f, 2.9f, 3.6f};
+// A level-up doesn't pause a co-op run. While a player picks a card their weapons hold fire,
+// and they can't be hurt for at most this long, so a slow choice can't become a hiding place.
+inline constexpr float kCoopCardShieldSeconds = 5.0f;
+// A downed player gets back up after a teammate has stood this close for this long in total.
+inline constexpr float kReviveRadius = 70.0f;
+inline constexpr float kReviveSeconds = 3.0f;
+inline constexpr float kReviveHpShare = 0.4f;             // Of max HP, on getting back up.
+inline constexpr float kReviveInvulnerableSeconds = 1.5f;  // A moment to get clear of the crowd.
+inline constexpr float kCoopStartSpread = 50.0f;          // Players start this far from the middle.
+// A zombie looks again for the nearest standing player this often, spread out by its id so
+// only a few of 2,000 look in any one step. It also looks at once when its target goes down.
+inline constexpr uint32_t kZombieRetargetSteps = 12;
+
+inline constexpr int coopIndex(int players) { return players < 1 ? 0 : (players > kMaxPlayers ? kMaxPlayers - 1 : players - 1); }
+inline constexpr float coopSpawnRate(int players) { return kCoopSpawnRate[coopIndex(players)]; }
+inline constexpr float coopZombieHp(int players) { return kCoopZombieHp[coopIndex(players)]; }
+inline constexpr float coopBossHp(int players) { return kCoopBossHp[coopIndex(players)]; }
+static_assert(kCoopSpawnRate[0] == 1.0f && kCoopZombieHp[0] == 1.0f && kCoopBossHp[0] == 1.0f, "single-player must not be scaled");
+
 }  // namespace ls::balance

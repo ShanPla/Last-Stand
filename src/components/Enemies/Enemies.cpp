@@ -81,15 +81,35 @@ void pushCrowdOutOfWideEnemies(GameState& state) {
     }
 }
 
-// Enemies left far behind move to the opposite side of the player, so the
+// Enemies left far behind every player move to the opposite side of the nearest one, so the
 // pressure stays on instead of wasting them off screen.
 void recycleIfFar(const GameState& state, Enemy& enemy) {
     if (enemy.type == EnemyType::Boss) return;
-    const Vec2 offset = enemy.pos - state.player.pos;
+    const int nearest = nearestStanding(state, enemy.pos);
+    if (nearest < 0) return;
+    const Vec2 center = state.players[nearest].pos;
+    const Vec2 offset = enemy.pos - center;
     if (lengthSq(offset) > balance::kRecycleRadius * balance::kRecycleRadius) {
-        enemy.pos = state.player.pos - normalizedOr(offset, Vec2{1.0f, 0.0f}) * balance::kSpawnRadius;
+        enemy.pos = center - normalizedOr(offset, Vec2{1.0f, 0.0f}) * balance::kSpawnRadius;
         enemy.prevPos = enemy.pos;
     }
+}
+
+// Co-op: each zombie chases the nearest standing player. Looking again every step would let
+// a zombie halfway between two players flip back and forth, so it looks once every
+// kZombieRetargetSteps, at a step picked by its id so the work is spread out. It looks at
+// once when its target goes down. With one player the target is always slot 0.
+void chooseTarget(const GameState& state, Enemy& enemy) {
+    if (!state.isCoop()) return;
+    const bool due = (state.run.tick + enemy.id) % balance::kZombieRetargetSteps == 0;
+    if (!due && standing(state, enemy.target)) return;
+    const int nearest = nearestStanding(state, enemy.pos);
+    if (nearest < 0 || nearest == enemy.target) return;
+    enemy.target = static_cast<uint8_t>(nearest);
+    // Progress toward the old target says nothing about the new one, so the stuck watch starts over.
+    enemy.stuck = 0;
+    enemy.stuckQueued = 0;
+    enemy.stuckFrom = enemy.pos;
 }
 
 // The boss walks straight through cars, because it is wider than a car is deep and its attacks
@@ -100,18 +120,19 @@ bool goesAroundCars(const Enemy& enemy) { return !ignoresCars(enemy) && !(enemy.
 
 float carRadius(const Enemy& enemy) { return enemy.radius * balance::kZombieCarRadiusShare; }
 
-// True when a zombie nearer the player is touching this one on the side it is trying to walk
+// True when a zombie nearer this one's target is touching it on the side it is trying to walk
 // toward. Waiting in a queue isn't being stuck: the queue moves once those in front get there.
 // It has to be nearer, because two zombies heading for opposite corners of a car can block
 // each other head on. Then the nearer one has nobody to wait for, so it still gets rescued.
 bool heldByCrowd(const GameState& state, const Enemy& enemy, Vec2 heading) {
     const Vec2 dir = normalizedOr(heading, Vec2{});
-    const float ownGapSq = distanceSq(enemy.pos, state.player.pos);
+    const Vec2 targetPos = targetOf(state, enemy).pos;
+    const float ownGapSq = distanceSq(enemy.pos, targetPos);
     bool held = false;
     state.enemyGrid.query(enemy.pos, enemy.radius + balance::largestPushedEnemyRadius(), [&](int other) {
         if (other >= state.enemies.count) return false;
         const Enemy& neighbour = state.enemies[other];
-        if (&neighbour == &enemy || distanceSq(neighbour.pos, state.player.pos) >= ownGapSq) return false;
+        if (&neighbour == &enemy || distanceSq(neighbour.pos, targetPos) >= ownGapSq) return false;
         const Vec2 delta = neighbour.pos - enemy.pos;
         const float touch = enemy.radius + neighbour.radius;
         if (lengthSq(delta) >= touch * touch) return false;
@@ -122,17 +143,17 @@ bool heldByCrowd(const GameState& state, const Enemy& enemy, Vec2 heading) {
     return held;
 }
 
-// Counts how long a zombie has gone without getting closer to the player while cars are in
+// Counts how long a zombie has gone without getting closer to its target while cars are in
 // its way. Steering can't tell us this, because a zombie pinned among wrecks can be steered
 // on some steps and not on others, or not at all. What counts is the result, and it is
 // measured from one spot held still until the zombie beats it, so walking back and forth
-// along a car doesn't reset anything. Both distances use where the player is now, so a
+// along a car doesn't reset anything. Both distances use where the target is now, so a
 // player running away doesn't look like a zombie falling behind. The count runs every step,
 // but the sums only run every kZombieStuckCheckSteps, which keeps 2,000 zombies cheap.
 void watchProgress(const GameState& state, Enemy& enemy, Vec2 wanted, Vec2 steered) {
     enemy.stuck++;
     if (enemy.stuck % balance::kZombieStuckCheckSteps != 0) return;
-    const Vec2 playerPos = state.player.pos;
+    const Vec2 playerPos = targetOf(state, enemy).pos;
     const Vec2 toPlayer = playerPos - enemy.pos;
     const float gap = length(toPlayer);
     const bool closer = distance(enemy.stuckFrom, playerPos) - gap >= balance::kZombieProgressMargin;
@@ -161,10 +182,11 @@ void watchProgress(const GameState& state, Enemy& enemy, Vec2 wanted, Vec2 steer
 // The velocity that goes around a car.
 Vec2 aroundCars(const GameState& state, Enemy& enemy, Vec2 wanted) {
     if (!goesAroundCars(enemy)) return wanted;
-    // Heading for the player, the way around is judged by the player's position. A Spitter
+    // Heading for its target, the way around is judged by the target's position. A Spitter
     // backing off or circling is heading somewhere else, so it is judged by its own heading.
-    const Vec2 toPlayer = state.player.pos - enemy.pos;
-    const Vec2 target = dot(wanted, toPlayer) > 0.0f ? state.player.pos : enemy.pos + wanted;
+    const Vec2 targetPos = targetOf(state, enemy).pos;
+    const Vec2 toPlayer = targetPos - enemy.pos;
+    const Vec2 target = dot(wanted, toPlayer) > 0.0f ? targetPos : enemy.pos + wanted;
     const Vec2 steered = obstacles::steerAround(state, enemy.pos, carRadius(enemy), wanted, target, enemy.id);
     watchProgress(state, enemy, wanted, steered);
     return steered;
@@ -172,7 +194,6 @@ Vec2 aroundCars(const GameState& state, Enemy& enemy, Vec2 wanted) {
 
 // Runs after everything that moves zombies in a step, so nothing can leave one inside a car.
 void settleAgainstCars(GameState& state) {
-    const Vec2 playerPos = state.player.pos;
     for (int i = 0; i < state.enemies.count; ++i) {
         Enemy& enemy = state.enemies[i];
         if (ignoresCars(enemy)) {
@@ -194,7 +215,8 @@ void settleAgainstCars(GameState& state) {
         enemy.stuckQueued = 0;
         enemy.stuckFrom = enemy.pos;
         Vec2 spot;
-        if (!obstacles::rescueSpot(state, enemy.pos, carRadius(enemy), playerPos, enemy.radius + balance::kPlayerRadius, &spot)) continue;
+        const Vec2 targetPos = targetOf(state, enemy).pos;
+        if (!obstacles::rescueSpot(state, enemy.pos, carRadius(enemy), targetPos, enemy.radius + balance::kPlayerRadius, &spot)) continue;
         enemy.pos = spot;
         enemy.prevPos = spot;
         enemy.stuckFrom = spot;
@@ -204,8 +226,14 @@ void settleAgainstCars(GameState& state) {
 
 }  // namespace
 
+// How far a point is from the nearest standing player, squared. With one player, from them.
+static float teamGapSq(const GameState& state, Vec2 pos) {
+    const int nearest = nearestStanding(state, pos);
+    return distanceSq(pos, state.players[nearest < 0 ? 0 : nearest].pos);
+}
+
 // When the pool is full, an elite or the boss still has to arrive: an elite carries a
-// guaranteed reward and the boss ends the run. So the ordinary zombie farthest from the
+// guaranteed reward and the boss ends the run. So the ordinary zombie farthest from every
 // player is removed to make room. It is the one least likely to matter, and its removal is
 // not a kill, so it gives no drop and no count. Equal distances go to the lower id, so the
 // choice never depends on where the pool happens to have put anyone. This is one pass over
@@ -216,7 +244,7 @@ static bool makeRoomFor(GameState& state) {
     for (int i = 0; i < state.enemies.count; ++i) {
         const Enemy& candidate = state.enemies[i];
         if (candidate.elite || candidate.type == EnemyType::Boss) continue;
-        const float distSq = distanceSq(candidate.pos, state.player.pos);
+        const float distSq = teamGapSq(state, candidate.pos);
         if (distSq > victimDistSq || (distSq == victimDistSq && candidate.id < state.enemies[victim].id)) {
             victim = i;
             victimDistSq = distSq;
@@ -250,6 +278,14 @@ Enemy* spawn(GameState& state, EnemyType type, Vec2 pos, bool elite) {
     enemy->radius = stats.radius * (elite ? balance::kElite_RadiusMult : 1.0f);
     enemy->speed = stats.speed;
     enemy->contactDamage = stats.contactDamage * damageScale * (elite ? balance::kElite_DamageMult : 1.0f);
+    // Co-op: tougher zombies for a bigger team, if the balance table asks for it. The boss gets
+    // its share in waves::bossHpForBuild. One player is never scaled, not even by 1.
+    if (state.isCoop() && !isBoss) {
+        enemy->maxHp *= balance::coopZombieHp(state.playerCount());
+        enemy->hp = enemy->maxHp;
+    }
+    const int nearest = nearestStanding(state, pos);
+    enemy->target = static_cast<uint8_t>(nearest < 0 ? 0 : nearest);
     // The boss waits one full interval before its first attack, so it can walk in.
     // Its attack cycle starts from the top, with the move set of the run's difficulty.
     if (isBoss) {
@@ -267,13 +303,14 @@ Enemy* spawn(GameState& state, EnemyType type, Vec2 pos, bool elite) {
 void update(GameState& state) {
     state.enemyGrid.build(state.enemies.items, state.enemies.count);
     const float knockDecay = std::max(0.0f, 1.0f - balance::kKnockbackDecayPerSecond * kDt);
-    const Vec2 playerPos = state.player.pos;
+    const int players = state.playerCount();
 
     for (int i = 0; i < state.enemies.count; ++i) {
         Enemy& enemy = state.enemies[i];
         enemy.prevPos = enemy.pos;
         enemy.flash = std::max(0.0f, enemy.flash - kDt);
         enemy.bladeCooldown = std::max(0.0f, enemy.bladeCooldown - kDt);
+        chooseTarget(state, enemy);
 
         // The crowd moves around the boss. It must not be held back by the zombies it walks through.
         const Vec2 push = enemy.type == EnemyType::Boss ? Vec2{} : separation(state, enemy, i);
@@ -282,9 +319,11 @@ void update(GameState& state) {
         enemy.knock *= knockDecay;
         recycleIfFar(state, enemy);
 
+        // A zombie hurts every player it touches, not only the one it chases. A downed player
+        // is ignored: player::damage can't hurt someone at 0 HP.
         const float touch = enemy.radius + balance::kPlayerRadius;
-        if (distanceSq(enemy.pos, playerPos) < touch * touch) {
-            player::damage(state, enemy.contactDamage);
+        for (int slot = 0; slot < players; ++slot) {
+            if (distanceSq(enemy.pos, state.players[slot].pos) < touch * touch) player::damage(state, slot, enemy.contactDamage);
         }
     }
     pushCrowdOutOfWideEnemies(state);
@@ -295,15 +334,20 @@ void update(GameState& state) {
 }
 
 void updateBullets(GameState& state) {
-    const Vec2 playerPos = state.player.pos;
+    const int players = state.playerCount();
     for (int i = state.enemyBullets.count - 1; i >= 0; --i) {
         EnemyBullet& bullet = state.enemyBullets[i];
         bullet.prevPos = bullet.pos;
         bullet.pos += bullet.vel * kDt;
         bullet.life -= kDt;
+        // The first standing player it touches takes it, in slot order. It flies over a downed one.
         const float touch = bullet.radius + balance::kPlayerRadius;
-        if (distanceSq(bullet.pos, playerPos) < touch * touch) {
-            player::damage(state, bullet.damage);
+        int struck = -1;
+        for (int slot = 0; slot < players && struck < 0; ++slot) {
+            if (standing(state, slot) && distanceSq(bullet.pos, state.players[slot].pos) < touch * touch) struck = slot;
+        }
+        if (struck >= 0) {
+            player::damage(state, struck, bullet.damage);
             state.enemyBullets.removeAt(i);
         } else if (bullet.life <= 0.0f) {
             state.enemyBullets.removeAt(i);
@@ -324,15 +368,19 @@ void fireBullet(GameState& state, Vec2 pos, Vec2 velocity, float damage) {
 
 namespace {
 
-// Shared by hit() and damageNoCredit(). A credited hit adds to the weapon's damage total.
-void applyDamage(GameState& state, int enemyIndex, float amount, bool credited, WeaponId source, Vec2 knockback) {
+// Shared by hit() and damageNoCredit(). A credited hit adds to the weapon's damage total,
+// for the team and for the player who owns the weapon.
+void applyDamage(GameState& state, int enemyIndex, float amount, bool credited, WeaponId source, int owner, Vec2 knockback) {
     Enemy& enemy = state.enemies[enemyIndex];
     if (enemy.hp <= 0.0f) return;
     const float dealt = std::min(enemy.hp, amount);
     enemy.hp -= amount;
     enemy.flash = balance::kHitFlashSeconds;
     enemy.knock += knockback * balance::kEnemyStats[static_cast<int>(enemy.type)].knockbackTaken;
-    if (credited) state.run.damageByWeapon[static_cast<int>(source)] += dealt;
+    if (credited) {
+        state.run.damageByWeapon[static_cast<int>(source)] += dealt;
+        state.players[owner].damageByWeapon[static_cast<int>(source)] += dealt;
+    }
     // WeaponId::Count in the event means no weapon was behind the hit.
     pushEvent(state, EventType::EnemyHit, enemy.pos, dealt, static_cast<uint8_t>(credited ? source : WeaponId::Count),
               enemy.elite);
@@ -350,12 +398,12 @@ void spawnCrawlers(GameState& state, const Enemy& bloater) {
 
 }  // namespace
 
-void hit(GameState& state, int enemyIndex, float amount, WeaponId source, Vec2 knockback) {
-    applyDamage(state, enemyIndex, amount, true, source, knockback);
+void hit(GameState& state, int enemyIndex, float amount, WeaponId source, int owner, Vec2 knockback) {
+    applyDamage(state, enemyIndex, amount, true, source, owner, knockback);
 }
 
 void damageNoCredit(GameState& state, int enemyIndex, float amount) {
-    applyDamage(state, enemyIndex, amount, false, WeaponId::Rifle, Vec2{});
+    applyDamage(state, enemyIndex, amount, false, WeaponId::Rifle, 0, Vec2{});
 }
 
 void removeDead(GameState& state) {

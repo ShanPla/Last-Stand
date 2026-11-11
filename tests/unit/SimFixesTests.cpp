@@ -36,7 +36,7 @@ const Enemy* findBoss(const GameState& state) {
 
 // Puts a boss with almost no HP on top of the player, so the rifle's first shot kills it.
 Enemy* addDyingBossOnPlayer(GameState& state) {
-    Enemy* boss = enemies::spawn(state, EnemyType::Boss, state.player.pos + Vec2{10.0f, 0.0f}, false);
+    Enemy* boss = enemies::spawn(state, EnemyType::Boss, state.firstPlayer().pos + Vec2{10.0f, 0.0f}, false);
     REQUIRE(boss != nullptr);
     boss->hp = 1.0f;
     return boss;
@@ -48,29 +48,29 @@ Enemy* addDyingBossOnPlayer(GameState& state) {
 
 TEST_CASE("a heal pickup can't undo a lethal hit from the same step") {
     auto state = makeRun();
-    state->player.hp = 1.0f;
-    REQUIRE(enemies::spawn(*state, EnemyType::Walker, state->player.pos + Vec2{5.0f, 0.0f}, false));
-    pickups::spawnPickup(*state, state->player.pos, PickupType::Heal);
+    state->firstPlayer().hp = 1.0f;
+    REQUIRE(enemies::spawn(*state, EnemyType::Walker, state->firstPlayer().pos + Vec2{5.0f, 0.0f}, false));
+    pickups::spawnPickup(*state, state->firstPlayer().pos, PickupType::Heal);
 
     sim::step(*state, InputFrame{});
 
     CHECK(state->pickups.count == 0);  // It was picked up, so the heal really was tried.
-    CHECK(state->player.hp <= 0.0f);
+    CHECK(state->firstPlayer().hp <= 0.0f);
     CHECK(state->run.phase == RunPhase::Dead);
     CHECK(countEvents(*state, EventType::PlayerDied) == 1);
 }
 
 TEST_CASE("a heal pickup still heals a living player") {
     auto state = makeRun();
-    state->player.hp = 50.0f;
-    pickups::spawnPickup(*state, state->player.pos, PickupType::Heal);
+    state->firstPlayer().hp = 50.0f;
+    pickups::spawnPickup(*state, state->firstPlayer().pos, PickupType::Heal);
     sim::step(*state, InputFrame{});
-    CHECK(state->player.hp == doctest::Approx(50.0f + state->player.maxHp * balance::kHealPickupFraction));
+    CHECK(state->firstPlayer().hp == doctest::Approx(50.0f + state->firstPlayer().maxHp * balance::kHealPickupFraction));
 }
 
 TEST_CASE("a player killed in the step the boss dies loses the run") {
     auto state = makeRun();
-    state->player.hp = 1.0f;
+    state->firstPlayer().hp = 1.0f;
     addDyingBossOnPlayer(*state);
 
     sim::step(*state, InputFrame{});
@@ -87,7 +87,7 @@ TEST_CASE("a player who survives the boss's last step wins") {
 
     sim::step(*state, InputFrame{});
 
-    CHECK(state->player.hp > 0.0f);
+    CHECK(state->firstPlayer().hp > 0.0f);
     CHECK(state->run.phase == RunPhase::Won);
     CHECK(countEvents(*state, EventType::PlayerDied) == 0);
 }
@@ -98,8 +98,8 @@ TEST_CASE("a card and a reroll in one step take the card on screen and keep the 
     // Two runs that differ only in the reroll flag must end exactly alike.
     auto cardOnly = makeRun();
     auto both = makeRun();
-    upgrades::addXp(*cardOnly, balance::xpForLevel(1));
-    upgrades::addXp(*both, balance::xpForLevel(1));
+    upgrades::addXp(*cardOnly, 0, balance::xpForLevel(1));
+    upgrades::addXp(*both, 0, balance::xpForLevel(1));
     sim::step(*cardOnly, InputFrame{});
     sim::step(*both, InputFrame{});
     REQUIRE(both->run.phase == RunPhase::LevelUp);
@@ -112,7 +112,7 @@ TEST_CASE("a card and a reroll in one step take the card on screen and keep the 
     sim::step(*both, pickAndReroll);
 
     CHECK(both->run.phase == RunPhase::Playing);
-    CHECK(both->run.rerollsLeft == balance::kStartingRerolls);
+    CHECK(both->firstPlayer().rerollsLeft == balance::kStartingRerolls);
     CHECK(sim::stateHash(*both) == sim::stateHash(*cardOnly));
 }
 
@@ -161,7 +161,7 @@ Vec2 pushOnWalker(Vec2 walkerPos, EnemyType neighbourType, Vec2 neighbourPos, bo
     Vec2 result[2];
     for (int withNeighbour = 0; withNeighbour < 2; ++withNeighbour) {
         auto state = makeRun();
-        state->player.pos = Vec2{300.0f, 300.0f};
+        state->firstPlayer().pos = Vec2{300.0f, 300.0f};
         REQUIRE(enemies::spawn(*state, EnemyType::Walker, walkerPos, false));
         if (withNeighbour == 1) {
             REQUIRE(enemies::spawn(*state, neighbourType, neighbourPos, elite));
@@ -210,7 +210,7 @@ TEST_CASE("a wide neighbour that an enemy can see pushes it only once") {
 TEST_CASE("wide enemies push each other") {
     const Vec2 push = [] {
         auto state = makeRun();
-        state->player.pos = Vec2{600.0f, 600.0f};
+        state->firstPlayer().pos = Vec2{600.0f, 600.0f};
         REQUIRE(enemies::spawn(*state, EnemyType::Brute, Vec2{33.0f, 10.0f}, false));
         const float startX = state->enemies[0].pos.x;
         REQUIRE(enemies::spawn(*state, EnemyType::Brute, Vec2{75.0f, 10.0f}, false));
@@ -225,7 +225,7 @@ TEST_CASE("the crowd doesn't push the boss") {
     Vec2 bossMove[2];
     for (int withCrowd = 0; withCrowd < 2; ++withCrowd) {
         auto state = makeRun();
-        state->player.pos = Vec2{600.0f, 600.0f};
+        state->firstPlayer().pos = Vec2{600.0f, 600.0f};
         REQUIRE(enemies::spawn(*state, EnemyType::Boss, Vec2{0.0f, 0.0f}, false));
         if (withCrowd == 1) {
             REQUIRE(enemies::spawn(*state, EnemyType::Brute, Vec2{40.0f, 0.0f}, true));
@@ -271,7 +271,7 @@ TEST_CASE("collecting a pickup doesn't change which one is the oldest") {
     auto state = makeRun();
     for (int i = 0; i < kMaxPickups; ++i) dropNumbered(*state, i);
     // Only number 3 is left within reach, so the player collects it from mid-pool.
-    state->player.pos = Vec2{5003.0f, 5000.0f};
+    state->firstPlayer().pos = Vec2{5003.0f, 5000.0f};
     for (int i = 0; i < state->pickups.count; ++i) {
         if (i != 3) state->pickups[i].pos.y = 9000.0f;
     }
@@ -323,12 +323,12 @@ namespace {
 // A bomb at the player's feet, and more zombies around than the event list has slots.
 std::unique_ptr<GameState> bombInHugeCrowd() {
     auto state = makeRun();
-    state->player.weaponCount = 0;  // So only the bomb makes hits.
+    state->firstPlayer().weaponCount = 0;  // So only the bomb makes hits.
     for (int i = 0; i < kMaxEvents + 300; ++i) {
         const Vec2 pos = fromAngle(static_cast<float>(i) * 0.7f) * (200.0f + static_cast<float>(i % 400));
         REQUIRE(enemies::spawn(*state, EnemyType::Walker, pos, false));
     }
-    pickups::spawnPickup(*state, state->player.pos, PickupType::Bomb);
+    pickups::spawnPickup(*state, state->firstPlayer().pos, PickupType::Bomb);
     return state;
 }
 
@@ -337,7 +337,7 @@ std::unique_ptr<GameState> bombInHugeCrowd() {
 TEST_CASE("a bomb in a huge crowd keeps its blast, pickup, kill and level-up events") {
     auto state = bombInHugeCrowd();
     // A gem at the player's feet brings a level-up in the same step.
-    pickups::dropGem(*state, state->player.pos, balance::xpForLevel(1));
+    pickups::dropGem(*state, state->firstPlayer().pos, balance::xpForLevel(1));
 
     sim::step(*state, InputFrame{});
 
@@ -356,10 +356,10 @@ TEST_CASE("a death later in a frame that opened with a bomb still sends its even
 
     // That many kills overflow the gem pool into a level-up. Skip it to carry on playing.
     state->run.phase = RunPhase::Playing;
-    state->run.pendingLevels = 0;
-    state->player.hp = 1.0f;
-    state->player.invulnerable = 0.0f;
-    REQUIRE(enemies::spawn(*state, EnemyType::Walker, state->player.pos + Vec2{5.0f, 0.0f}, false));
+    state->firstPlayer().pendingLevels = 0;
+    state->firstPlayer().hp = 1.0f;
+    state->firstPlayer().invulnerable = 0.0f;
+    REQUIRE(enemies::spawn(*state, EnemyType::Walker, state->firstPlayer().pos + Vec2{5.0f, 0.0f}, false));
     sim::step(*state, InputFrame{});
 
     REQUIRE(state->run.phase == RunPhase::Dead);
@@ -376,10 +376,10 @@ TEST_CASE("the fastest possible player can't outrun the boss in any phase") {
         state->run.nextEliteEvent = 1000;
         // Speed passive at its top level and no weapons, so nothing kills the boss or
         // gives XP that would stop the run for a level-up.
-        state->player.weaponCount = 0;
-        state->player.passives[0] = PassiveSlot{PassiveId::MoveSpeed, kMaxLevelPerItem};
-        state->player.passiveCount = 1;
-        upgrades::recomputeStats(*state);
+        state->firstPlayer().weaponCount = 0;
+        state->firstPlayer().passives[0] = PassiveSlot{PassiveId::MoveSpeed, kMaxLevelPerItem};
+        state->firstPlayer().passiveCount = 1;
+        upgrades::recomputeStats(*state, 0);
         sim::step(*state, InputFrame{});
         REQUIRE(findBoss(*state) != nullptr);
 
@@ -392,7 +392,7 @@ TEST_CASE("the fastest possible player can't outrun the boss in any phase") {
         float widestLate = 0.0f;
         int stepsInRange = 0;
         for (int i = 0; i < steps; ++i) {
-            state->player.hp = state->player.maxHp;
+            state->firstPlayer().hp = state->firstPlayer().maxHp;
             // Holding the boss's HP keeps it in the phase under test. Phase only goes up.
             for (Enemy& enemy : state->enemies) {
                 if (enemy.type == EnemyType::Boss) enemy.hp = enemy.maxHp * hpFraction;
@@ -401,7 +401,7 @@ TEST_CASE("the fastest possible player can't outrun the boss in any phase") {
             state->events.clear();
             const Enemy* boss = findBoss(*state);
             REQUIRE(boss != nullptr);
-            const float gap = distance(boss->pos, state->player.pos);
+            const float gap = distance(boss->pos, state->firstPlayer().pos);
             if (gap < balance::kWeaponRange) stepsInRange++;
             if (i >= steps / 6) {  // The boss's walk in from its spawn point doesn't count.
                 float& widest = i < steps * 7 / 12 ? widestEarly : widestLate;
@@ -423,9 +423,9 @@ TEST_CASE("the numbers moved to the balance file are the ones in use") {
     SUBCASE("player hit flash") {
         auto state = makeRun();
         pickups::spawnPickup(*state, Vec2{9000.0f, 0.0f}, PickupType::Heal);
-        REQUIRE(enemies::spawn(*state, EnemyType::Walker, state->player.pos + Vec2{5.0f, 0.0f}, false));
+        REQUIRE(enemies::spawn(*state, EnemyType::Walker, state->firstPlayer().pos + Vec2{5.0f, 0.0f}, false));
         enemies::update(*state);
-        CHECK(state->player.hitFlash == doctest::Approx(balance::kPlayerHitFlashSeconds));
+        CHECK(state->firstPlayer().hitFlash == doctest::Approx(balance::kPlayerHitFlashSeconds));
     }
     SUBCASE("elite bloater crawlers") {
         auto state = makeRun();
@@ -438,11 +438,11 @@ TEST_CASE("the numbers moved to the balance file are the ones in use") {
     SUBCASE("gem collect distance") {
         const float edge = balance::kPlayerRadius + balance::kGemCollectMargin;
         auto state = makeRun();
-        pickups::dropGem(*state, state->player.pos + Vec2{edge + 1.0f, 0.0f}, 1);
+        pickups::dropGem(*state, state->firstPlayer().pos + Vec2{edge + 1.0f, 0.0f}, 1);
         pickups::update(*state);
         CHECK(state->gems.count == 1);
         auto inside = makeRun();
-        pickups::dropGem(*inside, inside->player.pos + Vec2{edge - 1.0f, 0.0f}, 1);
+        pickups::dropGem(*inside, inside->firstPlayer().pos + Vec2{edge - 1.0f, 0.0f}, 1);
         pickups::update(*inside);
         CHECK(inside->gems.count == 0);
     }

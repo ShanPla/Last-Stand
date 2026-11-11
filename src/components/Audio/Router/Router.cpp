@@ -69,6 +69,9 @@ bool Router::route(const SimEvent& event, float now, PlayRequest& out) {
         case EventType::PlayerHit: return start(SfxId::PlayerHit, SfxId::PlayerHit, now, 0.75f + std::min(0.25f, event.value / 80.0f), 0.03f, out);
         case EventType::PlayerDied: return start(SfxId::PlayerDied, SfxId::PlayerDied, now, 1.0f, 0.0f, out);
         case EventType::ZombieUnstuck: return false;  // Only the balance tool counts these.
+        // Co-op only. They have no sounds of their own yet, so they stay quiet.
+        case EventType::PlayerDowned:
+        case EventType::PlayerRevived: return false;
         case EventType::CarCrushed: {
             // Louder the closer it is to the player, and silent when it is far out of sight.
             const float loudness = 1.0f - event.value / balance::kCarCrushHeardWithin;

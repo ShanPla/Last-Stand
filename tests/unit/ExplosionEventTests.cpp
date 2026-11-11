@@ -10,7 +10,7 @@ using namespace ls;
 TEST_CASE("an explosion that hits nothing still sends its event") {
     auto state = std::make_unique<GameState>();
     sim::newRun(*state, 3);
-    state->player.weaponCount = 0;
+    state->firstPlayer().weaponCount = 0;
     Projectile* grenade = state->projectiles.add();
     REQUIRE(grenade != nullptr);
     grenade->kind = ProjectileKind::Grenade;

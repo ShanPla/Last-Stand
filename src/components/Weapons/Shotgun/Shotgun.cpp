@@ -7,14 +7,14 @@
 
 namespace ls::weapons {
 
-bool fireShotgun(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
-    const Vec2 origin = state.player.pos;
+bool fireShotgun(GameState& state, int owner, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
+    const Vec2 origin = state.players[owner].pos;
     // Pellets die quickly, so a target past their reach is not worth a shell.
     const float reach = stats.speed * stats.duration * balance::kShortRangeSlack;
     const int target = enemies::nearest(state, origin, reach);
     if (target < 0) return false;
 
-    const Vec2 aim = normalizedOr(state.enemies[target].pos - origin, state.player.facing);
+    const Vec2 aim = normalizedOr(state.enemies[target].pos - origin, state.players[owner].facing);
     const float baseAngle = std::atan2(aim.y, aim.x);
     // Pellets are spread evenly from one edge of the cone to the other.
     const float step = stats.count > 1 ? balance::kShotgunConeRadians / static_cast<float>(stats.count - 1) : 0.0f;
@@ -33,8 +33,9 @@ bool fireShotgun(GameState& state, const WeaponSlot& slot, const balance::Weapon
         shot->kind = ProjectileKind::Bullet;
         shot->source = slot.id;
         shot->evolved = slot.evolved;
+        shot->owner = static_cast<uint8_t>(owner);
     }
-    markFired(state, slot, aim);
+    markFired(state, owner, slot, aim);
     return true;
 }
 

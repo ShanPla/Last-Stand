@@ -7,13 +7,13 @@
 
 namespace ls::weapons {
 
-bool fireFlamethrower(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
-    const Vec2 origin = state.player.pos;
+bool fireFlamethrower(GameState& state, int owner, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
+    const Vec2 origin = state.players[owner].pos;
     // A flame dies after speed * duration, so there is no point lighting up farther targets.
     const int target = enemies::nearest(state, origin, stats.speed * stats.duration);
     if (target < 0) return false;
 
-    const Vec2 aim = normalizedOr(state.enemies[target].pos - origin, state.player.facing);
+    const Vec2 aim = normalizedOr(state.enemies[target].pos - origin, state.players[owner].facing);
     const float baseAngle = std::atan2(aim.y, aim.x);
     const float halfCone = 0.5f * balance::kFlameConeRadians;
     // Evolved flames are wider, since area grows the flame radius.
@@ -32,8 +32,9 @@ bool fireFlamethrower(GameState& state, const WeaponSlot& slot, const balance::W
         shot->kind = ProjectileKind::Flame;
         shot->source = slot.id;
         shot->evolved = slot.evolved;
+        shot->owner = static_cast<uint8_t>(owner);
     }
-    markFired(state, slot, aim);
+    markFired(state, owner, slot, aim);
     return true;
 }
 

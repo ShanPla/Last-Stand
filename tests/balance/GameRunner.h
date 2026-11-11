@@ -22,6 +22,9 @@ void setGameMap(maps::MapId map);
 maps::MapId gameMap();
 // Sets Story or Endless for every game played after this call.
 void setGameMode(RunMode mode);
+// Sets how many players every game after this call has, each played by a bot of the same profile.
+void setGamePlayers(int players);
+int gamePlayers();
 
 RunResult playGame(const BotProfile& profile, uint64_t seed, int favoriteWeapon = -1, std::FILE* trace = nullptr);
 

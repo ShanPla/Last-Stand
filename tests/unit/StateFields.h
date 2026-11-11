@@ -15,8 +15,12 @@
 // not grow. Padding is only the gap the compiler leaves for alignment.
 //
 // GameState::obstacleCache is not listed on purpose: it is worked out only from run.map,
-// run.seed, player.pos and run.crushed, which are all listed and hashed, so it can't change a
-// later step on its own. Unit tests check that it always equals a fresh computation.
+// run.seed, each player's pos and run.crushed, which are all listed and hashed, so it can't
+// change a later step on its own. Unit tests check that it always equals a fresh computation.
+//
+// Co-op fields are only hashed in a co-op run, so that a single-player run keeps the hashes it
+// had before co-op. makeBusyState is a two-player run for that reason, and a test checks that
+// a single-player run's hash really doesn't see them.
 
 #include "components/Enemies/Enemies.h"
 #include "components/Pickups/Pickups.h"
@@ -103,19 +107,20 @@ inline const StructInfo& rngInfo() {
 }
 
 inline const StructInfo& enemyInfo() {
-    static const StructInfo info{"Enemy", sizeof(Enemy), 2,
+    static const StructInfo info{"Enemy", sizeof(Enemy), 1,
         {LS_FLT(Enemy, pos), LS_DRAW(Enemy, prevPos), LS_FLT(Enemy, knock), LS_FLT(Enemy, dir), LS_FLT(Enemy, stuckFrom), LS_FLT(Enemy, hp),
          LS_FLT(Enemy, maxHp), LS_FLT(Enemy, radius), LS_FLT(Enemy, speed), LS_FLT(Enemy, contactDamage),
          LS_FLT(Enemy, timer), LS_DRAW(Enemy, flash), LS_FLT(Enemy, bladeCooldown), LS_NUM(Enemy, id), LS_NUM(Enemy, stuck), LS_NUM(Enemy, stuckQueued),
-         LS_NUM(Enemy, type), LS_NUM(Enemy, state), LS_NUM(Enemy, elite)}, &untouchedBytes<Enemy>};
+         LS_NUM(Enemy, type), LS_NUM(Enemy, state), LS_NUM(Enemy, elite), LS_NUM(Enemy, target)}, &untouchedBytes<Enemy>};
     return info;
 }
 
 inline const StructInfo& projectileInfo() {
-    static const StructInfo info{"Projectile", sizeof(Projectile), 3,
+    static const StructInfo info{"Projectile", sizeof(Projectile), 2,
         {LS_FLT(Projectile, pos), LS_DRAW(Projectile, prevPos), LS_FLT(Projectile, vel), LS_FLT(Projectile, damage),
          LS_FLT(Projectile, radius), LS_FLT(Projectile, life), LS_FLT(Projectile, area), LS_NUM(Projectile, lastHitId),
-         LS_NUM(Projectile, pierce), LS_NUM(Projectile, kind), LS_NUM(Projectile, source), LS_NUM(Projectile, evolved)}, &untouchedBytes<Projectile>};
+         LS_NUM(Projectile, pierce), LS_NUM(Projectile, kind), LS_NUM(Projectile, source), LS_NUM(Projectile, evolved),
+         LS_NUM(Projectile, owner)}, &untouchedBytes<Projectile>};
     return info;
 }
 
@@ -127,10 +132,10 @@ inline const StructInfo& enemyBulletInfo() {
 }
 
 inline const StructInfo& zoneInfo() {
-    static const StructInfo info{"Zone", sizeof(Zone), 3,
+    static const StructInfo info{"Zone", sizeof(Zone), 2,
         {LS_FLT(Zone, a), LS_FLT(Zone, b), LS_FLT(Zone, radius), LS_FLT(Zone, prevRadius), LS_FLT(Zone, maxRadius),
          LS_FLT(Zone, life), LS_FLT(Zone, maxLife), LS_FLT(Zone, damage), LS_NUM(Zone, kind), LS_NUM(Zone, source),
-         LS_NUM(Zone, evolved), LS_NUM(Zone, hostile), LS_NUM(Zone, applied)}, &untouchedBytes<Zone>};
+         LS_NUM(Zone, evolved), LS_NUM(Zone, hostile), LS_NUM(Zone, applied), LS_NUM(Zone, owner)}, &untouchedBytes<Zone>};
     return info;
 }
 
@@ -177,22 +182,24 @@ inline const StructInfo& carIdInfo() {
 }
 
 inline const StructInfo& playerInfo() {
-    static const StructInfo info{"Player", sizeof(Player), 0,
+    static const StructInfo info{"Player", sizeof(Player), 2,
         {LS_FLT(Player, pos), LS_DRAW(Player, prevPos), LS_FLT(Player, facing), LS_FLT(Player, aim), LS_FLT(Player, hp),
          LS_FLT(Player, maxHp), LS_FLT(Player, invulnerable), LS_DRAW(Player, hitFlash), LS_FLT(Player, dashDir),
          LS_FLT(Player, dashLeft), LS_FLT(Player, dashCooldown), LS_FLT(Player, dashInvulnerable), LS_NUM(Player, level),
          LS_NUM(Player, xp), LS_NUM(Player, xpToNext), LS_NEST(Player, stats), LS_NEST(Player, weapons),
-         LS_COUNT(Player, weaponCount), LS_NEST(Player, passives), LS_COUNT(Player, passiveCount)}, &untouchedBytes<Player>};
+         LS_COUNT(Player, weaponCount), LS_NEST(Player, passives), LS_COUNT(Player, passiveCount), LS_NUM(Player, rerollsLeft),
+         LS_NUM(Player, pendingLevels), LS_NEST(Player, offers), LS_NUM(Player, offerCount), LS_FLT(Player, bladeAngle),
+         LS_FLT(Player, damageByWeapon), LS_FLT(Player, reviveProgress), LS_FLT(Player, cardShield), LS_NUM(Player, downed),
+         LS_NUM(Player, cardsOpen)}, &untouchedBytes<Player>};
     return info;
 }
 
 inline const StructInfo& runStateInfo() {
     static const StructInfo info{"RunState", sizeof(RunState), 8,
         {LS_NUM(RunState, phase), LS_NUM(RunState, difficulty), LS_NUM(RunState, mode), LS_NUM(RunState, map), LS_NUM(RunState, seed), LS_NUM(RunState, tick),
-         LS_NUM(RunState, nextId), LS_NUM(RunState, kills), LS_NUM(RunState, rerollsLeft), LS_NUM(RunState, pendingLevels),
-         LS_NEST(RunState, offers), LS_NUM(RunState, offerCount), LS_FLT(RunState, damageByWeapon),
+         LS_NUM(RunState, nextId), LS_COUNT(RunState, playerCount), LS_NUM(RunState, kills), LS_FLT(RunState, damageByWeapon),
          LS_FLT(RunState, waveAccumulators), LS_NUM(RunState, nextEliteEvent), LS_NUM(RunState, nextPickupDropKills),
-         LS_FLT(RunState, bladeAngle), LS_NUM(RunState, bossSpawned), LS_NUM(RunState, bossPhase),
+         LS_NUM(RunState, bossSpawned), LS_NUM(RunState, bossPhase),
          LS_NUM(RunState, bossStep), LS_NUM(RunState, bossRepeat),
          LS_FLT(RunState, bossHpFraction), LS_NUM(RunState, bossesKilled), LS_NUM(RunState, lastBossKillTick),
          LS_NUM(RunState, debugEnemyTarget), LS_NUM(RunState, debugProjectileTarget),
@@ -215,8 +222,9 @@ inline std::string labelOf(const char* name, int index) {
 }
 
 // Calls fn(info, firstByte, name, index) once for every live struct in the state: the run,
-// the generator, the player and its stats, held weapons and passives, the offered cards,
-// and the items of every pool. The index is -1 for a struct that is not in an array. Use
+// the generator, each player in the run with their stats, held weapons and passives and
+// offered cards, and the items of every pool. The index is -1 for a struct that is not in an
+// array, and for a player's parts it is the player's slot. Use
 // labelOf to turn the name and index into text, only when a message is needed, because
 // building a string for every zombie every step would be slow.
 // With everyElement false only the first and last item of each pool are visited, which is
@@ -229,12 +237,22 @@ void visitStructs(State& s, bool everyElement, Fn&& fn) {
 
     fn(rngInfo(), bytesOf(s.rng), "rng", -1);
     fn(runStateInfo(), bytesOf(s.run), "run", -1);
-    for (int i = 0; i < kOffersPerLevel; ++i) fn(cardInfo(), bytesOf(s.run.offers[i]), "run.offers", i);
     for (int i = 0; i < s.run.crushedCount; ++i) fn(carIdInfo(), bytesOf(s.run.crushed[i]), "run.crushed", i);
-    fn(playerInfo(), bytesOf(s.player), "player", -1);
-    fn(playerStatsInfo(), bytesOf(s.player.stats), "player.stats", -1);
-    for (int i = 0; i < s.player.weaponCount; ++i) fn(weaponSlotInfo(), bytesOf(s.player.weapons[i]), "player.weapons", i);
-    for (int i = 0; i < s.player.passiveCount; ++i) fn(passiveSlotInfo(), bytesOf(s.player.passives[i]), "player.passives", i);
+    // The counts are read once, before fn can change them, so a flipped count never changes
+    // which structs are visited.
+    // A player's weapons, passives and cards are numbered slot * 10 + index, so a message
+    // says whose they are: players.weapons[12] is the third weapon of the player in slot 1.
+    const int playerCount = s.run.playerCount;
+    for (int p = 0; p < playerCount; ++p) {
+        auto& player = s.players[p];
+        const int weaponCount = player.weaponCount;
+        const int passiveCount = player.passiveCount;
+        fn(playerInfo(), bytesOf(player), "players", p);
+        fn(playerStatsInfo(), bytesOf(player.stats), "players.stats", p);
+        for (int i = 0; i < weaponCount; ++i) fn(weaponSlotInfo(), bytesOf(player.weapons[i]), "players.weapons", p * 10 + i);
+        for (int i = 0; i < passiveCount; ++i) fn(passiveSlotInfo(), bytesOf(player.passives[i]), "players.passives", p * 10 + i);
+        for (int i = 0; i < kOffersPerLevel; ++i) fn(cardInfo(), bytesOf(player.offers[i]), "players.offers", p * 10 + i);
+    }
 
     const auto visitPool = [&](auto& pool, const StructInfo& info, const char* name) {
         for (int i = 0; i < pool.count; ++i) {
@@ -250,25 +268,35 @@ void visitStructs(State& s, bool everyElement, Fn&& fn) {
     visitPool(s.pickups, pickupInfo(), "pickups");
 }
 
-// A run 20 seconds in, with at least one item of every kind in every pool, two weapons
-// and one passive. Each field then holds a real value, so a change to it shows.
-inline std::unique_ptr<GameState> makeBusyState(uint64_t seed = 31) {
+// A run 20 seconds in, with at least one item of every kind in every pool, and for each
+// player two weapons and one passive. Each field then holds a real value, so a change to it
+// shows. With players above 1 it is a co-op run, whose hash covers the co-op fields too.
+inline std::unique_ptr<GameState> makeBusyState(uint64_t seed = 31, int players = 2) {
     auto state = std::make_unique<GameState>();
-    sim::newRun(*state, seed);
+    sim::newRun(*state, seed, Difficulty::Normal, maps::kDefaultMap, RunMode::Story, players);
     for (int i = 0; i < 60 * 20; ++i) {
-        InputFrame input;
-        const float angle = static_cast<float>(state->run.tick) * 0.01f;
-        input.moveX = std::cos(angle);
-        input.moveY = std::sin(angle);
-        if (state->run.phase == RunPhase::LevelUp) input.chooseCard = 0;
-        sim::step(*state, input);
+        InputFrame inputs[kMaxPlayers];
+        for (int p = 0; p < players; ++p) {
+            const float angle = static_cast<float>(state->run.tick) * 0.01f + static_cast<float>(p);
+            inputs[p].moveX = std::cos(angle);
+            inputs[p].moveY = std::sin(angle);
+            if (state->run.phase == RunPhase::LevelUp || state->players[p].cardsOpen) inputs[p].chooseCard = 0;
+        }
+        sim::step(*state, inputs, players);
         state->events.clear();
     }
     // Fixed counts, so a flipped count bit can never make the hash read past an array.
-    state->player.weaponCount = 1;
-    weapons::grant(*state, WeaponId::Shotgun);
-    state->player.passives[0] = PassiveSlot{PassiveId::Damage, 1};
-    state->player.passiveCount = 1;
+    for (int p = 0; p < players; ++p) {
+        Player& player = state->players[p];
+        player.weaponCount = 1;
+        weapons::grant(*state, p, WeaponId::Shotgun);
+        player.passives[0] = PassiveSlot{PassiveId::Damage, 1};
+        player.passiveCount = 1;
+        player.offerCount = 2;
+        player.damageByWeapon[1] = 5.0f;
+        player.reviveProgress = 0.5f;
+        player.cardShield = 1.0f;
+    }
     state->run.crushed[0] = maps::CarId{1234, 567};
     state->run.crushedCount = 1;
     // Endless, so its fields are hashed too and every flip of them shows. A Story run leaves

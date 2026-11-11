@@ -35,8 +35,9 @@ Vec2 rotated(Vec2 v, float radians) {
     return {v.x * c - v.y * s, v.x * s + v.y * c};
 }
 
+// Every attack aims at the boss's target: in co-op the nearest standing player, like any zombie.
 Vec2 aimAtPlayer(const GameState& state, const Enemy& boss) {
-    return normalizedOr(state.player.pos - boss.pos, Vec2{1.0f, 0.0f});
+    return normalizedOr(targetOf(state, boss).pos - boss.pos, Vec2{1.0f, 0.0f});
 }
 
 // Only the new attacks have a sound of their own. Sound reads this; the simulation never does.
@@ -64,12 +65,12 @@ void addZone(GameState& state, ZoneKind kind, Vec2 a, Vec2 b, float radius, floa
 
 // --- One function per attack ---------------------------------------------------
 
-void castCircles(GameState& state) {
+void castCircles(GameState& state, const Enemy& boss) {
     const balance::BossMoves& moves = movesOf(state);
     const int count = moves.circleCount[state.run.bossPhase];
     for (int i = 0; i < count; ++i) {
-        // The first circle lands exactly on the player, so standing still is punished.
-        Vec2 pos = state.player.pos;
+        // The first circle lands exactly on the target, so standing still is punished.
+        Vec2 pos = targetOf(state, boss).pos;
         if (i > 0) {
             pos += fromAngle(state.rng.range(0.0f, kTau)) * state.rng.range(0.0f, balance::kBossCircleScatter);
         }
@@ -100,7 +101,7 @@ void castCross(GameState& state, const Enemy& boss) {
     const balance::BossMoves& moves = movesOf(state);
     const float gap = kTau / static_cast<float>(balance::kBossCrossArms);
     const Vec2 dir = aimAtPlayer(state, boss);
-    const Vec2 center = state.player.pos;
+    const Vec2 center = targetOf(state, boss).pos;
     for (int arm = 0; arm < balance::kBossCrossArms; ++arm) {
         const Vec2 armDir = rotated(dir, gap * 0.5f + gap * static_cast<float>(arm));
         addZone(state, ZoneKind::BossLine, center, center + armDir * balance::kBossCrossArmLength,
@@ -109,9 +110,9 @@ void castCross(GameState& state, const Enemy& boss) {
     announce(state, boss, BossAttack::Cross);
 }
 
-void dropTrailBurst(GameState& state) {
+void dropTrailBurst(GameState& state, const Enemy& boss) {
     const balance::BossMoves& moves = movesOf(state);
-    const Vec2 pos = state.player.pos;
+    const Vec2 pos = targetOf(state, boss).pos;
     addZone(state, ZoneKind::BossCircle, pos, pos, moves.trailRadius, moves.trailDamage);
 }
 
@@ -159,7 +160,7 @@ void beginDashCharge(GameState& state, Enemy& boss) {
 
 // The player must not be able to win or stall by running out of weapon range.
 Vec2 walk(const GameState& state, const Enemy& boss) {
-    const Vec2 toPlayer = state.player.pos - boss.pos;
+    const Vec2 toPlayer = targetOf(state, boss).pos - boss.pos;
     const float speed = lengthSq(toPlayer) > balance::kBossLeashDistance * balance::kBossLeashDistance
                             ? balance::kBossCatchUpSpeed
                             : boss.speed;
@@ -197,7 +198,7 @@ void startBossAttack(GameState& state, Enemy& boss, BossAttack attack) {
     const uint8_t phase = state.run.bossPhase;
     switch (attack) {
         case BossAttack::Circles:
-            castCircles(state);
+            castCircles(state, boss);
             finishAttack(state, boss);
             break;
         case BossAttack::Line:
@@ -218,7 +219,7 @@ void startBossAttack(GameState& state, Enemy& boss, BossAttack attack) {
             break;
         case BossAttack::Trail:
             // The first burst lands now, the rest follow while the boss keeps walking.
-            dropTrailBurst(state);
+            dropTrailBurst(state, boss);
             state.run.bossRepeat = static_cast<uint8_t>(moves.trailBursts[phase] - 1);
             boss.state = kBossTrail;
             boss.timer = moves.trailInterval;
@@ -289,7 +290,7 @@ Vec2 bossVelocity(GameState& state, Enemy& enemy) {
         case kBossTrail:
             enemy.timer -= kDt;
             if (enemy.timer <= 0.0f) {
-                dropTrailBurst(state);
+                dropTrailBurst(state, enemy);
                 state.run.bossRepeat--;
                 enemy.timer += moves.trailInterval;
                 if (state.run.bossRepeat == 0) finishAttack(state, enemy);

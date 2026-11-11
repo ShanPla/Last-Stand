@@ -10,21 +10,21 @@ namespace ls::weapons {
 namespace {
 
 // Hurts every living zombie touching the segment, once.
-void hitAlongBeam(GameState& state, Vec2 from, Vec2 to, float halfWidth, float damage, WeaponId source) {
+void hitAlongBeam(GameState& state, Vec2 from, Vec2 to, float halfWidth, float damage, WeaponId source, int owner) {
     const Vec2 push = normalizedOr(to - from, Vec2{}) * balance::kShotKnockback;
     for (int i = 0; i < state.enemies.count; ++i) {
         const Enemy& enemy = state.enemies[i];
         if (enemy.hp <= 0.0f) continue;
         const float reach = halfWidth + enemy.radius;
         if (distanceToSegmentSq(enemy.pos, from, to) >= reach * reach) continue;
-        enemies::hit(state, i, damage, source, push);
+        enemies::hit(state, i, damage, source, owner, push);
     }
 }
 
 }  // namespace
 
-bool fireSniper(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
-    const Vec2 origin = state.player.pos;
+bool fireSniper(GameState& state, int owner, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
+    const Vec2 origin = state.players[owner].pos;
 
     // The sniper picks the toughest target, since that is where its big hit matters most.
     int target = -1;
@@ -40,14 +40,14 @@ bool fireSniper(GameState& state, const WeaponSlot& slot, const balance::WeaponL
     }
     if (target < 0) return false;
 
-    const Vec2 aim = normalizedOr(state.enemies[target].pos - origin, state.player.facing);
+    const Vec2 aim = normalizedOr(state.enemies[target].pos - origin, state.players[owner].facing);
     const float baseAngle = std::atan2(aim.y, aim.x);
     const float firstOffset = -0.5f * static_cast<float>(stats.count - 1) * balance::kSniperBeamSpreadRadians;
     for (int i = 0; i < stats.count; ++i) {
         const float angle = baseAngle + firstOffset + static_cast<float>(i) * balance::kSniperBeamSpreadRadians;
         const Vec2 end = origin + fromAngle(angle) * stats.speed;
         // The beam is instant, so it damages everything now and the zone is only for drawing.
-        hitAlongBeam(state, origin, end, stats.area, stats.damage, slot.id);
+        hitAlongBeam(state, origin, end, stats.area, stats.damage, slot.id, owner);
         if (Zone* zone = state.zones.add()) {
             zone->kind = ZoneKind::SniperBeam;
             zone->a = origin;
@@ -60,10 +60,11 @@ bool fireSniper(GameState& state, const WeaponSlot& slot, const balance::WeaponL
             zone->damage = stats.damage;
             zone->source = slot.id;
             zone->evolved = slot.evolved;
+            zone->owner = static_cast<uint8_t>(owner);
             zone->applied = true;
         }
     }
-    markFired(state, slot, aim);
+    markFired(state, owner, slot, aim);
     return true;
 }
 

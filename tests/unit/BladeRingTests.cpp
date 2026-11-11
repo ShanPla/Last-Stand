@@ -22,11 +22,11 @@ std::unique_ptr<GameState> newRun() {
 
 TEST_CASE("combat blades cut a zombie right next to the player") {
     auto state = newRun();
-    state->player.weaponCount = 0;
-    weapons::grant(*state, WeaponId::Blades);
+    state->firstPlayer().weaponCount = 0;
+    weapons::grant(*state, 0, WeaponId::Blades);
     // Touching distance, where the outer circle alone can't reach it.
     const Vec2 pos{balance::kPlayerRadius + 13.0f, 0.0f};
-    const balance::WeaponLevel stats = weapons::effectiveStats(*state, state->player.weapons[0]);
+    const balance::WeaponLevel stats = weapons::effectiveStats(state->firstPlayer(), state->firstPlayer().weapons[0]);
     REQUIRE(stats.area - balance::kBladeRadius - 13.0f > pos.x);
     enemies::spawn(*state, EnemyType::Brute, pos, false);
     const float startHp = state->enemies[0].hp;
@@ -35,7 +35,7 @@ TEST_CASE("combat blades cut a zombie right next to the player") {
     for (int i = 0; i < steps; ++i) {
         state->enemies[0].pos = pos;
         state->enemies[0].prevPos = pos;
-        state->player.hp = state->player.maxHp;
+        state->firstPlayer().hp = state->firstPlayer().maxHp;
         sim::step(*state, InputFrame{});
         state->events.clear();
     }

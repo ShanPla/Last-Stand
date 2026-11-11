@@ -12,23 +12,34 @@ namespace {
 
 using maps::Obstacle;
 
-// Each tile of the map has one fixed slot, picked by its position modulo the window's size.
-// So when the player moves, tiles that stay in the window stay in their slots, and nothing
-// has to be copied: only the slots whose tile has changed get filled again.
+// Each tile of the map has one fixed slot in a window, picked by its position modulo the
+// window's size. So when a player moves, tiles that stay in their window stay in their slots,
+// and nothing has to be copied: only the slots whose tile has changed get filled again.
 int slotOf(int tileX, int tileY) {
     const int x = ((tileX % kObstacleWindow) + kObstacleWindow) % kObstacleWindow;
     const int y = ((tileY % kObstacleWindow) + kObstacleWindow) % kObstacleWindow;
     return x + y * kObstacleWindow;
 }
 
-// The list of cars near a point, or nullptr when the point is outside the window. Off in the
-// distance nothing can see the difference, so a zombie out there simply walks on. Every point
-// outside the window fails the same way whatever the player did before, which keeps replays exact.
+// A tile in the windows of the first windowCount players, or nullptr. Every window holds
+// exactly the same cars for a tile, so it doesn't matter which one answers. A template, so the
+// same code serves a cache that may be changed and one that may only be read.
+template <class Cache>
+auto findTile(Cache& cache, int windowCount, int tileX, int tileY) -> decltype(&cache.windows[0].tiles[0]) {
+    const int slot = slotOf(tileX, tileY);
+    for (int p = 0; p < windowCount; ++p) {
+        auto& tile = cache.windows[p].tiles[slot];
+        if (tile.valid && tile.tileX == tileX && tile.tileY == tileY) return &tile;
+    }
+    return nullptr;
+}
+
+// The list of cars near a point, or nullptr when the point is outside every player's window.
+// Off in the distance nothing can see the difference, so a zombie out there simply walks on.
+// Every point outside the windows fails the same way whatever the players did before, which
+// keeps replays exact.
 const ObstacleTile* tileAt(const GameState& state, Vec2 pos) {
-    const int tileX = maps::tileOf(pos.x);
-    const int tileY = maps::tileOf(pos.y);
-    const ObstacleTile& tile = state.obstacleCache.tiles[slotOf(tileX, tileY)];
-    return tile.valid && tile.tileX == tileX && tile.tileY == tileY ? &tile : nullptr;
+    return findTile(state.obstacleCache, state.playerCount(), maps::tileOf(pos.x), maps::tileOf(pos.y));
 }
 
 // The lists must stay exactly what a fresh look at the map would give, whatever order things
@@ -42,10 +53,13 @@ void removeFromTile(ObstacleTile& tile, maps::CarId car) {
     tile.count = kept;
 }
 
-// One car can be in several tiles' lists, because a list reaches past its tile's edges.
+// One car can be in several tiles' lists, because a list reaches past its tile's edges, and
+// one tile can be in several players' windows.
 void removeFromCache(GameState& state, maps::CarId car) {
-    for (ObstacleTile& tile : state.obstacleCache.tiles) {
-        if (tile.valid) removeFromTile(tile, car);
+    for (ObstacleWindow& window : state.obstacleCache.windows) {
+        for (ObstacleTile& tile : window.tiles) {
+            if (tile.valid) removeFromTile(tile, car);
+        }
     }
 }
 
@@ -190,30 +204,43 @@ bool collectableAt(const GameState& state, Vec2 spot) {
 }  // namespace
 
 void invalidate(GameState& state) {
-    for (ObstacleTile& tile : state.obstacleCache.tiles) tile.valid = false;
-    state.obstacleCache.ready = false;
+    for (ObstacleWindow& window : state.obstacleCache.windows) {
+        for (ObstacleTile& tile : window.tiles) tile.valid = false;
+        window.ready = false;
+    }
 }
 
+// Each player has a window of tiles around them. It costs nothing until that player crosses
+// into a new tile, and then only the tiles that came into view are filled.
 void update(GameState& state) {
     ObstacleCache& cache = state.obstacleCache;
-    const int centerX = maps::tileOf(state.player.pos.x);
-    const int centerY = maps::tileOf(state.player.pos.y);
-    if (cache.ready && cache.centerX == centerX && cache.centerY == centerY) return;
-    cache.ready = true;
-    cache.centerX = centerX;
-    cache.centerY = centerY;
     const int reach = kObstacleWindow / 2;
-    for (int y = centerY - reach; y <= centerY + reach; ++y) {
-        for (int x = centerX - reach; x <= centerX + reach; ++x) {
-            ObstacleTile& tile = cache.tiles[slotOf(x, y)];
-            if (tile.valid && tile.tileX == x && tile.tileY == y) continue;
-            tile.tileX = x;
-            tile.tileY = y;
-            tile.valid = true;
-            tile.count = maps::obstaclesInTile(state.run.map, state.run.seed, x, y, tile.items, maps::kMaxObstaclesPerTile);
-            // This is the one place a flat car is kept out of what is solid, so walking away
-            // and coming back finds it flat. Everything else reads these lists.
-            for (int i = 0; i < state.run.crushedCount && tile.count > 0; ++i) removeFromTile(tile, state.run.crushed[i]);
+    for (int p = 0; p < state.playerCount(); ++p) {
+        ObstacleWindow& window = cache.windows[p];
+        const int centerX = maps::tileOf(state.players[p].pos.x);
+        const int centerY = maps::tileOf(state.players[p].pos.y);
+        if (window.ready && window.centerX == centerX && window.centerY == centerY) continue;
+        window.ready = true;
+        window.centerX = centerX;
+        window.centerY = centerY;
+        for (int y = centerY - reach; y <= centerY + reach; ++y) {
+            for (int x = centerX - reach; x <= centerX + reach; ++x) {
+                ObstacleTile& tile = window.tiles[slotOf(x, y)];
+                if (tile.valid && tile.tileX == x && tile.tileY == y) continue;
+                // A teammate's window may hold this tile already, and it is the same either way.
+                // Copying it is cheaper than reading the map again.
+                if (const ObstacleTile* copy = findTile(cache, p, x, y)) {
+                    tile = *copy;
+                    continue;
+                }
+                tile.tileX = x;
+                tile.tileY = y;
+                tile.valid = true;
+                tile.count = maps::obstaclesInTile(state.run.map, state.run.seed, x, y, tile.items, maps::kMaxObstaclesPerTile);
+                // This is the one place a flat car is kept out of what is solid, so walking away
+                // and coming back finds it flat. Everything else reads these lists.
+                for (int i = 0; i < state.run.crushedCount && tile.count > 0; ++i) removeFromTile(tile, state.run.crushed[i]);
+            }
         }
     }
 }
@@ -222,10 +249,9 @@ void update(GameState& state) {
 static_assert(balance::kEnemyStats[static_cast<int>(EnemyType::Boss)].radius <= maps::kObstacleReachWorld);
 
 void crushUnder(GameState& state, Vec2 pos, float radius) {
-    const int tileX = maps::tileOf(pos.x);
-    const int tileY = maps::tileOf(pos.y);
-    ObstacleTile& tile = state.obstacleCache.tiles[slotOf(tileX, tileY)];
-    if (!tile.valid || tile.tileX != tileX || tile.tileY != tileY) return;
+    ObstacleTile* found = findTile(state.obstacleCache, state.playerCount(), maps::tileOf(pos.x), maps::tileOf(pos.y));
+    if (!found) return;
+    ObstacleTile& tile = *found;
     int i = 0;
     while (i < tile.count) {
         const Obstacle box = tile.items[i];
@@ -239,7 +265,10 @@ void crushUnder(GameState& state, Vec2 pos, float radius) {
         state.run.crushed[state.run.crushedCount++] = car;
         // Taking it out closes the gap, so the next car is now at this same index.
         removeFromCache(state, car);
-        pushEvent(state, EventType::CarCrushed, box.center, distance(box.center, state.player.pos), static_cast<uint8_t>(box.sprite));
+        // How far the nearest player was, so sound can tell how loud it is.
+        const int nearest = nearestStanding(state, box.center);
+        const float heard = distance(box.center, state.players[nearest < 0 ? 0 : nearest].pos);
+        pushEvent(state, EventType::CarCrushed, box.center, heard, static_cast<uint8_t>(box.sprite));
     }
 }
 

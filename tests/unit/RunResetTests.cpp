@@ -33,21 +33,21 @@ std::unique_ptr<GameState> makeUsedState(Difficulty difficulty) {
     state->run.bossSpawned = true;
     state->run.bossPhase = 2;
     state->run.bossHpFraction = 0.4f;
-    state->run.rerollsLeft = 0;
-    state->run.pendingLevels = 3;
-    state->run.offerCount = 3;
+    state->firstPlayer().rerollsLeft = 0;
+    state->firstPlayer().pendingLevels = 3;
+    state->firstPlayer().offerCount = 3;
     state->run.nextEliteEvent = 7;
     state->run.nextPickupDropKills = 9999;
-    state->run.bladeAngle = 2.5f;
+    state->firstPlayer().bladeAngle = 2.5f;
     state->run.debugEnemyTarget = 40;
     state->run.debugProjectileTarget = 40;
     state->run.damageByWeapon[2] = 123.0f;
     state->run.waveAccumulators[4] = 0.75f;
-    state->player.hp = 1.0f;
-    state->player.dashCooldown = 3.0f;
-    state->player.dashLeft = 0.1f;
-    state->player.level = 12;
-    state->player.xp = 77;
+    state->firstPlayer().hp = 1.0f;
+    state->firstPlayer().dashCooldown = 3.0f;
+    state->firstPlayer().dashLeft = 0.1f;
+    state->firstPlayer().level = 12;
+    state->firstPlayer().xp = 77;
     state->rng.nextU32();
     // seed() sets the position in the sequence but not the stream, so a reset that was left
     // out would only show if the stream is not the default one.

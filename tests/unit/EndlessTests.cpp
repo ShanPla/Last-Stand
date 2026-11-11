@@ -40,8 +40,8 @@ void playSteps(GameState& state, int steps, bool shield = false) {
         input.moveY = std::sin(angle);
         if (state.run.phase == RunPhase::LevelUp) input.chooseCard = 0;
         sim::step(state, input);
-        state.player.hp = state.player.maxHp;
-        if (shield) state.player.invulnerable = 1.0f;
+        state.firstPlayer().hp = state.firstPlayer().maxHp;
+        if (shield) state.firstPlayer().invulnerable = 1.0f;
         state.events.clear();
     }
 }
@@ -141,7 +141,7 @@ TEST_CASE("an Endless run plays exactly like Story until the first boss arrives"
     CHECK(story->run.kills == endless->run.kills);
     CHECK(story->enemies.count == endless->enemies.count);
     CHECK(story->rng.state == endless->rng.state);
-    CHECK(story->player.pos.x == endless->player.pos.x);
+    CHECK(story->firstPlayer().pos.x == endless->firstPlayer().pos.x);
     endless->run.mode = RunMode::Story;
     CHECK(sim::stateHash(*story) == sim::stateHash(*endless));
 }

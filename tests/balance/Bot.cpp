@@ -94,7 +94,7 @@ const BotProfile& novice() { return kNovice; }
 const BotProfile& average() { return kAverage; }
 const BotProfile& skilled() { return kSkilled; }
 
-Bot::Bot(const BotProfile& profile, uint64_t seed, int favoriteWeapon) : profile_(profile), favorite_(favoriteWeapon) {
+Bot::Bot(const BotProfile& profile, uint64_t seed, int favoriteWeapon, int slot) : profile_(profile), favorite_(favoriteWeapon), slot_(slot) {
     rng_.seed(seed * 0x9E3779B97F4A7C15ULL + 12345u);
     threats_.reserve(512);
     bullets_.reserve(256);
@@ -103,10 +103,13 @@ Bot::Bot(const BotProfile& profile, uint64_t seed, int favoriteWeapon) : profile
 
 InputFrame Bot::act(const GameState& state) {
     InputFrame input;
+    // Single-player: the run waits on the level-up screen for the card.
     if (state.run.phase == RunPhase::LevelUp) {
         decideCard(state, input);
         return input;
     }
+    // Co-op: a downed player can only wait for a teammate.
+    if (me(state).downed) return input;
     if (stepsUntilDecision_ <= 0) {
         decideMove(state);
         stepsUntilDecision_ = profile_.reactMinSteps + rng_.below(profile_.reactMaxSteps - profile_.reactMinSteps + 1);
@@ -116,6 +119,16 @@ InputFrame Bot::act(const GameState& state) {
     input.moveY = heading_.y;
     input.dash = dashNext_;
     dashNext_ = false;
+    // Co-op: the run goes on while the cards are up, so it keeps moving and takes a card after
+    // a moment, the way a person reads them.
+    if (me(state).cardsOpen) {
+        if (++cardWait_ >= static_cast<int>(profile_.coopCardSeconds / kDt)) {
+            decideCard(state, input);
+            cardWait_ = 0;
+        }
+    } else {
+        cardWait_ = 0;
+    }
     return input;
 }
 
@@ -127,7 +140,7 @@ void Bot::gatherThreats(const GameState& state) {
     threats_.clear();
     bullets_.clear();
     hazards_.clear();
-    const Vec2 pos = state.player.pos;
+    const Vec2 pos = me(state).pos;
     const float lookSq = profile_.lookRadius * profile_.lookRadius;
     const bool seesWarnings = rng_.chance(profile_.telegraphChance);
 
@@ -182,9 +195,9 @@ float Bot::ammoNeed(const GameState& state) const {
     if (!profile_.knowsAmmoNeed) return 0.3f;
     float missing = 0.0f;
     int guns = 0;
-    for (int i = 0; i < state.player.weaponCount; ++i) {
-        const WeaponSlot& slot = state.player.weapons[i];
-        const balance::WeaponLevel stats = weapons::effectiveStats(state, slot);
+    for (int i = 0; i < me(state).weaponCount; ++i) {
+        const WeaponSlot& slot = me(state).weapons[i];
+        const balance::WeaponLevel stats = weapons::effectiveStats(me(state), slot);
         if (stats.magazine <= 0) continue;
         const float have = static_cast<float>(slot.magazine + slot.reserve);
         const float most = static_cast<float>(stats.magazine + stats.maxReserve);
@@ -196,12 +209,12 @@ float Bot::ammoNeed(const GameState& state) const {
 
 void Bot::chooseLoot(const GameState& state) {
     hasLoot_ = false;
-    const Vec2 pos = state.player.pos;
+    const Vec2 pos = me(state).pos;
     const float reach = profile_.lootRadius;
     float best = 0.0f;
 
     const float need = ammoNeed(state);
-    const float hurt = 1.0f - state.player.hp / state.player.maxHp;
+    const float hurt = 1.0f - me(state).hp / me(state).maxHp;
     for (const Pickup& pickup : state.pickups) {
         const float dist = distance(pickup.pos, pos);
         if (dist > reach * 1.5f) continue;
@@ -230,11 +243,25 @@ void Bot::chooseLoot(const GameState& state) {
             hasLoot_ = true;
         }
     }
+    // Co-op: a downed teammate matters more than any loot, because only a teammate can get
+    // them up. Danger still counts, so it doesn't walk into a crowd to do it.
+    for (int slot = 0; slot < state.playerCount(); ++slot) {
+        const Player& mate = state.players[slot];
+        if (slot == slot_ || !mate.downed) continue;
+        const float dist = distance(mate.pos, pos);
+        if (dist > reach * 3.0f) continue;
+        const float score = 150.0f / (dist + 120.0f);
+        if (score > best) {
+            best = score;
+            lootTarget_ = mate.pos;
+            hasLoot_ = true;
+        }
+    }
 }
 
 float Bot::headingCost(const GameState& state, Vec2 dir) const {
-    const Vec2 pos = state.player.pos;
-    const float speed = state.player.stats.moveSpeed;
+    const Vec2 pos = me(state).pos;
+    const float speed = me(state).stats.moveSpeed;
     const float near = profile_.avoidsCrowds ? profile_.lookAheadSeconds * 0.5f : profile_.lookAheadSeconds;
     const float far = profile_.lookAheadSeconds * 1.6f;
     const float playerR = balance::kPlayerRadius;
@@ -340,7 +367,7 @@ float Bot::dashCost(Vec2 where, float seconds) const {
 void Bot::considerDash(const GameState& state) {
     dashNext_ = false;
     if (profile_.dashChance <= 0.0f || state.timeSeconds() < profile_.dashAfterSeconds) return;
-    const Player& player = state.player;
+    const Player& player = me(state);
     if (player.dashCooldown > 0.0f || player.dashLeft > 0.0f || player.hp <= 0.0f) return;
 
     const Vec2 pos = player.pos;
@@ -389,11 +416,11 @@ const balance::Evolution* Bot::targetRecipe(const GameState& state) const {
     const balance::Evolution* best = nullptr;
     int bestScore = -1;
     for (const balance::Evolution& evolution : balance::kEvolutions) {
-        const WeaponSlot* weapon = findWeapon(state.player, evolution.weapon);
+        const WeaponSlot* weapon = findWeapon(me(state), evolution.weapon);
         if (weapon && weapon->evolved) continue;
         int score = static_cast<int>(evolution.weapon) == favorite_ ? 1000 : 0;  // A favorite decides the recipe.
         if (weapon) score += 10 * weapon->level;
-        if (findPassive(state.player, evolution.passive)) score += 5;
+        if (findPassive(me(state), evolution.passive)) score += 5;
         if (score > bestScore) {
             bestScore = score;
             best = &evolution;
@@ -403,7 +430,7 @@ const balance::Evolution* Bot::targetRecipe(const GameState& state) const {
 }
 
 float Bot::scoreCard(const GameState& state, const Card& card) {
-    const Player& player = state.player;
+    const Player& player = me(state);
     const float jitter = rng_.range(0.0f, 3.0f);  // Breaks ties, so a run does not always pick the same way.
     const float hpFraction = player.hp / player.maxHp;
 
@@ -430,7 +457,7 @@ float Bot::scoreCard(const GameState& state, const Card& card) {
             if (static_cast<int>(card.weapon) == favorite_) return 80.0f + jitter;
             if (recipe && recipe->weapon == card.weapon) return 70.0f + jitter;
             // An upgrade also refills that gun, which matters when it is low.
-            const balance::WeaponLevel stats = weapons::effectiveStats(state, *held);
+            const balance::WeaponLevel stats = weapons::effectiveStats(me(state), *held);
             const bool lowAmmo = stats.magazine > 0 && held->magazine + held->reserve < stats.maxReserve / 3;
             return (lowAmmo ? 62.0f : 45.0f) + jitter;
         }
@@ -455,16 +482,16 @@ float Bot::scoreCard(const GameState& state, const Card& card) {
 }
 
 void Bot::decideCard(const GameState& state, InputFrame& input) {
-    const RunState& run = state.run;
-    if (run.offerCount <= 0) return;
+    const Player& player = me(state);
+    if (player.offerCount <= 0) return;
     if (profile_.cards == CardStyle::Random) {
-        input.chooseCard = static_cast<int8_t>(rng_.below(run.offerCount));
+        input.chooseCard = static_cast<int8_t>(rng_.below(player.offerCount));
         return;
     }
     int best = 0;
     float bestScore = -1.0f;
-    for (int i = 0; i < run.offerCount; ++i) {
-        const float score = scoreCard(state, run.offers[i]);
+    for (int i = 0; i < player.offerCount; ++i) {
+        const float score = scoreCard(state, player.offers[i]);
         if (score > bestScore) {
             bestScore = score;
             best = i;
@@ -472,7 +499,7 @@ void Bot::decideCard(const GameState& state, InputFrame& input) {
     }
     // The Planner spends a reroll when nothing on offer is worth having.
     constexpr float kUsefulScore = 44.0f;
-    if (profile_.cards == CardStyle::Planner && bestScore < kUsefulScore && run.rerollsLeft > 0) {
+    if (profile_.cards == CardStyle::Planner && bestScore < kUsefulScore && player.rerollsLeft > 0) {
         input.reroll = true;
         return;
     }

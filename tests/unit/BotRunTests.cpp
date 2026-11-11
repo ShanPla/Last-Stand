@@ -38,15 +38,19 @@ Vec2 closestOnSegment(Vec2 a, Vec2 b, Vec2 point) {
     return a + ab * t;
 }
 
-// A simple bot: runs from the nearest zombies, bullets and boss attacks, goes
-// for pickups and gems when nothing is close, and always takes card 0.
-InputFrame botInput(const GameState& state) {
+// A simple bot for the player in one slot: runs from the nearest zombies, bullets and boss
+// attacks, goes for pickups and gems when nothing is close, and always takes card 0. In co-op
+// it also walks to a downed teammate when nothing is close, and takes its cards while moving.
+InputFrame botInput(const GameState& state, int slot = 0) {
     InputFrame input;
     if (state.run.phase == RunPhase::LevelUp) {
         input.chooseCard = 0;
         return input;
     }
-    const Vec2 pos = state.player.pos;
+    const Player& me = state.players[slot];
+    if (me.downed) return input;
+    if (me.cardsOpen) input.chooseCard = 0;
+    const Vec2 pos = me.pos;
     Vec2 flee{};
     float nearestEdge = 1.0e9f;
 
@@ -103,6 +107,12 @@ InputFrame botInput(const GameState& state) {
                 found = true;
             }
         }
+        for (int other = 0; other < state.playerCount() && !found; ++other) {
+            if (other != slot && state.players[other].downed) {
+                target = state.players[other].pos;
+                found = true;
+            }
+        }
         if (!found) {
             for (const Gem& gem : state.gems) {
                 const float distSq = distanceSq(gem.pos, pos);
@@ -136,6 +146,8 @@ struct BotResult {
     bool invariantsHeld = true;
     std::vector<uint64_t> trace;  // The state hash every 5 seconds of game time.
     uint64_t finalHash = 0;
+    int downs = 0;    // Co-op only.
+    int revives = 0;  // Co-op only.
 };
 
 // Says what is wrong with the state, or returns an empty string when all is well. A NaN
@@ -161,20 +173,33 @@ std::string stateProblem(const GameState& s) {
     });
     if (!problem.empty()) return problem;
 
-    const Player& p = s.player;
-    if (p.hp > p.maxHp + 1e-3f) return "player hp is above max hp";
-    if (p.level < 1 || p.xp < 0) return "player level or xp is out of range";
-    if (p.weaponCount < 1 || p.weaponCount > kMaxHeldWeapons) return "weapon count is out of range";
-    if (p.passiveCount < 0 || p.passiveCount > kMaxHeldPassives) return "passive count is out of range";
-    if (s.run.kills < 0 || s.run.rerollsLeft < 0 || s.run.pendingLevels < 0) return "a run counter is negative";
-    for (int i = 0; i < p.weaponCount; ++i) {
-        const WeaponSlot& w = p.weapons[i];
-        if (w.magazine < 0 || w.reserve < 0) return "a weapon has negative ammo";
-        if (static_cast<int>(w.id) >= static_cast<int>(WeaponId::Count)) return "a held weapon has a bad id";
+    if (s.run.playerCount < 1 || s.run.playerCount > kMaxPlayers) return "the player count is out of range";
+    if (s.run.kills < 0) return "the kill count is negative";
+    for (int slot = 0; slot < s.run.playerCount; ++slot) {
+        const Player& p = s.players[slot];
+        if (p.hp > p.maxHp + 1e-3f) return "player hp is above max hp";
+        if (p.level < 1 || p.xp < 0) return "player level or xp is out of range";
+        if (p.weaponCount < 1 || p.weaponCount > kMaxHeldWeapons) return "weapon count is out of range";
+        if (p.passiveCount < 0 || p.passiveCount > kMaxHeldPassives) return "passive count is out of range";
+        if (p.rerollsLeft < 0 || p.pendingLevels < 0) return "a player counter is negative";
+        if (p.offerCount < 0 || p.offerCount > kOffersPerLevel) return "a player has a bad number of cards";
+        if (p.cardShield < 0.0f || p.cardShield > balance::kCoopCardShieldSeconds) return "a card shield is out of range";
+        if (p.reviveProgress < 0.0f || p.reviveProgress > balance::kReviveSeconds) return "revive progress is out of range";
+        if (p.downed && p.hp > 0.0f) return "a downed player has health";
+        if (!s.isCoop() && (p.downed || p.cardsOpen)) return "a single-player run has a co-op state";
+        for (int i = 0; i < p.weaponCount; ++i) {
+            const WeaponSlot& w = p.weapons[i];
+            if (w.magazine < 0 || w.reserve < 0) return "a weapon has negative ammo";
+            if (static_cast<int>(w.id) >= static_cast<int>(WeaponId::Count)) return "a held weapon has a bad id";
+        }
     }
     for (const Enemy& e : s.enemies) {
         if (e.radius <= 0.0f || e.id == 0 || e.id >= s.run.nextId) return "an enemy has a bad radius or id";
         if (static_cast<int>(e.type) >= static_cast<int>(EnemyType::Count)) return "an enemy has a bad type";
+        if (e.target >= s.run.playerCount) return "an enemy chases a player who isn't in the run";
+    }
+    for (const Projectile& shot : s.projectiles) {
+        if (shot.owner >= s.run.playerCount) return "a shot belongs to a player who isn't in the run";
     }
     for (const Gem& g : s.gems) {
         if (g.xp < 1) return "a gem is worth no xp";
@@ -189,17 +214,25 @@ bool stateIsSane(const GameState& s) { return stateProblem(s).empty(); }
 
 // Plays one run to its end, or to the step limit. The state is checked after every step.
 // stopAfterBoss, when above 0, ends the run that many seconds after the boss appears.
-BotResult runBot(uint64_t seed, bool invulnerable, float stopAfterBoss = 0.0f, maps::MapId map = maps::kDefaultMap) {
+BotResult runBot(uint64_t seed, bool invulnerable, float stopAfterBoss = 0.0f, maps::MapId map = maps::kDefaultMap, int players = 1) {
     auto state = std::make_unique<GameState>();
-    sim::newRun(*state, seed, Difficulty::Normal, map);
+    sim::newRun(*state, seed, Difficulty::Normal, map, RunMode::Story, players);
     BotResult result;
     uint32_t lastTraceTick = 0;
 
     while (state->run.phase != RunPhase::Won && state->run.phase != RunPhase::Dead &&
            static_cast<int>(state->run.tick) < kStepLimit &&
            !(stopAfterBoss > 0.0f && result.bossSpawned && state->timeSeconds() > result.bossSpawnSeconds + stopAfterBoss)) {
-        if (invulnerable) state->player.hp = state->player.maxHp;
-        sim::step(*state, botInput(*state));
+        if (invulnerable) {
+            for (int slot = 0; slot < players; ++slot) state->players[slot].hp = state->players[slot].maxHp;
+        }
+        InputFrame inputs[kMaxPlayers];
+        for (int slot = 0; slot < players; ++slot) inputs[slot] = botInput(*state, slot);
+        sim::step(*state, inputs, players);
+        for (const SimEvent& event : state->events) {
+            if (event.type == EventType::PlayerDowned) result.downs++;
+            if (event.type == EventType::PlayerRevived) result.revives++;
+        }
         if (invulnerable && state->run.phase == RunPhase::Dead) result.invariantsHeld = false;  // It must not be possible.
 
         for (const SimEvent& event : state->events) {
@@ -229,7 +262,7 @@ BotResult runBot(uint64_t seed, bool invulnerable, float stopAfterBoss = 0.0f, m
     result.finalHash = sim::stateHash(*state);
     result.outcome = state->run.phase;
     result.endSeconds = state->timeSeconds();
-    result.level = state->player.level;
+    result.level = state->firstPlayer().level;
     result.kills = state->run.kills;
     result.bossPhaseReached = state->run.bossPhase;
     for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) result.damage[i] = state->run.damageByWeapon[i];
@@ -251,16 +284,16 @@ void printResult(const char* label, uint64_t seed, const BotResult& result) {
 float damageInCrowdFight(WeaponId id) {
     auto state = std::make_unique<GameState>();
     sim::newRun(*state, 5);
-    state->player.weaponCount = 0;
-    state->player.xpToNext = 1 << 30;  // No level-up screen, which would pause the fight.
-    weapons::grant(*state, id);
+    state->firstPlayer().weaponCount = 0;
+    state->firstPlayer().xpToNext = 1 << 30;  // No level-up screen, which would pause the fight.
+    weapons::grant(*state, 0, id);
     for (int n = 0; n < 40; ++n) {
         const float angle = static_cast<float>(n) * 0.7f;
         const Vec2 pos = fromAngle(angle) * (150.0f + static_cast<float>(n % 5) * 40.0f);
         if (!enemies::spawn(*state, EnemyType::Walker, pos, false)) break;
     }
     for (int step = 0; step < 60 * 8; ++step) {
-        state->player.hp = state->player.maxHp;
+        state->firstPlayer().hp = state->firstPlayer().maxHp;
         sim::step(*state, InputFrame{});
         state->events.clear();
     }
@@ -307,7 +340,7 @@ TEST_CASE("the state check catches a broken number") {
     state->enemies[0].pos.x = std::nanf("");
     CHECK_FALSE(stateIsSane(*state));
     state->enemies[0].pos.x = 200.0f;
-    state->player.weapons[0].magazine = -1;
+    state->firstPlayer().weapons[0].magazine = -1;
     CHECK_FALSE(stateIsSane(*state));
 }
 
@@ -406,5 +439,51 @@ TEST_CASE("invulnerable bot reaches the boss at 10:00, and kills it in time") {
             std::printf("[bot invulnerable] seed %llu: boss NOT killed, reached boss phase %d\n",
                         static_cast<unsigned long long>(seed), result.bossPhaseReached);
         }
+    }
+}
+
+TEST_CASE("co-op bot run: 2 players play a whole game, and the state stays valid every step") {
+    for (const uint64_t seed : {101ull, 505ull}) {
+        const BotResult result = runBot(seed, false, 0.0f, maps::kDefaultMap, 2);
+        printResult("2 players", seed, result);
+        std::printf("[bot 2 players] seed %llu: %d downs, %d revives\n", static_cast<unsigned long long>(seed), result.downs, result.revives);
+        CHECK(result.invariantsHeld);
+        CHECK((result.outcome == RunPhase::Won || result.outcome == RunPhase::Dead));
+        CHECK(result.kills > 0);
+        if (result.outcome == RunPhase::Won) CHECK(result.bossKilled);
+        if (result.outcome == RunPhase::Dead && result.endSeconds < balance::kRunSeconds) CHECK_FALSE(result.bossSpawned);
+        // A co-op run only ends when the whole team is down, so both went down at least once.
+        if (result.outcome == RunPhase::Dead) CHECK(result.downs >= 2);
+    }
+}
+
+TEST_CASE("co-op bot run: 4 players on the desert, kept alive through the boss, without a crash") {
+    const BotResult result = runBot(404, true, 0.0f, maps::MapId::Wasteland, 4);
+    printResult("4 players invulnerable", 404, result);
+    CHECK(result.invariantsHeld);
+    CHECK(result.bossSpawned);
+    CHECK(result.bossKilled);
+    CHECK(result.outcome == RunPhase::Won);
+}
+
+TEST_CASE("co-op bot run: 4 players with real damage play to the end without a crash") {
+    const BotResult result = runBot(606, false, 0.0f, maps::MapId::City, 4);
+    printResult("4 players", 606, result);
+    CHECK(result.invariantsHeld);
+    CHECK((result.outcome == RunPhase::Won || result.outcome == RunPhase::Dead));
+}
+
+TEST_CASE("co-op bot run: the same seed and inputs give the same run, with 2 and with 4 players") {
+    for (const int players : {2, 4}) {
+        CAPTURE(players);
+        const BotResult first = runBot(707, false, 0.0f, maps::MapId::Wasteland, players);
+        const BotResult second = runBot(707, false, 0.0f, maps::MapId::Wasteland, players);
+        checkSameRun(first, second);
+        CHECK(first.trace.size() > 2);
+        CHECK(first.downs == second.downs);
+        CHECK(first.revives == second.revives);
+        // And the team really is a team: the run differs from a solo run of the same seed.
+        const BotResult solo = runBot(707, false, 0.0f, maps::MapId::Wasteland, 1);
+        CHECK(solo.finalHash != first.finalHash);
     }
 }

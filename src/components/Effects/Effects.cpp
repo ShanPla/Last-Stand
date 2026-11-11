@@ -177,7 +177,7 @@ void requestScreenFlash(float strength, Color color, bool quiet) {
 }
 
 Vec2 awayFromPlayer(const GameState& state, Vec2 at) {
-    return normalizedOr(at - state.player.pos, Vec2{1.0f, 0.0f});
+    return normalizedOr(at - state.firstPlayer().pos, Vec2{1.0f, 0.0f});
 }
 
 // --- One handler for each thing that can happen --------------------------------
@@ -246,7 +246,7 @@ void onEnemyKilled(const GameState& state, const SimEvent& event, bool elite, bo
 }
 
 void onExplosion(const GameState& state, const SimEvent& event, bool quiet) {
-    const float away = distance(event.pos, state.player.pos);
+    const float away = distance(event.pos, state.firstPlayer().pos);
     if (away < kShakeReach) addShake(kShakeExplosion * (1.0f - away / kShakeReach), quiet);
     if (!g_blastBudget.take()) return;
     const float size = clampf(event.value / 130.0f, 0.5f, 2.0f);
@@ -276,8 +276,8 @@ void onWeaponFired(const GameState& state, const SimEvent& event) {
     const auto weapon = static_cast<WeaponId>(event.detail);
     if (weapon == WeaponId::Flamethrower || weapon == WeaponId::Tesla || weapon == WeaponId::Blades || weapon == WeaponId::Landmines) return;
     if (!g_muzzleBudget.take()) return;
-    const Vec2 aim = state.player.aim;
-    const Vec2 muzzle = state.player.pos + aim * kMuzzleReach;
+    const Vec2 aim = state.firstPlayer().aim;
+    const Vec2 muzzle = state.firstPlayer().pos + aim * kMuzzleReach;
     const bool heavy = weapon == WeaponId::Shotgun || weapon == WeaponId::Sniper || weapon == WeaponId::Rockets || weapon == WeaponId::GrenadeLauncher;
     impactSparks(muzzle, kMuzzleHeight, aim, heavy ? 3 : 1, theme::kFxSpark);
     if (heavy) {
@@ -304,7 +304,7 @@ void onWeaponFired(const GameState& state, const SimEvent& event) {
     if (weapon != WeaponId::Rockets && weapon != WeaponId::GrenadeLauncher && g_casingBudget.take()) {
         // A brass casing thrown out sideways. It is one pixel, but it sells the gun.
         Burst casing;
-        casing.at = state.player.pos;
+        casing.at = state.firstPlayer().pos;
         casing.height = kMuzzleHeight;
         casing.count = 1;
         casing.speedMin = 50.0f;
@@ -327,7 +327,7 @@ void onWeaponFired(const GameState& state, const SimEvent& event) {
 void onPlayerHit(const GameState& state, const SimEvent& event, bool quiet) {
     addShake(kShakePlayerHit, quiet);
     if (g_playerBloodBudget.take()) bloodSpray(event.pos, kTargetHeight, Vec2{}, 4, theme::kFxPlayerBlood);
-    const float health = state.player.maxHp > 0.0f ? state.player.hp / state.player.maxHp : 1.0f;
+    const float health = state.firstPlayer().maxHp > 0.0f ? state.firstPlayer().hp / state.firstPlayer().maxHp : 1.0f;
     if (health >= kNearDeathRearm) g_nearDeathArmed = true;
     if (g_nearDeathArmed && health < kNearDeathBelow && health > 0.0f) {
         g_nearDeathArmed = false;
@@ -338,7 +338,7 @@ void onPlayerHit(const GameState& state, const SimEvent& event, bool quiet) {
 // The boss has just flattened a car. A thick puff along the whole car, because the repaint
 // takes a few frames and the dust is what hides the moment the picture changes.
 void onCarCrushed(const GameState& state, const SimEvent& event, bool quiet) {
-    const float away = distance(event.pos, state.player.pos);
+    const float away = distance(event.pos, state.firstPlayer().pos);
     if (away < kShakeReach && nearView(event.pos)) raiseShake(kShakeCarCrush * (1.0f - 0.5f * away / kShakeReach), quiet);
     if (!nearView(event.pos) || !g_crushBudget.take()) return;
     const Vec2 half = maps::makeObstacle(static_cast<maps::CarSprite>(event.detail), 0, 0).half;
@@ -406,7 +406,7 @@ void onEvolution(const SimEvent& event, bool quiet) {
 // A kick of dust behind his feet. It only reads the dash direction, and a dash comes at
 // most every few seconds, so it needs no budget.
 void onPlayerDashed(const GameState& state, const SimEvent& event) {
-    const Vec2 back = state.player.dashDir * -1.0f;
+    const Vec2 back = state.firstPlayer().dashDir * -1.0f;
     Burst dust;
     dust.at = event.pos;
     dust.height = 3.0f;
@@ -508,7 +508,7 @@ void reset() {
 void consumeEvents(const GameState& state, bool quiet) {
     g_lastState = &state;
     const Enemy* boss = findBoss(state);
-    g_bossDistance = boss ? distance(boss->pos, state.player.pos) : -1.0f;
+    g_bossDistance = boss ? distance(boss->pos, state.firstPlayer().pos) : -1.0f;
     for (const SimEvent& event : state.events) {
         switch (event.type) {
             case EventType::EnemyHit:
@@ -530,7 +530,7 @@ void consumeEvents(const GameState& state, bool quiet) {
             case EventType::GemCollected:
                 if (g_gemBudget.take()) {
                     const float xp = event.value;
-                    sparkle(state.player.pos, 2, &theme::kFxGemSparkle[xp >= 20.0f ? 2 : (xp >= 5.0f ? 1 : 0)], 1);
+                    sparkle(state.firstPlayer().pos, 2, &theme::kFxGemSparkle[xp >= 20.0f ? 2 : (xp >= 5.0f ? 1 : 0)], 1);
                 }
                 break;
             case EventType::LevelUp:
@@ -553,7 +553,7 @@ void consumeEvents(const GameState& state, bool quiet) {
                 chunkBurst(event.pos, kTargetHeight, 8, theme::kFxGore, 3, 130.0f, 3);
                 break;
             case EventType::Explosion:
-                if (nearView(event.pos) || distanceSq(event.pos, state.player.pos) < kShakeReach * kShakeReach) onExplosion(state, event, quiet);
+                if (nearView(event.pos) || distanceSq(event.pos, state.firstPlayer().pos) < kShakeReach * kShakeReach) onExplosion(state, event, quiet);
                 break;
             case EventType::PlayerDashed: onPlayerDashed(state, event); break;
             case EventType::ZombieUnstuck: break;
@@ -561,6 +561,9 @@ void consumeEvents(const GameState& state, bool quiet) {
             case EventType::ReloadStarted:
             case EventType::WeaponDry:
             case EventType::BossAttack: break;  // Heard, not seen: the warning on the ground is the picture.
+            // Co-op only, and co-op has no effects of its own yet.
+            case EventType::PlayerDowned:
+            case EventType::PlayerRevived: break;
         }
     }
 }

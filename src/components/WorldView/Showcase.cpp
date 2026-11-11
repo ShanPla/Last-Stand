@@ -96,9 +96,9 @@ Enemy* placeEnemy(GameState& state, EnemyType type, Vec2 pos, bool elite) {
     Enemy* enemy = enemies::spawn(state, type, pos, elite);
     if (!enemy) return nullptr;
     // A small fake step, so the renderer treats it as walking and plays its gait.
-    const float toward = pos.x < state.player.pos.x ? 0.2f : -0.2f;
+    const float toward = pos.x < state.firstPlayer().pos.x ? 0.2f : -0.2f;
     enemy->prevPos = pos - Vec2{toward, 0.0f};
-    enemy->dir = normalizedOr(state.player.pos - pos, Vec2{1.0f, 0.0f});
+    enemy->dir = normalizedOr(state.firstPlayer().pos - pos, Vec2{1.0f, 0.0f});
     return enemy;
 }
 
@@ -288,16 +288,16 @@ bool findCar(const GameState& state, maps::Obstacle* found, Test&& wanted) {
 }
 
 void standBesideCar(GameState& state, const maps::Obstacle& car) {
-    state.player.pos = car.center + Vec2{-car.half.x - balance::kPlayerRadius - 2.0f, 0.0f};
-    state.player.prevPos = state.player.pos;
+    state.firstPlayer().pos = car.center + Vec2{-car.half.x - balance::kPlayerRadius - 2.0f, 0.0f};
+    state.firstPlayer().prevPos = state.firstPlayer().pos;
 }
 
 void placeCarScene(GameState& state, int scene) {
     maps::Obstacle car;
     if (!findSideCar(state, &car)) return;
     const float radius = balance::kEnemyStats[static_cast<int>(EnemyType::Walker)].radius;
-    state.player.pos = car.center + Vec2{-car.half.x - balance::kPlayerRadius - 2.0f, 0.0f};
-    state.player.prevPos = state.player.pos;
+    state.firstPlayer().pos = car.center + Vec2{-car.half.x - balance::kPlayerRadius - 2.0f, 0.0f};
+    state.firstPlayer().prevPos = state.firstPlayer().pos;
     // Fixed ids, because a zombie's clothes come from its id, and tests compare pictures.
     const auto place = [&](Vec2 pos, uint32_t id) {
         if (Enemy* enemy = placeEnemy(state, EnemyType::Walker, pos, false)) enemy->id = id;
@@ -319,8 +319,8 @@ void placePropScene(GameState& state, int scene) {
     const float radius = balance::kEnemyStats[static_cast<int>(EnemyType::Walker)].radius;
     // Well to the left, clear of a wide wall, so he stays out of the pictures the tests take.
     const float left = wall ? static_cast<float>(cover.x0) / maps::kTexelsPerWorldX - 40.0f : foot.x - 80.0f;
-    state.player.pos = Vec2{std::min(left, foot.x - 80.0f), foot.y};
-    state.player.prevPos = state.player.pos;
+    state.firstPlayer().pos = Vec2{std::min(left, foot.x - 80.0f), foot.y};
+    state.firstPlayer().prevPos = state.firstPlayer().pos;
     const auto place = [&](Vec2 pos, uint32_t id) {
         if (Enemy* enemy = placeEnemy(state, EnemyType::Walker, pos, false)) enemy->id = id;
     };
@@ -386,8 +386,8 @@ void placeTestScene(GameState& state, int scene) {
     } else if (scene == kSceneWalkerOffLeft) {
         placeOffLeft(state, EnemyType::Walker, 30.0f, right);
     } else if (scene == kSceneOnlyMines) {
-        state.player.weaponCount = 0;
-        weapons::grant(state, WeaponId::Landmines);
+        state.firstPlayer().weaponCount = 0;
+        weapons::grant(state, 0, WeaponId::Landmines);
         placeEnemy(state, EnemyType::Walker, Vec2{balance::kWeaponRange * 0.5f, 0.0f}, false);
     }
 }
@@ -505,12 +505,12 @@ void setupShowcase(GameState& state, int extraZombies) {
     state.gems.clear();
     state.pickups.clear();
     state.run.phase = RunPhase::Playing;
-    state.run.pendingLevels = 0;
+    state.firstPlayer().pendingLevels = 0;
     state.run.debugEnemyTarget = 0;
     state.run.debugProjectileTarget = 0;
     state.run.bossPhase = 0;
 
-    Player& player = state.player;
+    Player& player = state.firstPlayer();
     player.pos = Vec2{};
     player.prevPos = Vec2{};
     player.hp = player.maxHp;
@@ -520,12 +520,12 @@ void setupShowcase(GameState& state, int extraZombies) {
     // Blades go first, since only a few weapons can be held. The timer in
     // tickShowcase shows the rest of the guns in the soldier's hands.
     player.weaponCount = 0;
-    weapons::grant(state, WeaponId::Blades);
-    weapons::grant(state, WeaponId::Rifle);
-    weapons::grant(state, WeaponId::Shotgun);
-    weapons::grant(state, WeaponId::Sniper);
-    weapons::grant(state, WeaponId::Rockets);
-    weapons::grant(state, WeaponId::Tesla);
+    weapons::grant(state, 0, WeaponId::Blades);
+    weapons::grant(state, 0, WeaponId::Rifle);
+    weapons::grant(state, 0, WeaponId::Shotgun);
+    weapons::grant(state, 0, WeaponId::Sniper);
+    weapons::grant(state, 0, WeaponId::Rockets);
+    weapons::grant(state, 0, WeaponId::Tesla);
     player.weapons[0].level = 3;
 
     g_clockStopped = extraZombies < 0;
@@ -548,7 +548,7 @@ void setupShowcase(GameState& state, int extraZombies) {
 void crushNearestCar(GameState& state) {
     obstacles::update(state);
     maps::Obstacle list[maps::kMaxObstaclesPerTile];
-    const Vec2 at = state.player.pos;
+    const Vec2 at = state.firstPlayer().pos;
     const int count = maps::obstaclesInTile(state.run.map, state.run.seed, maps::tileOf(at.x), maps::tileOf(at.y), list, maps::kMaxObstaclesPerTile);
     float nearest = 1.0e30f;
     Vec2 center;
@@ -569,11 +569,11 @@ void placeBossBesideCar(GameState& state) {
     state.enemies.clear();
     state.run.bossSpawned = true;
     const float radius = balance::kEnemyStats[static_cast<int>(EnemyType::Boss)].radius;
-    state.player.pos = car.center + Vec2{car.half.x + 170.0f, 0.0f};
-    state.player.prevPos = state.player.pos;
+    state.firstPlayer().pos = car.center + Vec2{car.half.x + 170.0f, 0.0f};
+    state.firstPlayer().prevPos = state.firstPlayer().pos;
     obstacles::update(state);
-    obstacles::resolveCircle(state, state.player.pos, balance::kPlayerRadius);
-    state.player.prevPos = state.player.pos;
+    obstacles::resolveCircle(state, state.firstPlayer().pos, balance::kPlayerRadius);
+    state.firstPlayer().prevPos = state.firstPlayer().pos;
     // Far enough that the picture has settled by the time it arrives, so a measurement of the
     // crush doesn't catch the chunks painted for the jump to this place.
     enemies::spawn(state, EnemyType::Boss, car.center + Vec2{-car.half.x - radius - 110.0f, 0.0f}, false);
@@ -583,7 +583,7 @@ void tickShowcase(GameState& state) {
     if (g_clockStopped) return;
     RunState& run = state.run;
     run.tick++;
-    run.bladeAngle += balance::kWeaponLevels[static_cast<int>(WeaponId::Blades)][0].speed * kDt;
+    state.firstPlayer().bladeAngle += balance::kWeaponLevels[static_cast<int>(WeaponId::Blades)][0].speed * kDt;
 
     // Loops every timed object, so the fading and filling can be seen.
     for (Zone& zone : state.zones) {
@@ -602,10 +602,10 @@ void tickShowcase(GameState& state) {
     const uint32_t beat = run.tick / kGunChangeTicks;
     const WeaponId gun = kGuns[beat % static_cast<uint32_t>(kShownGunCount)];
     const float aimAngle = kTau * static_cast<float>(beat % 8u) / 8.0f + 0.3f;
-    state.player.aim = fromAngle(aimAngle);
-    if (run.tick % 8u == 0u) pushEvent(state, EventType::WeaponFired, state.player.pos, 0.0f, static_cast<uint8_t>(gun));
-    for (int i = 0; i < state.player.weaponCount; ++i) {
-        WeaponSlot& slot = state.player.weapons[i];
+    state.firstPlayer().aim = fromAngle(aimAngle);
+    if (run.tick % 8u == 0u) pushEvent(state, EventType::WeaponFired, state.firstPlayer().pos, 0.0f, static_cast<uint8_t>(gun));
+    for (int i = 0; i < state.firstPlayer().weaponCount; ++i) {
+        WeaponSlot& slot = state.firstPlayer().weapons[i];
         slot.reloadLeft = (beat % 3u == 2u) ? 1.0f : 0.0f;
         slot.evolved = slot.id == WeaponId::Blades && beat % 2u == 1u;
     }

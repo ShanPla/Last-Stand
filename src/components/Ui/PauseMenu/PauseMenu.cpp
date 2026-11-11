@@ -33,7 +33,7 @@ void passiveEffect(const Player& player, PassiveId id, char* out, size_t size) {
 
 void drawWeaponRow(const GameState& state, const WeaponSlot& slot, Rectangle r, bool showStats) {
     const float u = ui::u();
-    const balance::WeaponLevel stats = weapons::effectiveStats(state, slot);
+    const balance::WeaponLevel stats = weapons::effectiveStats(state.firstPlayer(), slot);
     const float cy = r.y + r.height * 0.5f;
     const float icon = std::min(r.height - 6.0f * u, 32.0f * u);
     const bool usesAmmo = stats.magazine > 0;
@@ -113,7 +113,7 @@ float buildHeight(const Player& player, float rowHeight, bool compact) {
 
 void drawBuild(const GameState& state, Rectangle r, bool showStats, float rowHeight, bool compact) {
     const float u = ui::u();
-    const Player& player = state.player;
+    const Player& player = state.firstPlayer();
     panel(r, theme::kUiPanel, theme::kUiBorder, 16.0f * u);
     const float pad = 14.0f * u;
     float y = r.y + pad;
@@ -198,8 +198,8 @@ PauseAction drawPauseMenu(const GameState& state) {
         const float buildWidth = std::min(l.width() - menuWidth - gap, 600.0f * u);
         const float total = menuWidth + gap + buildWidth;
         const float x = l.centerX() - total * 0.5f;
-        const float rowHeight = buildRowHeight(state.player, l.height(), false);
-        const float height = buildHeight(state.player, rowHeight, false);
+        const float rowHeight = buildRowHeight(state.firstPlayer(), l.height(), false);
+        const float height = buildHeight(state.firstPlayer(), rowHeight, false);
         textShadowed("PAUSED", x, l.top + 4.0f * u, 46.0f * u, theme::kUiAccent, font::Align::Left, 4.0f * u);
         drawLevelTag(state.run.difficulty, x, l.top + 56.0f * u, font::Align::Left);
         float y = l.top + 86.0f * u;
@@ -227,7 +227,7 @@ PauseAction drawPauseMenu(const GameState& state) {
         bool grid = false;
         // If the whole build list can't fit above the buttons (a window that is nearly square),
         // the buttons go two by two and the list gets shorter rows, so nothing runs under them.
-        if (buildHeight(state.player, 26.0f * u, false) > availableTotal) {
+        if (buildHeight(state.firstPlayer(), 26.0f * u, false) > availableTotal) {
             compact = true;
             grid = true;
             buttonHeight = tall(48.0f * u);
@@ -237,8 +237,8 @@ PauseAction drawPauseMenu(const GameState& state) {
         }
         navigate(g_nav, 4, grid);  // Two by two buttons also move with left and right.
         // Title, build and buttons form one group, centered, so a tall phone has no big hole.
-        const float rowHeight = buildRowHeight(state.player, availableTotal, compact);
-        const float panelHeight = std::min(availableTotal, buildHeight(state.player, rowHeight, compact));
+        const float rowHeight = buildRowHeight(state.firstPlayer(), availableTotal, compact);
+        const float panelHeight = std::min(availableTotal, buildHeight(state.firstPlayer(), rowHeight, compact));
         const float groupTop = l.top + (l.height() - (titleHeight + panelHeight + between + buttonsHeight)) * 0.5f;
         textShadowed("PAUSED", l.centerX(), groupTop, (compact ? 34.0f : 40.0f) * u, theme::kUiAccent, font::Align::Center, 4.0f * u);
         drawLevelTag(state.run.difficulty, l.centerX(), groupTop + (compact ? 36.0f : 44.0f) * u, font::Align::Center);

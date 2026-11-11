@@ -67,7 +67,7 @@ TEST_CASE("a player running away can't leave the boss out of weapon range") {
     // out of range. What matters is that the boss spends most of the time in range.
     int stepsInRange = 0;
     for (int i = 0; i < 3600; ++i) {
-        state->player.hp = state->player.maxHp;
+        state->firstPlayer().hp = state->firstPlayer().maxHp;
         if (state->run.phase == RunPhase::LevelUp) {
             run.chooseCard = 0;
         } else {
@@ -77,7 +77,7 @@ TEST_CASE("a player running away can't leave the boss out of weapon range") {
         state->events.clear();
         const Enemy* boss = findBoss(*state);
         REQUIRE(boss != nullptr);
-        if (distance(boss->pos, state->player.pos) < balance::kWeaponRange) stepsInRange++;
+        if (distance(boss->pos, state->firstPlayer().pos) < balance::kWeaponRange) stepsInRange++;
     }
     MESSAGE("boss in weapon range for ", stepsInRange, " of 3600 steps");
     CHECK(stepsInRange > 3600 * 3 / 4);
@@ -90,7 +90,7 @@ TEST_CASE("walkers and ammo crates keep arriving during the boss fight") {
     int cratesSeen = 0;
     int mostEnemies = 0;
     for (int i = 0; i < seconds * 60; ++i) {
-        state->player.hp = state->player.maxHp;
+        state->firstPlayer().hp = state->firstPlayer().maxHp;
         InputFrame input;
         if (state->run.phase == RunPhase::LevelUp) input.chooseCard = 0;
         const int before = countPickups(*state, PickupType::Ammo);

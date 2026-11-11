@@ -35,6 +35,8 @@ struct Options {
     Difficulty difficulty = Difficulty::Normal;
     maps::MapId map = maps::kDefaultMap;
     RunMode mode = RunMode::Story;
+    int players = 1;
+    bool summaryOnly = false;
     std::string csvFolder;  // Empty means no CSV.
 };
 
@@ -46,6 +48,8 @@ void printHelp() {
         "  --difficulty D       easy, normal, hard or hell (default normal), for games, wave tables and solo test\n"
         "  --map M              city or wasteland (default city), where the solid cars stand\n"
         "  --mode M             story or endless (default story). Endless prints its own survival table\n"
+        "  --players N          1 to 4 players in each game, every one a bot of the same profile (default 1)\n"
+        "  --summary            print only the one-line summary of each profile\n"
         "  --profile NAME       novice, average, skilled or all (default all)\n"
         "  --threads N          worker threads (default: all cores)\n"
         "  --runs               list every run on one line\n"
@@ -94,6 +98,15 @@ bool parseArgs(int argc, char** argv, Options& options) {
                 std::fprintf(stderr, "Unknown mode: %s (use story or endless)\n", name.c_str());
                 return false;
             }
+        } else if (arg == "--players" && hasValue) {
+            options.players = std::atoi(argv[++i]);
+            if (options.players < 1 || options.players > kMaxPlayers) {
+                std::fprintf(stderr, "Players must be 1 to %d\n", kMaxPlayers);
+                return false;
+            }
+        } else if (arg == "--summary") {
+            options.summaryOnly = true;
+            options.solo = false;
         } else if (arg == "--first-seed" && hasValue) {
             options.firstSeed = std::strtoull(argv[++i], nullptr, 10);
         } else if (arg == "--threads" && hasValue) {
@@ -139,6 +152,7 @@ int main(int argc, char** argv) {
     setGameDifficulty(options.difficulty);
     setGameMap(options.map);
     setGameMode(options.mode);
+    setGamePlayers(options.players);
     if (options.threads == 0) options.threads = static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
     const auto started = std::chrono::steady_clock::now();
     const auto elapsed = [&]() {
@@ -170,10 +184,18 @@ int main(int argc, char** argv) {
         });
         std::fprintf(stderr, "Games done after %.0f s.\n", elapsed());
 
+        const char* mapName = options.map == maps::MapId::Wasteland ? "wasteland" : "city";
+        if (options.summaryOnly) {
+            printDifficultyHeader(stdout, options.difficulty);
+            printTeamSummary(stdout, groups, options.players, mapName);
+            return 0;
+        }
         std::printf("Last Stand balance report: %d seeds per profile, first seed %llu\n", options.seeds,
                     static_cast<unsigned long long>(options.firstSeed));
         printDifficultyHeader(stdout, options.difficulty);
-        std::printf("Map: %s\n", options.map == maps::MapId::Wasteland ? "wasteland" : "city");
+        std::printf("Map: %s\n", mapName);
+        std::printf("Players: %d%s\n", options.players, options.players > 1 ? " (numbers about one player are the first player's)" : "");
+        printTeamSummary(stdout, groups, options.players, mapName);
         // The Story tables assume one boss at 10:00, so Endless gets its own table instead.
         if (options.mode == RunMode::Endless) {
             printEndlessReport(stdout, groups);

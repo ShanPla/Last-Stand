@@ -362,6 +362,24 @@ void printProfileReport(std::FILE* out, const ProfileRuns& group, bool withCorre
     if (withCorrelation) printCorrelation(out, group.runs);
 }
 
+void printTeamSummary(std::FILE* out, const std::vector<ProfileRuns>& groups, int players, const char* mapName) {
+    std::fprintf(out, "\nSummary: %d player%s, %s. Survival is when the run ended, win or loss.\n", players, players == 1 ? "" : "s", mapName);
+    std::fprintf(out, "%-9s %7s %5s %8s %8s %8s %6s %6s %8s %8s\n", "Profile", "players", "runs", "surv p10", "surv med", "surv p90", "win", "boss",
+                 "downs", "revives");
+    for (const ProfileRuns& group : groups) {
+        const std::vector<RunResult>& runs = group.runs;
+        const auto ends = collect(runs, [](const RunResult& r) { return static_cast<double>(r.endSeconds); });
+        const double total = static_cast<double>(std::max<size_t>(1, runs.size()));
+        const int wins = count(runs, won);
+        const int reached = count(runs, [](const RunResult& r) { return r.bossReached; });
+        const double downs = mean(collect(runs, [](const RunResult& r) { return static_cast<double>(r.downs); }));
+        const double revives = mean(collect(runs, [](const RunResult& r) { return static_cast<double>(r.revives); }));
+        std::fprintf(out, "%-9s %7d %5zu %8s %8s %8s %6s %6s %8.2f %8.2f\n", group.profile->name, players, runs.size(),
+                     mmss(percentile(ends, 10.0)).c_str(), mmss(median(ends)).c_str(), mmss(percentile(ends, 90.0)).c_str(),
+                     percent(wins, total).c_str(), percent(reached, total).c_str(), downs, revives);
+    }
+}
+
 void printEndlessReport(std::FILE* out, const std::vector<ProfileRuns>& groups) {
     std::fprintf(out, "\nEndless: survival time and bosses killed. Only death ends a run; 'limit' runs hit the step limit.\n");
     std::fprintf(out, "%-9s %5s %8s %8s %8s %8s %8s %6s %5s %5s %5s %5s %6s %6s\n", "Profile", "runs", "surv p10", "surv med", "surv p90",

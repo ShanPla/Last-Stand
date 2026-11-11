@@ -8,13 +8,13 @@
 
 namespace ls::weapons {
 
-bool fireLandmines(GameState& state, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
-    const Vec2 origin = state.player.pos;
+bool fireLandmines(GameState& state, int owner, const WeaponSlot& slot, const balance::WeaponLevel& stats) {
+    const Vec2 origin = state.players[owner].pos;
     // Mines need no target, but laying them in an empty field would waste ammo.
     if (enemies::nearest(state, origin, balance::kWeaponRange) < 0) return false;
 
     // Zombies chase the player, so mines go on the side they are coming through.
-    const Vec2 behind = state.player.facing * -1.0f;
+    const Vec2 behind = state.players[owner].facing * -1.0f;
     const float baseAngle = std::atan2(behind.y, behind.x);
     const float firstOffset = -0.5f * static_cast<float>(stats.count - 1) * balance::kMineSpreadRadians;
     for (int i = 0; i < stats.count; ++i) {
@@ -32,9 +32,10 @@ bool fireLandmines(GameState& state, const WeaponSlot& slot, const balance::Weap
         shot->kind = ProjectileKind::Mine;
         shot->source = slot.id;
         shot->evolved = slot.evolved;
+        shot->owner = static_cast<uint8_t>(owner);
     }
     // A mine is dropped, not aimed, so the gun keeps pointing where it was.
-    markFired(state, slot, state.player.aim);
+    markFired(state, owner, slot, state.players[owner].aim);
     return true;
 }
 

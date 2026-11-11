@@ -34,6 +34,10 @@ void printWaveAnalysis(std::FILE* out, Difficulty difficulty);
 // Measured pressure around each breather, next to what the wave table says.
 void printBreatherTable(std::FILE* out, const std::vector<ProfileRuns>& groups, Difficulty difficulty);
 
+// One short line per profile: survival, wins and boss reach, plus downs and revives in co-op.
+// Made for comparing tables across player counts and maps.
+void printTeamSummary(std::FILE* out, const std::vector<ProfileRuns>& groups, int players, const char* mapName);
+
 // Endless games: how long each profile survives, and how many bosses it kills.
 void printEndlessReport(std::FILE* out, const std::vector<ProfileRuns>& groups);
 

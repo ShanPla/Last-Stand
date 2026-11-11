@@ -46,23 +46,28 @@ struct BotProfile {
     bool dashDodges;           // Also dashes out of boss and charger warnings and shots about to land.
     // Level-ups.
     CardStyle cards;
+    // Co-op only: how long it looks at its cards before taking one. The run does not pause in
+    // co-op, so this is time spent with its weapons holding fire.
+    float coopCardSeconds = 1.5f;
 };
 
 const BotProfile& novice();
 const BotProfile& average();
 const BotProfile& skilled();
 
-// Plays the game by producing one InputFrame per step. It only reads the state.
-// Its own random generator is separate from the simulation's, so a bot never
-// changes how the game itself rolls dice.
+// Plays the game by producing one InputFrame per step for the player in its slot. It only
+// reads the state. Its own random generator is separate from the simulation's, so a bot
+// never changes how the game itself rolls dice. In co-op each player gets a bot of its own.
 class Bot {
 public:
     // A favorite weapon (index, or -1) is the one the card choices build toward.
-    Bot(const BotProfile& profile, uint64_t seed, int favoriteWeapon = -1);
+    Bot(const BotProfile& profile, uint64_t seed, int favoriteWeapon = -1, int slot = 0);
 
     InputFrame act(const GameState& state);
 
 private:
+    const Player& me(const GameState& state) const { return state.players[slot_]; }
+
     // An area the player must not stand in when its timer ends. A circle is a
     // segment whose two ends are the same point.
     struct Hazard {
@@ -94,6 +99,8 @@ private:
     BotProfile profile_;
     Rng rng_;
     int favorite_;
+    int slot_;
+    int cardWait_ = 0;  // Co-op: steps spent looking at the cards on screen.
     Vec2 heading_{1.0f, 0.0f};
     int stepsUntilDecision_ = 0;
 

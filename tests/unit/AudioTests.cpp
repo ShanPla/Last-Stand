@@ -460,8 +460,8 @@ TEST_CASE("the router has its own random numbers, and routing sounds does not ch
     auto silent = std::make_unique<GameState>();
     for (GameState* game : {played.get(), silent.get()}) {
         sim::newRun(*game, 77);
-        game->player.maxHp = 5000.0f;
-        game->player.hp = 5000.0f;
+        game->firstPlayer().maxHp = 5000.0f;
+        game->firstPlayer().hp = 5000.0f;
     }
     router::Router r;
     router::PlayRequest req;
@@ -485,7 +485,7 @@ TEST_CASE("the router has its own random numbers, and routing sounds does not ch
     CHECK_MESSAGE(changedByRouting == -1, "routing changed the game at step " << changedByRouting);
     CHECK_MESSAGE(partedAt == -1, "the routed game parted from the silent one at step " << partedAt);
     CHECK(played->rng.state == silent->rng.state);
-    CHECK(played->player.hp == silent->player.hp);
+    CHECK(played->firstPlayer().hp == silent->firstPlayer().hp);
     CHECK(sim::stateHash(*played) == sim::stateHash(*silent));
 }
 
@@ -502,8 +502,8 @@ TEST_CASE("the router's answers depend only on its own seed and the events, neve
     {
         auto game = std::make_unique<GameState>();
         sim::newRun(*game, 77);
-        game->player.maxHp = 5000.0f;
-        game->player.hp = 5000.0f;
+        game->firstPlayer().maxHp = 5000.0f;
+        game->firstPlayer().hp = 5000.0f;
         for (int i = 0; i < 60 * 30; ++i) {
             sim::step(*game, InputFrame{});
             for (const SimEvent& event : game->events) recorded.push_back(Recorded{i, event});
@@ -523,8 +523,8 @@ TEST_CASE("the router's answers depend only on its own seed and the events, neve
         if (gameSeed != 0) {
             game = std::make_unique<GameState>();
             sim::newRun(*game, gameSeed);
-            game->player.maxHp = 5000.0f;
-            game->player.hp = 5000.0f;
+            game->firstPlayer().maxHp = 5000.0f;
+            game->firstPlayer().hp = 5000.0f;
         }
         router::Router r(4242);
         router::PlayRequest req;

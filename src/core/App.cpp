@@ -193,7 +193,7 @@ void startDemo() {
     effects::reset();
     sim::newRun(*g_state, kDemoSeed, Difficulty::Normal, selectedMap());
     for (WeaponId id : {WeaponId::Shotgun, WeaponId::Smg, WeaponId::Flamethrower, WeaponId::Tesla, WeaponId::Blades}) {
-        weapons::grant(*g_state, id);
+        weapons::grant(*g_state, 0, id);
     }
     sim::setStressTargets(*g_state, kDemoEnemies, 0);
     g_inDemo = true;
@@ -253,7 +253,7 @@ void finishRun() {
     g_summary.timeSeconds = s.timeSeconds();
     g_summary.bossesKilled = s.run.bossesKilled;
     g_summary.kills = s.run.kills;
-    g_summary.level = s.player.level;
+    g_summary.level = s.firstPlayer().level;
     for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) g_summary.damageByWeapon[i] = s.run.damageByWeapon[i];
 
     // Best runs are kept per level and mode, so a new best only means something on the same
@@ -312,7 +312,7 @@ void runDemo(float dtReal) {
     g_demoAmmoTimer += dtReal;
     if (g_demoAmmoTimer > 4.0f) {
         g_demoAmmoTimer = 0.0f;
-        weapons::addAmmoFraction(*g_state, 1.0f);  // Keeps the guns firing.
+        weapons::addAmmoFraction(*g_state, 0, 1.0f);  // Keeps the guns firing.
     }
     int steps = 0;
     while (g_accumulator >= kDt && steps < kMaxStepsPerFrame) {
@@ -622,12 +622,12 @@ const char* queryState() {
                   "\"fps\":%d,\"frameMs\":%.2f,\"simMs\":%.3f,\"drawMs\":%.3f,\"width\":%d,\"height\":%d,\"dashLeft\":%.3f,\"dashCooldown\":%.2f,"
                   "\"dashX\":%.3f,\"dashY\":%.3f,\"difficulty\":%d,\"mode\":%d,\"bossesKilled\":%d,\"bossSpawned\":%d,"
                   "\"bossHp\":%.3f,\"hash\":\"%llx\"}",
-                  static_cast<int>(s.run.phase), s.run.tick, s.run.kills, s.player.level, static_cast<double>(s.player.hp),
-                  static_cast<double>(s.player.pos.x), static_cast<double>(s.player.pos.y), s.enemies.count, s.projectiles.count,
-                  s.enemyBullets.count, s.gems.count, s.run.offerCount, s.run.rerollsLeft, GetFPS(),
+                  static_cast<int>(s.run.phase), s.run.tick, s.run.kills, s.firstPlayer().level, static_cast<double>(s.firstPlayer().hp),
+                  static_cast<double>(s.firstPlayer().pos.x), static_cast<double>(s.firstPlayer().pos.y), s.enemies.count, s.projectiles.count,
+                  s.enemyBullets.count, s.gems.count, s.firstPlayer().offerCount, s.firstPlayer().rerollsLeft, GetFPS(),
                   static_cast<double>(g_frameMs), static_cast<double>(g_simMs), static_cast<double>(g_drawMs),
-                  GetScreenWidth(), GetScreenHeight(), static_cast<double>(s.player.dashLeft), static_cast<double>(s.player.dashCooldown),
-                  static_cast<double>(s.player.dashDir.x), static_cast<double>(s.player.dashDir.y), static_cast<int>(s.run.difficulty),
+                  GetScreenWidth(), GetScreenHeight(), static_cast<double>(s.firstPlayer().dashLeft), static_cast<double>(s.firstPlayer().dashCooldown),
+                  static_cast<double>(s.firstPlayer().dashDir.x), static_cast<double>(s.firstPlayer().dashDir.y), static_cast<int>(s.run.difficulty),
                   static_cast<int>(s.run.mode), s.run.bossesKilled, s.run.bossSpawned ? 1 : 0, static_cast<double>(s.run.bossHpFraction),
                   static_cast<unsigned long long>(sim::stateHash(s)));
     return json;
@@ -706,8 +706,8 @@ void debugCommand(int command, int value) {
     if (!keepsShowcase) g_showcase = command == kShowcase;
     switch (command) {
         case kShowcase: worldview::setupShowcase(s, value); break;
-        case kMovePlayerX: s.player.pos.x = s.player.prevPos.x = static_cast<float>(value); break;
-        case kMovePlayerY: s.player.pos.y = s.player.prevPos.y = static_cast<float>(value); break;
+        case kMovePlayerX: s.firstPlayer().pos.x = s.firstPlayer().prevPos.x = static_cast<float>(value); break;
+        case kMovePlayerY: s.firstPlayer().pos.y = s.firstPlayer().prevPos.y = static_cast<float>(value); break;
         case kSetQuality:
             worldview::setQuality(value);
             effects::setQuality(value);
@@ -732,7 +732,7 @@ void debugCommand(int command, int value) {
         case kPushEvent: {
             const auto type = static_cast<EventType>(value);
             const float size = type == EventType::Explosion ? 120.0f : (type == EventType::BombBlast ? balance::kBombRadius : 0.0f);
-            pushEvent(s, type, s.player.pos, size);
+            pushEvent(s, type, s.firstPlayer().pos, size);
             break;
         }
         case kResetFxCounters: effects::resetDebugCounters(); break;
@@ -758,13 +758,13 @@ void debugCommand(int command, int value) {
             g_seedOverride = static_cast<uint64_t>(value);
             startRun(g_seedOverride);
             break;
-        case kGrantXp: s.player.xp = std::max(0, s.player.xpToNext - value); break;
+        case kGrantXp: s.firstPlayer().xp = std::max(0, s.firstPlayer().xpToNext - value); break;
         case kStartRun: startRun(static_cast<uint64_t>(std::max(0, value))); break;
         case kForceDeath:
             if (!g_inDemo) {
-                s.player.hp = 0.0f;
+                s.firstPlayer().hp = 0.0f;
                 s.run.phase = RunPhase::Dead;
-                pushEvent(s, EventType::PlayerDied, s.player.pos);
+                pushEvent(s, EventType::PlayerDied, s.firstPlayer().pos);
             }
             break;
         case kForceVictory:
@@ -780,33 +780,33 @@ void debugCommand(int command, int value) {
             break;
         case kSetSafeArea: platform::setSafeInsetOverride(static_cast<float>(value)); break;
         case kGiveBuild: {
-            for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) weapons::grant(s, static_cast<WeaponId>(i));
-            for (int i = 0; i < s.player.weaponCount; ++i) {
-                WeaponSlot& slot = s.player.weapons[i];
+            for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) weapons::grant(s, 0, static_cast<WeaponId>(i));
+            for (int i = 0; i < s.firstPlayer().weaponCount; ++i) {
+                WeaponSlot& slot = s.firstPlayer().weapons[i];
                 slot.level = static_cast<uint8_t>(std::min(kMaxLevelPerItem, 1 + (i * 2) % 5 + (i == 0 ? 4 : 0)));
-                weapons::refill(s, slot);
+                weapons::refill(s.firstPlayer(), slot);
                 slot.magazine = std::max(0, slot.magazine - i * 3);
             }
-            if (s.player.weaponCount > 0) s.player.weapons[0].evolved = true;
-            if (s.player.weaponCount > 2) s.player.weapons[2].reloadLeft = 0.5f;
-            if (value == 1 && s.player.weaponCount > 1) {
-                s.player.weapons[1].magazine = 0;
-                s.player.weapons[1].reserve = 0;
-                s.player.weapons[1].reloadLeft = 0.0f;
+            if (s.firstPlayer().weaponCount > 0) s.firstPlayer().weapons[0].evolved = true;
+            if (s.firstPlayer().weaponCount > 2) s.firstPlayer().weapons[2].reloadLeft = 0.5f;
+            if (value == 1 && s.firstPlayer().weaponCount > 1) {
+                s.firstPlayer().weapons[1].magazine = 0;
+                s.firstPlayer().weapons[1].reserve = 0;
+                s.firstPlayer().weapons[1].reloadLeft = 0.0f;
             }
-            s.player.passiveCount = 0;
+            s.firstPlayer().passiveCount = 0;
             for (int i = 0; i < static_cast<int>(PassiveId::Count); ++i) {
-                PassiveSlot& passive = s.player.passives[s.player.passiveCount++];
+                PassiveSlot& passive = s.firstPlayer().passives[s.firstPlayer().passiveCount++];
                 passive.id = static_cast<PassiveId>(i);
                 passive.level = static_cast<uint8_t>(1 + (i * 2) % 5);
             }
-            upgrades::recomputeStats(s);
+            upgrades::recomputeStats(s, 0);
             break;
         }
-        case kSetHp: s.player.hp = s.player.maxHp * static_cast<float>(value) / 100.0f; break;
+        case kSetHp: s.firstPlayer().hp = s.firstPlayer().maxHp * static_cast<float>(value) / 100.0f; break;
         case kSetTime: s.run.tick = static_cast<uint32_t>(std::max(0, value)) * 60u; break;
         case kSetKills: s.run.kills = value; break;
-        case kSetLevel: s.player.level = std::max(1, value); break;
+        case kSetLevel: s.firstPlayer().level = std::max(1, value); break;
         case kFakeDamage:
             for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) {
                 s.run.damageByWeapon[i] = i < 7 ? static_cast<float>(value) * static_cast<float>((i * 7919) % 13 + 2) / 13.0f : 0.0f;
@@ -823,9 +823,9 @@ void debugCommand(int command, int value) {
                 if (enemy.type == EnemyType::Boss) enemy.hp = 0.0f;
             }
             break;
-        case kSetDashCooldown: s.player.dashCooldown = balance::kDashCooldownSeconds * static_cast<float>(value) / 100.0f; break;
+        case kSetDashCooldown: s.firstPlayer().dashCooldown = balance::kDashCooldownSeconds * static_cast<float>(value) / 100.0f; break;
         case kLevelUp:
-            if (!g_inDemo) upgrades::addXp(s, std::max(1, s.player.xpToNext - s.player.xp));
+            if (!g_inDemo) upgrades::addXp(s, 0, std::max(1, s.firstPlayer().xpToNext - s.firstPlayer().xp));
             break;
         default: break;
     }

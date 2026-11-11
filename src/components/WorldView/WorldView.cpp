@@ -184,7 +184,7 @@ void fitTargetToWindow() {
 // here in whole art pixels too, so to the renderer a shake is just the camera walking.
 // Returns where the camera would be with no shake, which is where the soldier stands.
 Vec2 aimCamera(const GameState& state, float alpha) {
-    const Vec2 player = lerp(state.player.prevPos, state.player.pos, alpha);
+    const Vec2 player = lerp(state.firstPlayer().prevPos, state.firstPlayer().pos, alpha);
     const float column = std::floor(player.x * kArtPerWorld + 0.5f);
     const float row = std::floor(player.y * kArtPerWorld * kTiltSquash + 0.5f);
     int shakeColumns = 0;
@@ -463,7 +463,7 @@ void draw(const GameState& state, float alpha) {
     const Vec2 ringCenter = aimCamera(state, alpha);
     updateGround(g_view, state.run.seed, state.run.map, maps::CrushedCars{state.run.crushed, state.run.crushedCount});
 
-    const Vec2 playerWorld = lerp(state.player.prevPos, state.player.pos, alpha);
+    const Vec2 playerWorld = lerp(state.firstPlayer().prevPos, state.firstPlayer().pos, alpha);
     updateSoldierAnimation(playerWorld, GetFrameTime());
 
     const DayLook look = dayLookAt(dayClock(state));

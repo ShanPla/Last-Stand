@@ -23,7 +23,7 @@ int enemiesAfter(Difficulty difficulty, int steps) {
     state->run.nextEliteEvent = 1000;
     int spawned = 0;
     for (int i = 0; i < steps; ++i) {
-        state->player.hp = state->player.maxHp;
+        state->firstPlayer().hp = state->firstPlayer().maxHp;
         InputFrame input;
         if (state->run.phase == RunPhase::LevelUp) input.chooseCard = 0;
         spawned = static_cast<int>(state->run.nextId);
@@ -36,7 +36,7 @@ int enemiesAfter(Difficulty difficulty, int steps) {
 // Stands still and takes the first card, with the player kept alive.
 void playSeconds(GameState& state, int seconds) {
     for (int i = 0; i < 60 * seconds; ++i) {
-        state.player.hp = state.player.maxHp;
+        state.firstPlayer().hp = state.firstPlayer().maxHp;
         InputFrame input;
         if (state.run.phase == RunPhase::LevelUp) input.chooseCard = 0;
         sim::step(state, input);
@@ -70,9 +70,9 @@ TEST_CASE("harder levels give zombies more health") {
 TEST_CASE("harder levels hurt the player more") {
     auto easy = newRun(Difficulty::Easy);
     auto hard = newRun(Difficulty::Hard);
-    player::damage(*easy, 40.0f);
-    player::damage(*hard, 40.0f);
-    CHECK(easy->player.hp > hard->player.hp);
+    player::damage(*easy, 0, 40.0f);
+    player::damage(*hard, 0, 40.0f);
+    CHECK(easy->firstPlayer().hp > hard->firstPlayer().hp);
 }
 
 TEST_CASE("harder levels spawn more zombies") {
@@ -123,9 +123,9 @@ TEST_CASE("Hell spawns more, tougher zombies than Hard, and hits harder") {
     auto hard = newRun(Difficulty::Hard);
     auto hell = newRun(Difficulty::Hell);
     CHECK(enemies::spawn(*hard, EnemyType::Brute, Vec2{500.0f, 0.0f}, false)->maxHp < enemies::spawn(*hell, EnemyType::Brute, Vec2{500.0f, 0.0f}, false)->maxHp);
-    player::damage(*hard, 40.0f);
-    player::damage(*hell, 40.0f);
-    CHECK(hard->player.hp > hell->player.hp);
+    player::damage(*hard, 0, 40.0f);
+    player::damage(*hell, 0, 40.0f);
+    CHECK(hard->firstPlayer().hp > hell->firstPlayer().hp);
 }
 
 TEST_CASE("a full pool simply stops spawning, and the run keeps going") {
@@ -134,7 +134,7 @@ TEST_CASE("a full pool simply stops spawning, and the run keeps going") {
     CHECK(enemies::spawn(*hell, EnemyType::Walker, Vec2{2000.0f, 0.0f}, false) == nullptr);
     hell->run.nextEliteEvent = 1000;
     for (int i = 0; i < 60 * 5; ++i) {
-        hell->player.hp = hell->player.maxHp;
+        hell->firstPlayer().hp = hell->firstPlayer().maxHp;
         sim::step(*hell, InputFrame{});
         hell->events.clear();
     }

@@ -14,7 +14,7 @@ namespace {
 std::unique_ptr<GameState> newRun() {
     auto state = std::make_unique<GameState>();
     sim::newRun(*state, 21, Difficulty::Hell);
-    state->player.pos = Vec2{0.0f, 0.0f};
+    state->firstPlayer().pos = Vec2{0.0f, 0.0f};
     return state;
 }
 
@@ -106,7 +106,7 @@ TEST_CASE("the same full-pool run gives the same state twice") {
         fillPool(*state);
         for (int i = 0; i < 20; ++i) enemies::spawn(*state, EnemyType::Brute, Vec2{900.0f + static_cast<float>(i), 0.0f}, true);
         for (int i = 0; i < 120; ++i) {
-            state->player.hp = state->player.maxHp;
+            state->firstPlayer().hp = state->firstPlayer().maxHp;
             sim::step(*state, InputFrame{});
             state->events.clear();
         }
@@ -124,7 +124,7 @@ TEST_CASE("play below the cap is unchanged by the pool-full rule") {
         uint64_t hash = 0;
         int peak = 0;
         for (int i = 0; i < 60 * 150; ++i) {
-            state->player.hp = state->player.maxHp;
+            state->firstPlayer().hp = state->firstPlayer().maxHp;
             InputFrame input;
             input.moveX = (i / 240) % 2 == 0 ? 1.0f : -0.6f;
             input.moveY = (i / 360) % 2 == 0 ? 0.4f : -0.8f;
