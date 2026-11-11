@@ -153,6 +153,29 @@ bool done(const Reader& r) { return !r.bad && r.at == r.size; }
 template <typename E>
 bool validEnum(uint32_t value, E count) { return value < static_cast<uint32_t>(count); }
 
+bool validLevel(uint32_t level) { return level >= 1 && level <= static_cast<uint32_t>(kMaxLevelPerItem); }
+
+// What an event's detail byte names depends on the event. Sound and effects use it to look up
+// tables, so a value past the end of its table is refused.
+bool validDetail(EventType type, uint32_t detail) {
+    switch (type) {
+        case EventType::EnemyHit: return detail <= static_cast<uint32_t>(WeaponId::Count);  // Count: no weapon gets the credit.
+        case EventType::WeaponFired:
+        case EventType::ReloadStarted:
+        case EventType::WeaponDry:
+        case EventType::EvolutionGained:
+        case EventType::Explosion: return validEnum(detail, WeaponId::Count);
+        case EventType::EnemyKilled:
+        case EventType::EliteKilled:
+        case EventType::BossKilled: return validEnum(detail, EnemyType::Count);
+        case EventType::PickupCollected: return validEnum(detail, PickupType::Count);
+        case EventType::BossAttack: return validEnum(detail, balance::BossAttack::Count);
+        case EventType::BossPhaseChanged: return detail <= 2;
+        case EventType::CarCrushed: return detail <= static_cast<uint32_t>(maps::CarSprite::TankerSide);
+        default: return true;  // The detail is not used.
+    }
+}
+
 // ---- Snapshot parts ------------------------------------------------------------------
 
 void putPlayer(Writer& w, const Player& p) {
@@ -195,6 +218,7 @@ void putPlayer(Writer& w, const Player& p) {
         w.u8(static_cast<uint32_t>(p.passives[i].id));
         w.u8(p.passives[i].level);
     }
+    w.u16(p.offerSerial);
     w.u8(static_cast<uint32_t>(clampInt(p.rerollsLeft, 0, 255)));
     w.u8(static_cast<uint32_t>(clampInt(p.pendingLevels, 0, 255)));
     w.u8(static_cast<uint32_t>(clampInt(p.offerCount, 0, kOffersPerLevel)));
@@ -246,6 +270,7 @@ bool getPlayer(Reader& r, Player& p) {
         s.id = static_cast<WeaponId>(idByte & 0x7Fu);
         s.evolved = (idByte & 0x80u) != 0;
         s.level = static_cast<uint8_t>(r.u8());
+        if (!validLevel(s.level)) return false;  // Levels index tables from 1, so 0 would read before them.
         s.magazine = static_cast<int>(r.u16());
         s.reserve = static_cast<int>(r.u16());
         s.reloadLeft = getUnit16(r, kTimeScale);
@@ -257,7 +282,9 @@ bool getPlayer(Reader& r, Player& p) {
         if (!validEnum(id, PassiveId::Count)) return false;
         p.passives[i].id = static_cast<PassiveId>(id);
         p.passives[i].level = static_cast<uint8_t>(r.u8());
+        if (!validLevel(p.passives[i].level)) return false;
     }
+    p.offerSerial = static_cast<uint16_t>(r.u16());
     p.rerollsLeft = static_cast<int>(r.u8());
     p.pendingLevels = static_cast<int>(r.u8());
     p.offerCount = static_cast<int>(r.u8());
@@ -272,6 +299,7 @@ bool getPlayer(Reader& r, Player& p) {
         c.weapon = static_cast<WeaponId>(weapon);
         c.passive = static_cast<PassiveId>(passive);
         c.newLevel = static_cast<uint8_t>(r.u8());
+        if (!validLevel(c.newLevel)) return false;
     }
     return !r.bad;
 }
@@ -284,9 +312,13 @@ bool needsExtra(const Enemy& e) {
 
 void putEnemy(Writer& w, const Enemy& e, Vec2 origin) {
     const bool extra = needsExtra(e);
+    // Which player it chases, so it is drawn facing them. Slot 0 is the usual one, and only
+    // the others take a byte.
+    const bool target = e.target != 0;
     w.u16(shortId(e.id));
-    w.u8(static_cast<uint32_t>(e.type) | (e.elite ? 0x10u : 0u) | (e.flash > 0.0f ? 0x20u : 0u) | (extra ? 0x40u : 0u));
+    w.u8(static_cast<uint32_t>(e.type) | (e.elite ? 0x10u : 0u) | (e.flash > 0.0f ? 0x20u : 0u) | (extra ? 0x40u : 0u) | (target ? 0x80u : 0u));
     putPos(w, e.pos, origin);
+    if (target) w.u8(e.target & 3u);
     if (!extra) return;
     w.u8(e.state);
     putAngle(w, e.dir);
@@ -306,6 +338,11 @@ bool getEnemy(Reader& r, Enemy& e, Vec2 origin) {
     e.flash = (flags & 0x20u) != 0 ? 0.06f : 0.0f;
     e.pos = getPos(r, origin);
     e.prevPos = e.pos;
+    if ((flags & 0x80u) != 0) {
+        const uint32_t target = r.u8();
+        if (target >= static_cast<uint32_t>(kMaxPlayers)) return false;
+        e.target = static_cast<uint8_t>(target);
+    }
     e.radius = balance::kEnemyStats[static_cast<int>(e.type)].radius;
     e.hp = 1.0f;
     e.maxHp = 1.0f;
@@ -370,6 +407,7 @@ bool getEvent(Reader& r, SimEvent& e, uint8_t& age, Vec2 origin) {
     if (type > static_cast<uint32_t>(EventType::PlayerRevived)) return false;
     e.type = static_cast<EventType>(type);
     e.detail = static_cast<uint8_t>(r.u8());
+    if (!validDetail(e.type, e.detail)) return false;
     e.player = static_cast<uint8_t>(r.u8());
     if (e.player != kNoPlayer && e.player >= kMaxPlayers) return false;
     e.flag = (r.u8() & 1u) != 0;
@@ -517,6 +555,7 @@ int encodeInput(const InputMessage& m, uint8_t* out, int capacity) {
     startMessage(w, MessageKind::Input);
     w.u8(m.runNumber);
     w.u32(m.newestSeq);
+    w.u16(static_cast<uint32_t>(clampInt(m.crushedCount, 0, kMaxCrushedCars)));
     const int count = clampInt(m.count, 0, balance::kNetInputRepeat);
     w.u8(static_cast<uint32_t>(count));
     for (int i = 0; i < count; ++i) {
@@ -533,8 +572,11 @@ bool decodeInput(const uint8_t* data, int size, InputMessage& out) {
     InputMessage m;
     m.runNumber = static_cast<uint8_t>(r.u8());
     m.newestSeq = r.u32();
+    m.crushedCount = static_cast<int>(r.u16());
     m.count = static_cast<int>(r.u8());
-    if (m.count < 1 || m.count > balance::kNetInputRepeat) return false;
+    if (m.count < 1 || m.count > balance::kNetInputRepeat || m.crushedCount > kMaxCrushedCars) return false;
+    // Steps are numbered from 1, so the oldest sample can't come before step 1.
+    if (m.newestSeq < static_cast<uint32_t>(m.count)) return false;
     for (int i = 0; i < m.count; ++i) {
         // -128 is never sent, so full speed is the same both ways.
         m.samples[i].moveX = static_cast<int8_t>(clampInt(static_cast<int8_t>(r.u8()), -127, 127));
@@ -550,6 +592,7 @@ int encodeCardPick(const CardPick& m, uint8_t* out, int capacity) {
     Writer w{out, capacity};
     startMessage(w, MessageKind::CardPick);
     w.u8(m.runNumber);
+    w.u16(m.offerSerial);
     w.u8(static_cast<uint8_t>(m.card));
     w.u8(m.reroll ? 1u : 0u);
     return finish(w);
@@ -560,6 +603,7 @@ bool decodeCardPick(const uint8_t* data, int size, CardPick& out) {
     if (!openMessage(r, MessageKind::CardPick)) return false;
     CardPick m;
     m.runNumber = static_cast<uint8_t>(r.u8());
+    m.offerSerial = static_cast<uint16_t>(r.u16());
     m.card = static_cast<int8_t>(r.u8());
     m.reroll = (r.u8() & 1u) != 0;
     if (!done(r) || m.card < -1 || m.card >= kOffersPerLevel) return false;

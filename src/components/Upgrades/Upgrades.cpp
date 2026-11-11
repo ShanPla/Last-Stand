@@ -68,6 +68,7 @@ void buildOffers(GameState& state, int slot) {
     Card candidates[kWeaponTypes + kPassiveTypes + 8];
     const int candidateCount = collectCandidates(player, candidates, static_cast<int>(std::size(candidates)));
     player.offerCount = 0;
+    player.offerSerial++;
 
     // Evolutions are always shown first, because they are the build's payoff.
     int remaining = candidateCount;

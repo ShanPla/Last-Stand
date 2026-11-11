@@ -58,6 +58,7 @@ struct InputSample {
 struct InputMessage {
     uint8_t runNumber = 0;
     uint32_t newestSeq = 0;  // The player's own step number for samples[0].
+    int crushedCount = 0;    // Flat cars this player knows of, so the host can send any that were lost.
     int count = 0;           // samples[i] is the step newestSeq - i.
     InputSample samples[balance::kNetInputRepeat];
 };
@@ -70,6 +71,7 @@ float unquantizeMove(int8_t value);
 
 struct CardPick {
     uint8_t runNumber = 0;
+    uint16_t offerSerial = 0;  // Which set of cards the pick was made for. See Player::offerSerial.
     int8_t card = -1;
     bool reroll = false;
 };

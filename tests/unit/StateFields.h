@@ -182,7 +182,7 @@ inline const StructInfo& carIdInfo() {
 }
 
 inline const StructInfo& playerInfo() {
-    static const StructInfo info{"Player", sizeof(Player), 2,
+    static const StructInfo info{"Player", sizeof(Player), 0,
         {LS_FLT(Player, pos), LS_DRAW(Player, prevPos), LS_FLT(Player, facing), LS_FLT(Player, aim), LS_FLT(Player, hp),
          LS_FLT(Player, maxHp), LS_FLT(Player, invulnerable), LS_DRAW(Player, hitFlash), LS_FLT(Player, dashDir),
          LS_FLT(Player, dashLeft), LS_FLT(Player, dashCooldown), LS_FLT(Player, dashInvulnerable), LS_NUM(Player, level),
@@ -190,7 +190,7 @@ inline const StructInfo& playerInfo() {
          LS_COUNT(Player, weaponCount), LS_NEST(Player, passives), LS_COUNT(Player, passiveCount), LS_NUM(Player, rerollsLeft),
          LS_NUM(Player, pendingLevels), LS_NEST(Player, offers), LS_NUM(Player, offerCount), LS_FLT(Player, bladeAngle),
          LS_FLT(Player, damageByWeapon), LS_FLT(Player, reviveProgress), LS_FLT(Player, cardShield), LS_NUM(Player, downed),
-         LS_NUM(Player, cardsOpen)}, &untouchedBytes<Player>};
+         LS_NUM(Player, cardsOpen), LS_NUM(Player, offerSerial)}, &untouchedBytes<Player>};
     return info;
 }
 

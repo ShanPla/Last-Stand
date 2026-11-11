@@ -140,7 +140,7 @@ TEST_CASE("net codec: inputs keep their steps, and movement is rounded to 1/127"
     uint8_t bytes[64];
     const int size = encodeInput(message, bytes, sizeof(bytes));
     REQUIRE(size > 0);
-    CHECK(size <= 8 + 3 * balance::kNetInputRepeat);
+    CHECK(size <= 10 + 3 * balance::kNetInputRepeat);
     InputMessage back;
     REQUIRE(decodeInput(bytes, size, back));
     CHECK(back.newestSeq == 500);
@@ -158,20 +158,24 @@ TEST_CASE("net codec: inputs keep their steps, and movement is rounded to 1/127"
     // No samples, or more than are ever sent, is not an input.
     uint8_t broken[64];
     std::memcpy(broken, bytes, static_cast<size_t>(size));
-    broken[7] = 0;
+    broken[9] = 0;  // The sample count.
     CHECK_FALSE(decodeInput(broken, size, back));
-    broken[7] = static_cast<uint8_t>(balance::kNetInputRepeat + 1);
+    broken[9] = static_cast<uint8_t>(balance::kNetInputRepeat + 1);
     CHECK_FALSE(decodeInput(broken, size, back));
 }
 
 TEST_CASE("net codec: small reliable messages round trip") {
     uint8_t bytes[2048];
-    CardPick pick{4, 2, false};
+    CardPick pick;
+    pick.runNumber = 4;
+    pick.offerSerial = 300;
+    pick.card = 2;
     int size = encodeCardPick(pick, bytes, sizeof(bytes));
     CardPick pickBack;
     REQUIRE(decodeCardPick(bytes, size, pickBack));
     CHECK(pickBack.card == 2);
-    bytes[3] = 7;  // A card that is not on screen.
+    CHECK(pickBack.offerSerial == 300);
+    bytes[5] = 7;  // A card that is not on screen.
     CHECK_FALSE(decodeCardPick(bytes, size, pickBack));
 
     CrushedMessage crushed;
@@ -358,12 +362,22 @@ struct Pipe {
     Rng rng;
     int sentUnreliable = 0;
     int maxSnapshotBytes = 0;
+    // The next dropCount messages of this kind are lost, even reliable ones, as when the
+    // browser's queue overflows.
+    MessageKind dropKind = MessageKind::RunStart;
+    int dropCount = 0;
+    int dropped = 0;
 };
 
 class PipeEnd final : public Link {
 public:
     PipeEnd(Pipe& pipe, int me) : pipe_(pipe), me_(me) {}
     bool send(int to, const uint8_t* data, int size, bool reliable) override {
+        if (pipe_.dropCount > 0 && kindOf(data, size) == static_cast<uint8_t>(pipe_.dropKind)) {
+            pipe_.dropCount--;
+            pipe_.dropped++;
+            return true;
+        }
         if (!reliable) {
             pipe_.sentUnreliable++;
             if (pipe_.rng.next01() < pipe_.lossShare) return true;
@@ -434,7 +448,7 @@ struct Rig {
         while (hostClock >= kDt - 1e-6f) {
             hostClock -= kDt;
             InputFrame inputs[kMaxPlayers];
-            hostFillInputs(inputs, hostState->playerCount());
+            hostFillInputs(*hostState, inputs, hostState->playerCount());
             hostBeforeStep(*hostState);
             sim::step(*hostState, inputs, hostState->playerCount());
         }
@@ -549,7 +563,7 @@ TEST_CASE("net session: a player who left stays down, and the host keeps a late 
         rig.pipe.messages.clear();
         hostReceive();
         InputFrame inputs[kMaxPlayers];
-        hostFillInputs(inputs, 2);
+        hostFillInputs(*rig.hostState, inputs, 2);
         sim::step(*rig.hostState, inputs, 2);
         rig.hostState->events.clear();
     }
@@ -560,7 +574,7 @@ TEST_CASE("net session: a player who left stays down, and the host keeps a late 
     hostSetConnected(1, false);
     for (int i = 0; i < 5; ++i) {
         InputFrame inputs[kMaxPlayers];
-        hostFillInputs(inputs, 2);
+        hostFillInputs(*rig.hostState, inputs, 2);
         hostBeforeStep(*rig.hostState);
         sim::step(*rig.hostState, inputs, 2);
         rig.hostState->events.clear();
@@ -570,7 +584,7 @@ TEST_CASE("net session: a player who left stays down, and the host keeps a late 
     rig.hostState->players[0].pos = rig.hostState->players[1].pos;
     for (int i = 0; i < 60 * 5; ++i) {
         InputFrame inputs[kMaxPlayers];
-        hostFillInputs(inputs, 2);
+        hostFillInputs(*rig.hostState, inputs, 2);
         hostBeforeStep(*rig.hostState);
         sim::step(*rig.hostState, inputs, 2);
         rig.hostState->events.clear();
@@ -597,4 +611,194 @@ TEST_CASE("net session: the host's pause and the end of the run reach the client
     CHECK(clientRunEnded());
     CHECK(clientRunEnd().phase == RunPhase::Dead);
     useSession(nullptr);
+}
+
+// ---- Fixes from review ------------------------------------------------------------
+
+TEST_CASE("net session: a dash the host has not used yet keeps its cooldown on the client") {
+    Rig rig;
+    rig.pipe.delayFrames = 9;  // Snapshots built before the host got the dash arrive after it.
+    for (int i = 0; i < 40; ++i) rig.frame(0.0f, 0.0f);
+    rig.frame(1.0f, 0.0f, true);
+    float lowest = 10.0f;
+    for (int i = 0; i < 40; ++i) {
+        rig.frame(1.0f, 0.0f);
+        lowest = std::min(lowest, rig.clientState->players[1].dashCooldown);
+    }
+    // The button stays locked for the whole cooldown, as it is on the host.
+    CHECK(lowest > balance::kDashCooldownSeconds - 41.0f * kDt - 0.2f);
+    CHECK(rig.hostState->players[1].dashCooldown > 0.0f);
+}
+
+TEST_CASE("net session: a card pick names its cards, so a pick for older cards is dropped, and a lost pick is sent again") {
+    Rig rig;
+    for (int i = 0; i < 20; ++i) rig.frame(0.0f, 0.0f);
+    upgrades::addXp(*rig.hostState, 1, rig.hostState->players[1].xpToNext - rig.hostState->players[1].xp);
+    for (int i = 0; i < 20; ++i) rig.frame(0.0f, 0.0f);
+    REQUIRE(rig.hostState->players[1].cardsOpen);
+    const uint16_t serial = rig.hostState->players[1].offerSerial;
+    CHECK(rig.clientState->players[1].offerSerial == serial);
+
+    // A pick for cards the player no longer sees is ignored.
+    CardPick stale;
+    stale.runNumber = 1;
+    stale.offerSerial = static_cast<uint16_t>(serial - 1);
+    stale.card = 0;
+    uint8_t bytes[16];
+    const int size = encodeCardPick(stale, bytes, sizeof(bytes));
+    rig.pipe.messages.push_back(Pipe::Message{2, 0, rig.pipe.frame, true, std::vector<uint8_t>(bytes, bytes + size)});
+    for (int i = 0; i < 5; ++i) rig.frame(0.0f, 0.0f);
+    CHECK(rig.hostState->players[1].cardsOpen);
+    CHECK(rig.hostState->players[1].level == 2);
+
+    // The real pick is lost on the way, and sent again.
+    rig.pipe.dropKind = MessageKind::CardPick;
+    rig.pipe.dropCount = 1;
+    useSession(rig.client);
+    clientPickCard(*rig.clientState, 0, false);
+    useSession(nullptr);
+    for (int i = 0; i < 90; ++i) rig.frame(0.0f, 0.0f);
+    CHECK(rig.pipe.dropped == 1);
+    CHECK_FALSE(rig.hostState->players[1].cardsOpen);
+    CHECK_FALSE(rig.clientState->players[1].cardsOpen);
+}
+
+TEST_CASE("net session: the end of the run and flat cars arrive even when a copy is lost") {
+    Rig rig;
+    for (int i = 0; i < 20; ++i) rig.frame(0.0f, 0.0f);
+    // Two flat cars, and the message about them is lost.
+    rig.pipe.dropKind = MessageKind::Crushed;
+    rig.pipe.dropCount = 1;
+    rig.hostState->run.crushed[0] = maps::CarId{123, 456};
+    rig.hostState->run.crushed[1] = maps::CarId{789, 12};
+    rig.hostState->run.crushedCount = 2;
+    for (int i = 0; i < 120; ++i) rig.frame(0.0f, 0.0f);
+    CHECK(rig.pipe.dropped == 1);
+    REQUIRE(rig.clientState->run.crushedCount == 2);
+    CHECK(rig.clientState->run.crushed[1].texelX == 789);
+
+    rig.pipe.dropKind = MessageKind::RunEnd;
+    rig.pipe.dropCount = 1;
+    rig.hostState->run.phase = RunPhase::Won;
+    for (int i = 0; i < 90; ++i) rig.frame(0.0f, 0.0f);
+    CHECK(rig.pipe.dropped == 2);
+    useSession(rig.client);
+    CHECK(clientRunEnded());
+    CHECK(clientRunEnd().phase == RunPhase::Won);
+    useSession(nullptr);
+}
+
+TEST_CASE("net session: another run is made from the room as it is now") {
+    Pipe pipe;
+    PipeEnd end{pipe, 0};
+    Session* session = createSession();
+    useSession(session);
+    setLink(&end);
+    auto state = std::make_unique<GameState>();
+    RunStart start;
+    start.runNumber = 1;
+    start.seed = 5;
+    start.playerCount = 3;
+    start.netIds[0] = 0;
+    start.netIds[1] = 1;
+    start.netIds[2] = 3;
+    hostStart(*state, start);
+    hostSetConnected(1, false);  // Lobby slot 1 leaves.
+    RunStart again = start;
+    again.seed = 6;
+    again.playerCount = 2;
+    again.netIds[1] = 3;
+    again.netIds[2] = 255;
+    hostRestart(*state, again);
+    CHECK(state->playerCount() == 2);
+    CHECK(settings().runNumber == 2);
+    CHECK(settings().seed == 6u);
+    CHECK(netIdOf(1) == 3);
+    CHECK(hostConnected(1));
+    CHECK(netIdOf(2) == -1);
+    destroySession(session);
+}
+
+TEST_CASE("net session: a dash in an input step the host drops still happens") {
+    Pipe pipe;
+    PipeEnd end{pipe, 0};
+    Session* session = createSession();
+    useSession(session);
+    setLink(&end);
+    auto state = std::make_unique<GameState>();
+    RunStart start;
+    start.runNumber = 1;
+    start.seed = 8;
+    start.playerCount = 2;
+    start.netIds[0] = 0;
+    start.netIds[1] = 2;
+    hostStart(*state, start);
+    // Twelve steps arrive at once, after a stall. Only the newest eight are kept, and the
+    // dash was in step 2.
+    for (uint32_t newest : {6u, 12u}) {
+        InputMessage message;
+        message.runNumber = 1;
+        message.newestSeq = newest;
+        message.count = 6;
+        for (int i = 0; i < 6; ++i) message.samples[i] = quantizeInput(0.0f, 0.0f, newest - static_cast<uint32_t>(i) == 2u);
+        uint8_t bytes[64];
+        const int size = encodeInput(message, bytes, sizeof(bytes));
+        pipe.messages.push_back(Pipe::Message{2, 0, 0, false, std::vector<uint8_t>(bytes, bytes + size)});
+    }
+    hostReceive();
+    for (int i = 0; i < 3; ++i) {
+        InputFrame inputs[kMaxPlayers];
+        hostFillInputs(*state, inputs, 2);
+        sim::step(*state, inputs, 2);
+        state->events.clear();
+    }
+    CHECK(state->players[1].dashCooldown > 0.0f);
+    destroySession(session);
+}
+
+TEST_CASE("net codec: zombie targets travel, and out-of-range levels, details and steps are refused") {
+    auto state = coopState(3);
+    play(*state, 60 * 20);
+    REQUIRE(state->enemies.count > 0);
+    auto snap = fullSnapshot(*state, state->players[0].pos);
+    snap->enemies[0].target = 2;
+    std::vector<uint8_t> bytes(kMaxMessageBytes);
+    int size = encodeSnapshot(*snap, bytes.data(), balance::kNetSnapshotBytes);
+    auto back = std::make_unique<Snapshot>();
+    REQUIRE(decodeSnapshot(bytes.data(), size, *back));
+    CHECK(back->enemies[0].target == 2);
+    CHECK(back->players[1].offerSerial == state->players[1].offerSerial);
+
+    // A weapon at level 0 would read before the start of the level table.
+    snap->players[1].weapons[0].level = 0;
+    size = encodeSnapshot(*snap, bytes.data(), balance::kNetSnapshotBytes);
+    CHECK_FALSE(decodeSnapshot(bytes.data(), size, *back));
+    snap->players[1].weapons[0].level = 6;
+    size = encodeSnapshot(*snap, bytes.data(), balance::kNetSnapshotBytes);
+    CHECK_FALSE(decodeSnapshot(bytes.data(), size, *back));
+    snap->players[1].weapons[0].level = 1;
+
+    // An event naming a weapon that does not exist.
+    snap->eventCount = 1;
+    snap->events[0] = SimEvent{};
+    snap->events[0].type = EventType::WeaponFired;
+    snap->events[0].detail = static_cast<uint8_t>(WeaponId::Count);
+    size = encodeSnapshot(*snap, bytes.data(), balance::kNetSnapshotBytes);
+    CHECK_FALSE(decodeSnapshot(bytes.data(), size, *back));
+    snap->events[0].detail = static_cast<uint8_t>(WeaponId::Rifle);
+    size = encodeSnapshot(*snap, bytes.data(), balance::kNetSnapshotBytes);
+    CHECK(decodeSnapshot(bytes.data(), size, *back));
+
+    // Input steps start at 1, so six samples can't end at step 3.
+    InputMessage input;
+    input.runNumber = 1;
+    input.newestSeq = 3;
+    input.count = 6;
+    uint8_t small[64];
+    size = encodeInput(input, small, sizeof(small));
+    InputMessage inputBack;
+    CHECK_FALSE(decodeInput(small, size, inputBack));
+    input.newestSeq = 6;
+    size = encodeInput(input, small, sizeof(small));
+    CHECK(decodeInput(small, size, inputBack));
 }

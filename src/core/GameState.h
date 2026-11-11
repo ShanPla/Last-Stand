@@ -200,6 +200,9 @@ struct Player {
     float cardShield = 0.0f;      // Seconds of safety left while choosing a card.
     bool downed = false;          // At 0 HP and waiting for a teammate. Zombies ignore a downed player.
     bool cardsOpen = false;       // Cards are offered. The run goes on, and this player's weapons hold fire.
+    // Goes up each time a new set of cards is offered, so a pick sent over the network can say
+    // which cards it was made for. No step reads it. It is only hashed in co-op.
+    uint16_t offerSerial = 0;
 };
 
 enum class RunPhase : uint8_t { Playing, LevelUp, Won, Dead };

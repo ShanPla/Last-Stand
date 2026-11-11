@@ -340,8 +340,19 @@ EM_JS(void, ls_js_net_listen, (), {
         if (net.lsGameQueue) return;
         net.lsGameQueue = [];
         net.onMessage = function (from, bytes) {
-            if (net.lsGameQueue.length >= 1024) net.lsGameQueue.shift();
-            net.lsGameQueue.push([from, bytes.slice()]);
+            var queue = net.lsGameQueue;
+            if (queue.length >= 1024) {
+                // Full (a hidden tab runs no frames to empty it). A snapshot or an input is
+                // dropped first, because a newer one replaces it. The rare reliable messages
+                // (settings, card picks, the end of the run) stay.
+                var drop = 0;
+                for (var k = 0; k < queue.length; k++) {
+                    var kind = queue[k][1][0];
+                    if (kind === 2 || kind === 3) { drop = k; break; }
+                }
+                queue.splice(drop, 1);
+            }
+            queue.push([from, bytes.slice()]);
         };
         document.addEventListener("visibilitychange", function () {
             try { if (Module._ls_net_page_hidden) Module._ls_net_page_hidden(document.hidden ? 1 : 0); } catch (error) {}

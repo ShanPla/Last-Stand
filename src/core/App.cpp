@@ -136,6 +136,7 @@ bool g_holdSim = false;  // Debug only: the simulation stands still, for screens
 bool g_hostAway = false;
 bool g_netOverlay = false;       // The network debug overlay, toggled with F3.
 bool g_cardsWereOpen = false;    // Co-op cards open over the running game, so their delay restarts each time.
+uint16_t g_cardsSerial = 0;      // The set of cards on screen, so a new set restarts the delay too.
 bool g_slotConnected[kMaxPlayers] = {true, true, true, true};
 char g_netDebug[640] = "";
 
@@ -258,34 +259,27 @@ void showNewCoopRun() {
     showNewRun();
 }
 
-void startRun(uint64_t seed) {
-    // The co-op host's Restart starts another run for the whole room.
-    if (coopHost()) {
-        netgame::hostRestart(*g_state, seed != 0 ? seed : pickSeed());
-        showNewCoopRun();
-        return;
-    }
-    g_state->localSlot = 0;
-    sim::newRun(*g_state, seed != 0 ? seed : pickSeed(), save::current().difficulty, selectedMap(), save::current().mode);
-    showNewRun();
-}
-
-// The host pressed Start: this machine runs the real game, with the lobby's players in it.
-// The host is slot 0, and the others follow in the lobby's order.
-void startCoopHost() {
+// A co-op run's settings, made from the room as it is now. The host is slot 0, and the others
+// follow in the lobby's order, so a player who has left is not in the run.
+netgame::RunStart coopSettingsFromLobby(uint64_t seed) {
     const net::Lobby& lobby = net::lobby();
     netgame::RunStart start;
     start.runNumber = 1;
-    start.seed = pickSeed();
+    start.seed = seed;
     start.map = selectedMap();
     start.difficulty = save::current().difficulty;
     start.mode = save::current().mode;
-    start.netIds[0] = static_cast<uint8_t>(lobby.players[lobby.host].id);
+    start.netIds[0] = static_cast<uint8_t>(lobby.players[lobby.host >= 0 ? lobby.host : 0].id);
     start.playerCount = 1;
     for (int i = 0; i < lobby.count && start.playerCount < kMaxPlayers; ++i) {
         if (i != lobby.host) start.netIds[start.playerCount++] = static_cast<uint8_t>(lobby.players[i].id);
     }
-    netgame::hostStart(*g_state, start);
+    return start;
+}
+
+// The host pressed Start: this machine runs the real game, with the lobby's players in it.
+void startCoopHost() {
+    netgame::hostStart(*g_state, coopSettingsFromLobby(pickSeed()));
     showNewCoopRun();
 }
 
@@ -294,6 +288,23 @@ void leaveCoop() {
     net::leaveRoom();
     netgame::stop();
     g_hostAway = false;
+}
+
+void startRun(uint64_t seed) {
+    if (coopHost()) {
+        const uint64_t next = seed != 0 ? seed : pickSeed();
+        // The co-op host's Restart starts another run for whoever is still in the room.
+        if (net::lobby().count >= 2) {
+            netgame::hostRestart(*g_state, coopSettingsFromLobby(next));
+            showNewCoopRun();
+            return;
+        }
+        // Everyone else has left, so the next run is an ordinary single-player one.
+        leaveCoop();
+    }
+    g_state->localSlot = 0;
+    sim::newRun(*g_state, seed != 0 ? seed : pickSeed(), save::current().difficulty, selectedMap(), save::current().mode);
+    showNewRun();
 }
 
 void pauseGame() {
@@ -380,8 +391,10 @@ void runSimulation(float dtReal) {
     const double start = GetTime();
     g_accumulator += dtReal;
     InputFrame frameInput;
-    frameInput.moveX = g_input.moveX;
-    frameInput.moveY = g_input.moveY;
+    // A co-op host choosing a card stands still: the keys move the selection, not the soldier.
+    const bool choosing = coopRun() && g_state->localPlayer().cardsOpen;
+    frameInput.moveX = choosing ? 0.0f : g_input.moveX;
+    frameInput.moveY = choosing ? 0.0f : g_input.moveY;
 
     int steps = 0;
     while (g_accumulator >= kDt && steps < kMaxStepsPerFrame) {
@@ -390,13 +403,13 @@ void runSimulation(float dtReal) {
         frameInput.reroll = g_pendingChoice.reroll;
         g_pendingChoice = ui::LevelUpChoice{};
         // One press is one dash: the first step of the frame takes it, the others don't.
-        frameInput.dash = g_pendingDash;
+        frameInput.dash = g_pendingDash && !choosing;
         g_pendingDash = false;
         if (coopHost()) {
             // The host's own input is slot 0. Everyone else's comes from the network.
             InputFrame inputs[kMaxPlayers];
             inputs[0] = frameInput;
-            netgame::hostFillInputs(inputs, g_state->playerCount());
+            netgame::hostFillInputs(*g_state, inputs, g_state->playerCount());
             netgame::hostBeforeStep(*g_state);
             sim::step(*g_state, inputs, g_state->playerCount());
         } else {
@@ -632,8 +645,12 @@ static void drawUiPass(float dtReal, bool playing) {
     // The HUD belongs to play only. Menus and the level-up cards cover the world, and
     // the cards show the build themselves.
     const bool coopCards = coopRun() && !g_inDemo && g_screen == Screen::Playing && g_state->localPlayer().cardsOpen && g_state->run.phase == RunPhase::Playing;
-    if (coopCards != g_cardsWereOpen) {
+    // A new set of cards (the next level's, or a reroll) gets its own short input delay too, so a
+    // press meant for the old cards can't pick one of the new ones.
+    const uint16_t serial = g_state->localPlayer().offerSerial;
+    if (coopCards != g_cardsWereOpen || (coopCards && serial != g_cardsSerial)) {
         g_cardsWereOpen = coopCards;
+        g_cardsSerial = serial;
         ui::resetLevelUpCards();
     }
     if (!g_inDemo && g_screen == Screen::Playing && g_state->run.phase != RunPhase::LevelUp && !coopCards) {
@@ -795,7 +812,8 @@ void frame() {
 
     // Back keys: pause while playing, and step back out of menus.
     if (g_input.back) {
-        if (playing) pauseGame();
+        // Esc pauses while choosing a co-op card too, because the run goes on behind the cards.
+        if (playing || (running && g_state->run.phase == RunPhase::Playing)) pauseGame();
         else if (!g_inDemo && g_screen == Screen::Paused) {
             audio::playUi(audio::UiSound::Back);
             setScreen(Screen::Playing);

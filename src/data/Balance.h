@@ -683,5 +683,8 @@ inline constexpr float kNetCorrectionRate = 0.18f;
 inline constexpr float kNetHostSilentSeconds = 1.5f;
 // The host sends the run's settings again this often until each player answers.
 inline constexpr float kNetStartResendSeconds = 0.5f;
+// A reliable message that seems lost (a card pick still not taken, flat cars still missing, the
+// run's end) is sent again after this long.
+inline constexpr float kNetResendSeconds = 0.75f;
 
 }  // namespace ls::balance

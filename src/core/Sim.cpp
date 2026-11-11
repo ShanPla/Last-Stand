@@ -374,6 +374,7 @@ uint64_t stateHash(const GameState& state) {
             mix(player.cardShield);
             mix(player.downed);
             mix(player.cardsOpen);
+            mix(player.offerSerial);
         }
         for (const Enemy& enemy : state.enemies) mix(enemy.target);
         for (const Projectile& shot : state.projectiles) mix(shot.owner);

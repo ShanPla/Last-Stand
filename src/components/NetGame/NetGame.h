@@ -82,7 +82,7 @@ void hostReceive();
 
 // Fills one step of input for every other player, from their queue. inputs[0] (the host) is
 // left alone. Call once before each sim::step. A player who left or is late is handled here.
-void hostFillInputs(InputFrame inputs[], int count);
+void hostFillInputs(const GameState& state, InputFrame inputs[], int count);
 
 // A player who left the room. They stay in the run, down and still, so the team can go on.
 void hostSetConnected(int slot, bool connected);
@@ -100,8 +100,9 @@ void hostAfterFrame(GameState& state, float dt, bool paused, bool away);
 // because the browser may not run another frame until it comes back.
 void hostSendPause(bool paused, bool away);
 
-// The host starts another run in the same room, with a new seed. Everyone still there joins.
-void hostRestart(GameState& state, uint64_t seed);
+// The host starts another run in the same room. The settings are made from the room as it is
+// now, so a player who left is not in it. The run number goes up by itself.
+void hostRestart(GameState& state, const RunStart& settings);
 
 // For the tests: zombies within the view radius of that player at the last snapshot.
 int hostNearEnemies(int slot);

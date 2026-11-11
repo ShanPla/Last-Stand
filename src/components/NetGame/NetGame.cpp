@@ -61,6 +61,9 @@ struct Remote {
     uint32_t eventTick[balance::kNetMaxEvents] = {};
     int eventCount = 0;
     int sentCrushed = 0;
+    int clientCrushed = 0;     // Flat cars the player says it has, from its inputs.
+    float crushedLag = 0.0f;   // How long the player has been behind what was sent.
+    bool carryDash = false;    // A dropped step had a dash, so the next step gets it.
     int nearEnemies = 0;
 };
 
@@ -114,7 +117,7 @@ struct Session {
     float snapshotClock = 0.0f;
     bool sentPaused = false;
     bool sentAway = false;
-    bool sentEnd = false;
+    float endResend = 0.0f;   // Seconds until the run's end is sent again.
     Stored stored[kStoredSnapshots];
     bool pendingStart = false;
     bool haveRun = false;
@@ -137,7 +140,10 @@ struct Session {
     int eventHead = 0;
     int eventCount = 0;
     bool pickSent = false;
-    uint32_t pickSignature = 0;
+    CardPick lastPick;         // Sent again if the host's snapshots still show the same cards.
+    float pickAge = 0.0f;
+    uint32_t lastDashSeq = 0;  // The prediction step of this player's latest dash press.
+    int crushedKnown = 0;      // Flat cars received, reported back in every input.
 };
 
 namespace {
@@ -202,23 +208,34 @@ void beginHostRun(GameState& state) {
     sim::newRun(state, S().settings.seed, S().settings.difficulty, S().settings.map, S().settings.mode, S().settings.playerCount);
     state.localSlot = 0;
     S().snapshotClock = 0.0f;
-    S().sentPaused = S().sentAway = S().sentEnd = false;
+    S().sentPaused = S().sentAway = false;
+    S().endResend = 0.0f;
+    // Every run is made from the room as it is now, so everyone in it is connected.
     for (int slot = 0; slot < kMaxPlayers; ++slot) {
-        const bool wasConnected = S().remotes[slot].connected;
         resetRemote(S().remotes[slot]);
         S().remotes[slot].inRun = slot > 0 && slot < S().settings.playerCount;
-        S().remotes[slot].connected = wasConnected;
     }
     for (int slot = 1; slot < S().settings.playerCount; ++slot) sendStart(slot);
 }
 
+// Drops the oldest waiting step. Its dash moves on to the next step, so a press is never lost.
+void dropOldest(Remote& remote) {
+    const bool dash = remote.queue[remote.queueHead].dash;
+    remote.queueHead = (remote.queueHead + 1) % kQueueCapacity;
+    remote.queueCount--;
+    if (!dash) return;
+    if (remote.queueCount > 0) remote.queue[remote.queueHead].dash = true;
+    else remote.carryDash = true;
+}
+
 void pushQueued(Remote& remote, uint32_t seq, const InputSample& sample) {
-    if (remote.queueCount == kQueueCapacity) {
-        remote.queueHead = (remote.queueHead + 1) % kQueueCapacity;
-        remote.queueCount--;
-    }
+    if (remote.queueCount == kQueueCapacity) dropOldest(remote);
     const int at = (remote.queueHead + remote.queueCount) % kQueueCapacity;
     remote.queue[at] = sample;
+    if (remote.carryDash) {
+        remote.queue[at].dash = true;
+        remote.carryDash = false;
+    }
     remote.queueSeq[at] = seq;
     remote.queueCount++;
     remote.newestQueued = seq;
@@ -226,7 +243,9 @@ void pushQueued(Remote& remote, uint32_t seq, const InputSample& sample) {
 }
 
 void onInput(Remote& remote, const InputMessage& message) {
+    if (message.newestSeq < static_cast<uint32_t>(message.count)) return;  // Steps start at 1.
     remote.answered = true;
+    remote.clientCrushed = message.crushedCount;
     S().inputsIn.add();
     // Oldest first. Steps already queued (the repeats) are skipped.
     for (int i = message.count - 1; i >= 0; --i) {
@@ -236,10 +255,7 @@ void onInput(Remote& remote, const InputMessage& message) {
     }
     // A player whose inputs pile up (a burst after a stall) is brought back to the present:
     // old steps are dropped, so their controls do not lag behind for the rest of the run.
-    while (remote.queueCount > balance::kNetMaxQueuedInputs) {
-        remote.queueHead = (remote.queueHead + 1) % kQueueCapacity;
-        remote.queueCount--;
-    }
+    while (remote.queueCount > balance::kNetMaxQueuedInputs) dropOldest(remote);
 }
 
 // Whether a player should be told about an event. Their own events always, the big moments
@@ -405,16 +421,6 @@ void sendRunEnd(const GameState& state) {
 // ---- Client ----------------------------------------------------------------------
 
 Snapshot g_decode;  // Each packet is read here first, so a broken one never touches a stored snapshot.
-// The offers a card was already sent for, so one press is one pick.
-
-uint32_t offerSignature(const Player& p) {
-    uint32_t sig = static_cast<uint32_t>(p.level) * 2654435761u ^ static_cast<uint32_t>(p.rerollsLeft) * 40503u ^ static_cast<uint32_t>(p.pendingLevels) * 9973u;
-    for (int i = 0; i < p.offerCount; ++i) {
-        sig = sig * 31u + static_cast<uint32_t>(p.offers[i].kind) * 7u + static_cast<uint32_t>(p.offers[i].weapon) * 13u + static_cast<uint32_t>(p.offers[i].passive) * 17u +
-              p.offers[i].newLevel;
-    }
-    return sig;
-}
 
 void indexEnemies(Stored& stored) {
     std::memset(stored.slots, -1, sizeof(stored.slots));
@@ -455,6 +461,10 @@ void clearClient() {
     S().eventHead = 0;
     S().eventCount = 0;
     S().pickSent = false;
+    S().lastPick = CardPick{};
+    S().pickAge = 0.0f;
+    S().lastDashSeq = 0;
+    S().crushedKnown = 0;
 }
 
 Stored* newestStored() {
@@ -505,7 +515,7 @@ void reconcile(GameState& state, const Snapshot& snapshot) {
 
 // The parts of this player that the host decides, copied over the prediction. Where they
 // stand, which way they face and their dash stay predicted.
-void takeHostFields(Player& me, const Player& host) {
+void takeHostFields(Player& me, const Player& host, uint32_t ackSeq) {
     const Vec2 pos = me.pos;
     const Vec2 prevPos = me.prevPos;
     const Vec2 facing = me.facing;
@@ -520,8 +530,14 @@ void takeHostFields(Player& me, const Player& host) {
     me.dashDir = dashDir;
     me.dashLeft = dashLeft;
     me.dashInvulnerable = dashInvulnerable;
-    // A dash the host never got (its input was lost) must not lock the button for 4 seconds.
-    me.dashCooldown = std::min(dashCooldown, host.dashCooldown + 0.5f);
+    // The cooldown is the host's once the host has used the step of the latest dash press, run
+    // on by the steps since. Before that, a snapshot can show a cooldown from before the dash, and
+    // taking it would let this player dash again while the host still refuses.
+    if (ackSeq >= S().lastDashSeq) {
+        me.dashCooldown = std::max(0.0f, host.dashCooldown - static_cast<float>(S().seq - ackSeq) * kDt);
+    } else {
+        me.dashCooldown = dashCooldown;
+    }
 }
 
 void onSnapshot(GameState& state, const uint8_t* data, int size) {
@@ -559,20 +575,23 @@ void onSnapshot(GameState& state, const uint8_t* data, int size) {
     }
     Player& me = state.players[state.localSlot];
     reconcile(state, g_decode);
-    takeHostFields(me, g_decode.players[state.localSlot]);
-    if (S().pickSent && (!me.cardsOpen || offerSignature(me) != S().pickSignature)) S().pickSent = false;
+    takeHostFields(me, g_decode.players[state.localSlot], h.ackSeq);
+    if (S().pickSent && (!me.cardsOpen || me.offerSerial != S().lastPick.offerSerial)) S().pickSent = false;
 }
 
 void onCrushed(GameState& state, const uint8_t* data, int size) {
     CrushedMessage message;
     if (!decodeCrushed(data, size, message) || message.runNumber != S().settings.runNumber) return;
-    if (message.firstIndex > state.run.crushedCount) return;  // Cannot happen on an ordered channel.
+    // A gap means an earlier message was lost. The host sends again from the count this player
+    // reports, so this one can wait.
+    if (message.firstIndex > state.run.crushedCount) return;
     bool added = false;
     for (int i = state.run.crushedCount - message.firstIndex; i < message.count; ++i) {
         if (state.run.crushedCount >= kMaxCrushedCars) break;
         state.run.crushed[state.run.crushedCount++] = message.cars[i];
         added = true;
     }
+    S().crushedKnown = state.run.crushedCount;
     // A flat car is no longer solid, so the prediction must stop sliding around it.
     if (added) obstacles::invalidate(state);
 }
@@ -630,6 +649,7 @@ void sendInputs() {
     InputMessage message;
     message.runNumber = S().settings.runNumber;
     message.newestSeq = S().seq;
+    message.crushedCount = S().crushedKnown;
     message.count = static_cast<int>(std::min<uint32_t>(S().seq, balance::kNetInputRepeat));
     for (int i = 0; i < message.count; ++i) message.samples[i] = S().history[(S().seq - static_cast<uint32_t>(i)) % kHistorySize].input;
     const int size = encodeInput(message, g_buffer, sizeof(g_buffer));
@@ -642,6 +662,7 @@ void predictStep(GameState& state, const InputSample& input, bool canMove) {
     HistoryStep& step = S().history[S().seq % kHistorySize];
     step.seq = S().seq;
     step.input = input;
+    if (input.dash) S().lastDashSeq = S().seq;
     Player& me = state.players[state.localSlot];
     if (canMove) {
         obstacles::update(state);
@@ -821,10 +842,12 @@ void hostStart(GameState& state, const RunStart& start) {
     beginHostRun(state);
 }
 
-void hostRestart(GameState& state, uint64_t seed) {
+void hostRestart(GameState& state, const RunStart& start) {
     if (S().role != Role::Host) return;
-    S().settings.runNumber = static_cast<uint8_t>(S().settings.runNumber + 1);
-    S().settings.seed = seed;
+    const uint8_t next = static_cast<uint8_t>(S().settings.runNumber + 1);
+    S().settings = start;
+    S().settings.runNumber = next;
+    S().settings.yourSlot = 0;
     beginHostRun(state);
 }
 
@@ -858,7 +881,7 @@ void hostReceive() {
     }
 }
 
-void hostFillInputs(InputFrame inputs[], int count) {
+void hostFillInputs(const GameState& state, InputFrame inputs[], int count) {
     if (S().role != Role::Host) return;
     for (int slot = 1; slot < count && slot < S().settings.playerCount; ++slot) {
         Remote& remote = S().remotes[slot];
@@ -881,9 +904,19 @@ void hostFillInputs(InputFrame inputs[], int count) {
             input.moveX = unquantizeMove(remote.last.moveX);
             input.moveY = unquantizeMove(remote.last.moveY);
         }
+        if (remote.carryDash && remote.queueCount == 0) {
+            // A dropped step had a dash and nothing newer is waiting: it is used now.
+            input.dash = true;
+            remote.carryDash = false;
+        }
         if (remote.hasPick) {
-            input.chooseCard = remote.pick.card;
-            input.reroll = remote.pick.reroll;
+            // Only for the cards on the player's screen. A pick made for cards that have since
+            // been replaced (a reroll, or the next level's cards) is dropped.
+            const Player& player = state.players[slot];
+            if (player.cardsOpen && remote.pick.offerSerial == player.offerSerial) {
+                input.chooseCard = remote.pick.card;
+                input.reroll = remote.pick.reroll;
+            }
             remote.hasPick = false;
         }
     }
@@ -939,7 +972,20 @@ void hostAfterFrame(GameState& state, float dt, bool paused, bool away) {
         }
     }
     for (int slot = 1; slot < S().settings.playerCount; ++slot) {
-        if (S().remotes[slot].connected) sendCrushed(state, slot);
+        Remote& remote = S().remotes[slot];
+        if (!remote.connected) continue;
+        // A player still behind on flat cars a while after they were sent lost one: send again
+        // from what they have. The wait leaves time for messages already on their way.
+        if (remote.answered && remote.clientCrushed < remote.sentCrushed) {
+            remote.crushedLag += dt;
+            if (remote.crushedLag > balance::kNetResendSeconds) {
+                remote.sentCrushed = remote.clientCrushed;
+                remote.crushedLag = 0.0f;
+            }
+        } else {
+            remote.crushedLag = 0.0f;
+        }
+        sendCrushed(state, slot);
     }
 
     S().snapshotClock += dt;
@@ -957,9 +1003,13 @@ void hostAfterFrame(GameState& state, float dt, bool paused, bool away) {
         }
     }
 
-    if (!S().sentEnd && (state.run.phase == RunPhase::Won || state.run.phase == RunPhase::Dead)) {
-        S().sentEnd = true;
-        sendRunEnd(state);
+    // The run's end, again and again until the next run, so a lost copy costs at most a moment.
+    if (state.run.phase == RunPhase::Won || state.run.phase == RunPhase::Dead) {
+        S().endResend -= dt;
+        if (S().endResend <= 0.0f) {
+            S().endResend = balance::kNetResendSeconds;
+            sendRunEnd(state);
+        }
     }
 }
 
@@ -1003,6 +1053,17 @@ void clientFrame(GameState& state, float dt, float moveX, float moveY, bool dash
 
     S().sinceSnapshot += dt;
     S().stats.snapshotAge = S().sinceSnapshot;
+    // A pick the host has not taken yet, while its snapshots still show the same cards, is sent
+    // again: it may have been lost on the way.
+    if (S().pickSent) {
+        S().pickAge += dt;
+        const Player& me = state.localPlayer();
+        if (S().pickAge > balance::kNetResendSeconds && me.cardsOpen && me.offerSerial == S().lastPick.offerSerial) {
+            S().pickAge = 0.0f;
+            const int size = encodeCardPick(S().lastPick, g_buffer, sizeof(g_buffer));
+            sendTo(S().settings.netIds[0], g_buffer, size, true);
+        }
+    }
     if (dash) S().dashWaiting = true;
     const bool frozen = S().hostPaused || clientHostAway() || state.run.phase == RunPhase::Dead || state.run.phase == RunPhase::Won || !S().haveSnapshot;
 
@@ -1049,18 +1110,19 @@ void clientPickCard(const GameState& state, int card, bool reroll) {
     if (S().role != Role::Client || (card < 0 && !reroll)) return;
     const Player& me = state.localPlayer();
     if (!me.cardsOpen) return;
-    // One pick for one set of cards. The next snapshot shows whether the host took it.
-    const uint32_t signature = offerSignature(me);
-    if (S().pickSent && signature == S().pickSignature) return;
+    // One pick for one set of cards, named by the host's offer number. The snapshots show
+    // whether the host took it, and clientFrame sends it again if not.
+    if (S().pickSent && me.offerSerial == S().lastPick.offerSerial) return;
     CardPick pick;
     pick.runNumber = S().settings.runNumber;
+    pick.offerSerial = me.offerSerial;
     pick.card = static_cast<int8_t>(card);
     pick.reroll = card < 0 && reroll;
     const int size = encodeCardPick(pick, g_buffer, sizeof(g_buffer));
-    if (sendTo(S().settings.netIds[0], g_buffer, size, true)) {
-        S().pickSent = true;
-        S().pickSignature = signature;
-    }
+    sendTo(S().settings.netIds[0], g_buffer, size, true);
+    S().pickSent = true;
+    S().lastPick = pick;
+    S().pickAge = 0.0f;
 }
 
 float clientAlpha() { return std::clamp(S().predictClock / kDt, 0.0f, 1.0f); }
