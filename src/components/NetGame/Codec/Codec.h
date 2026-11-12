@@ -26,6 +26,7 @@ enum class MessageKind : uint8_t {
     Crushed = 5,   // Host to each player, reliable: cars the boss has flattened.
     Pause = 6,     // Host to each player, reliable: the host paused, or left the tab.
     RunEnd = 7,    // Host to each player, reliable: the run is over, with the results.
+    NotInRun = 8,  // Host to a player who came back, reliable: the current run was made without them.
 };
 
 // Reads the kind of a packet, or 0 when it is too short or from another protocol version.
@@ -99,6 +100,17 @@ struct PauseMessage {
 };
 int encodePause(const PauseMessage& message, uint8_t* out, int capacity);
 bool decodePause(const uint8_t* data, int size, PauseMessage& out);
+
+// ---- Not in this run ---------------------------------------------------------------
+
+// A player who rejoins the room after the host started another run without them (the host
+// pressed Play Again while they were away) has no soldier in it. The host says so, and their
+// game leaves the room with "That run has ended".
+struct NotInRunMessage {
+    uint8_t runNumber = 0;  // The host's current run, for the logs and the tests.
+};
+int encodeNotInRun(const NotInRunMessage& message, uint8_t* out, int capacity);
+bool decodeNotInRun(const uint8_t* data, int size, NotInRunMessage& out);
 
 // ---- Run end ---------------------------------------------------------------------
 

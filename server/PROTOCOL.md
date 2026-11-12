@@ -34,9 +34,14 @@ Version: 1. Every connection starts with a `hello` that names this version.
   name. The browser offers `Player N` when the field is empty.
 - When the host leaves or disconnects, the room closes: every other player gets
   `{"t":"closed","reason":"host-left"}` and the room is deleted. There is no host migration.
-- A non-host leaving frees its slot, and the others get a new `room` message.
+- Before the start, a non-host leaving (or disconnecting) frees its slot, and the others get a
+  new `room` message.
+- After the start, a non-host leaving or disconnecting keeps its slot as **away**: the name and
+  the rejoin token stay, nobody else can take it, and the others get a `room` message where that
+  player has `"away":true`. Kept slots are freed only when the room closes. See Rejoin below.
 - An empty room is deleted at once. A room older than 3 hours is closed with reason `expired`.
-- Once the host sends `start`, the room is marked started and nobody new can join.
+- Once the host sends `start`, the room is marked started and nobody new can join. Only a player
+  who was in it can come back, with `rejoin`.
 - After a room closes, or after a player leaves, that socket stays open and is in no room, so it
   can create or join again. A player already in a room cannot `create` or `join` (`bad-request`);
   it must `leave` first.
@@ -55,6 +60,8 @@ Version: 1. Every connection starts with a `hello` that names this version.
 | `{"t":"relay","on":true}` | This player's WebRTC failed. The server records the flag and sends no answer. It does not gate forwarding: binary frames are passed through for every player in a started room, because the other end of a failed pair has its own flag off and must still be able to send through the server. |
 | `{"t":"ping","n":17}` | Answered with `pong` with the same `n`, for measuring round trips. |
 
+| `{"t":"rejoin","code":"K7QXM","token":"..."}` | Take back a kept slot in a started room. Only from a socket in no room (`bad-request` otherwise, and when `code` or `token` is not a string). The code is case-insensitive. No such room: `not-found`. A room that has not started, a token that matches no slot, or the host's token: `bad-token`. On success everyone gets a `room` message, and the rejoiner then gets `started` (with its token) like at the start. |
+
 `ready`, `start`, `leave`, `signal` and `relay` need the sender to be in a room, or they get
 `not-in-room`. Unknown message types, text that is not JSON, and JSON that is not an
 object with a string `t` all get `bad-request`.
@@ -64,15 +71,33 @@ object with a string `t` all get `bad-request`.
 | Message | Meaning |
 |---|---|
 | `{"t":"welcome","v":1}` | Answer to a good `hello`. |
-| `{"t":"room","code":"K7QXM","you":1,"host":0,"started":false,"players":[{"id":0,"name":"Ana","ready":true},...]}` | The whole lobby, sent to everyone in the room after any change. |
-| `{"t":"started"}` | The host started the run. Sent to everyone, right after a final `room` message with `started` true. |
+| `{"t":"room","code":"K7QXM","you":1,"host":0,"started":false,"players":[{"id":0,"name":"Ana","ready":true},...]}` | The whole lobby, sent to everyone in the room after any change. A player who is away has `"away":true`; the field is left out for everyone else. |
+| `{"t":"started","token":"..."}` | The host started the run. Sent to everyone, right after a final `room` message with `started` true. Each player's copy carries that player's own rejoin token, and no other message ever contains a token. Also sent to a player after a successful `rejoin`. |
 | `{"t":"signal","from":0,"data":{...}}` | Signaling from another player. |
-| `{"t":"closed","reason":"host-left"}` | The room is gone. Reasons: `host-left`, `expired`. |
+| `{"t":"closed","reason":"host-left"}` | The room is gone. Reasons: `host-left`, `expired`, and `replaced`: this socket's slot was taken back with its token on another connection (see Rejoin), and the room itself goes on. |
 | `{"t":"error","code":"full"}` | A request failed. Codes below. |
 | `{"t":"pong","n":17}` | Answer to `ping`. |
 
 Error codes: `version`, `bad-request`, `bad-name`, `not-found`, `full`, `started`, `not-host`,
-`not-in-room`, `server-full`, `too-big`, `rate`.
+`not-in-room`, `server-full`, `too-big`, `rate`, `bad-token`.
+
+## Rejoin
+
+- Every player gets a rejoin token when they create or join a room: 16 random bytes from the
+  system's secure random source, written as 22 base64url characters. It is sent only once the run
+  starts, in that player's own `started` message, because a slot is only ever kept in a started
+  room. Tokens are compared in constant time, and they never appear in `room` messages or logs.
+- A non-host in a started room whose socket closes, or who sends `leave`, stays in the slot as
+  away. Signals and binary frames to an away slot are dropped silently.
+- `rejoin` with the room's code and the slot's token puts the new socket into that slot, with the
+  same id and name. The others see a `room` message with the player no longer away, and the host,
+  seeing that, opens a fresh WebRTC connection to them (only the host makes offers).
+- The right token on a slot that still has a socket also works: the new socket takes the slot,
+  the old one gets `closed` with reason `replaced` and is left in no room, and the others see the
+  player go away and come back in two `room` messages. This covers a page reloaded, or a phone
+  that changed networks, before the server noticed the old socket was dead, which can take over
+  a minute. A wrong token on such a slot gets `bad-token` and changes nothing.
+- The host cannot rejoin: when the host leaves, the room closes, and every kept slot goes with it.
 
 ## Fallback game messages (binary)
 

@@ -34,10 +34,10 @@ for (const [name, param] of [['wakeBudgetMs', 'wake'], ['fallbackMs', 'fallback'
 // Counts binary frames sent to the server, so tests can tell which path carried the game data.
 window.wsBinarySent = 0;
 const realSend = WebSocket.prototype.send;
-WebSocket.prototype.send = function (data) { if (typeof data !== 'string') window.wsBinarySent++; return realSend.call(this, data); };
+WebSocket.prototype.send = function (data) { window.lastSocket = this; if (typeof data !== 'string') window.wsBinarySent++; return realSend.call(this, data); };
 window.net = LastStandNet.create(options);
 window.events = [];
-for (const name of ['phase', 'room', 'started', 'closed', 'error', 'server-lost', 'peer-dropped', 'transport', 'wake']) {
+for (const name of ['phase', 'room', 'started', 'closed', 'error', 'server-lost', 'peer-dropped', 'peer-back', 'transport', 'wake', 'reconnecting', 'reconnected']) {
   net.on(name, (data) => events.push({ e: name, ...data }));
 }
 // A message is: kind(1) index(4) then a pattern that depends on the index. Lengths vary.
@@ -483,18 +483,18 @@ test('host leaving closes the room for the client with host-left', async () => {
   relay.stop();
 });
 
-test('a client leaving gives the host peer-dropped with its id, and the host carries on', async () => {
+test('a client leaving a started run gives the host peer-dropped with its id, keeps its seat as away, and the host carries on', async () => {
   const relay = await startRelay();
   const pair = await startedPair(relay);
   await pair.client.page.evaluate(() => net.leave());
   await until(pair.host.page, () => events.some((e) => e.e === 'peer-dropped'));
   const out = await pair.host.page.evaluate(() => ({
     dropped: events.filter((e) => e.e === 'peer-dropped').map((e) => e.id),
-    players: net.players().map((p) => p.id), phase: net.phase(), transport: net.transportOf(1),
+    players: net.players().map((p) => `${p.id}:${p.away}`), phase: net.phase(), transport: net.transportOf(1),
     sendToGone: net.send(1, new Uint8Array([0, 0, 0, 0, 0])),
   }));
   assert.deepEqual(out.dropped, [1]);
-  assert.deepEqual(out.players, [0]);
+  assert.deepEqual(out.players, ['0:false', '1:true'], 'the seat is kept, marked away, because they may come back');
   assert.equal(out.phase, 'Starting');
   assert.equal(out.transport, 'none');
   assert.equal(out.sendToGone, false, 'sending to a dropped player must not throw or pretend');
@@ -513,6 +513,106 @@ test('closing the tab tells the server at once, so the host sees peer-dropped qu
   relay.stop();
 });
 
+// ---- Rejoin ------------------------------------------------------------------------
+
+const SEAT_KEY = 'lastStand.coopRejoin';
+
+for (const [label, extra] of [['webrtc tried', ''], ['relay', '&transport=relay']]) {
+  test(`rejoin: a guest whose socket drops gets its seat back by itself, and the host makes a fresh pair (${label})`, async () => {
+    const relay = await startRelay();
+    const pair = await startedPair(relay, extra, extra);
+    // Only the guest keeps a seat: a host's room closes with it.
+    const seat = await pair.client.page.evaluate((key) => ({ can: net.canRejoin(), info: net.rejoinInfo(), stored: JSON.parse(localStorage.getItem(key)) }), SEAT_KEY);
+    assert.equal(seat.can, true);
+    assert.deepEqual(seat.info, { code: pair.code, slot: 1, name: 'Ben' });
+    assert.match(seat.stored.token, /^[A-Za-z0-9_-]{22}$/);
+    assert.equal(await pair.host.page.evaluate(() => net.canRejoin()), false);
+    await settledTransports(pair);
+
+    // A network cut: the socket closes without the page asking.
+    await pair.client.page.evaluate(() => window.lastSocket.close());
+    await until(pair.client.page, () => events.some((e) => e.e === 'reconnected'), undefined, 15000);
+    await phaseIs(pair.client.page, 'Starting');
+    await until(pair.host.page, () => events.some((e) => e.e === 'peer-back'));
+    const back = await Promise.all([
+      pair.client.page.evaluate(() => ({ id: net.myId(), phases: events.filter((e) => e.e === 'phase').map((e) => e.phase), error: net.lastError() })),
+      pair.host.page.evaluate(() => ({ dropped: events.filter((e) => e.e === 'peer-dropped').map((e) => e.id), back: events.filter((e) => e.e === 'peer-back').map((e) => e.id), players: net.players().map((p) => `${p.id}:${p.away}:${p.returns}`) })),
+    ]);
+    assert.equal(back[0].id, 1, 'the same slot');
+    assert.equal(back[0].error, '');
+    assert.ok(back[0].phases.includes('Reconnecting'), `phases: ${back[0].phases}`);
+    assert.deepEqual(back[1].dropped, [1]);
+    assert.deepEqual(back[1].back, [1]);
+    assert.deepEqual(back[1].players, ['0:false:0', '1:false:1']);
+
+    // The new pair carries game messages both ways, like the first one did.
+    await settledTransports(pair);
+    await exchange(pair, { exact: !!extra });
+    assert.deepEqual(pair.client.problems, []);
+    assert.deepEqual(pair.host.problems, []);
+    await closeAll(pair.host, pair.client);
+    relay.stop();
+  });
+}
+
+test('rejoin: after a reload the saved seat is taken back with rejoin(), a refused rejoin forgets it, and a closed room says RoomClosed', async () => {
+  const relay = await startRelay();
+  const pair = await startedPair(relay, '&transport=relay', '&transport=relay');
+  const stored = await pair.client.page.evaluate((key) => localStorage.getItem(key), SEAT_KEY);
+  // Reloading closes the tab's socket (it leaves), and the server keeps the seat.
+  await pair.client.page.reload();
+  await until(pair.host.page, () => net.players().some((p) => p.id === 1 && p.away));
+  assert.equal(await pair.client.page.evaluate(() => net.rejoinInfo().code), pair.code);
+
+  // A wrong token is refused: RunEnded, and the seat is forgotten.
+  await pair.client.page.evaluate(([key, text]) => {
+    const info = JSON.parse(text);
+    info.token = 'AAAAAAAAAAAAAAAAAAAAAA';
+    localStorage.setItem(key, JSON.stringify(info));
+  }, [SEAT_KEY, stored]);
+  await pair.client.page.evaluate(() => net.rejoin());
+  await phaseIs(pair.client.page, 'Error');
+  assert.deepEqual(await pair.client.page.evaluate((key) => [net.lastError(), net.canRejoin(), localStorage.getItem(key)], SEAT_KEY), ['RunEnded', false, null]);
+
+  // The right one works: same slot, and the host sees the player back.
+  await pair.client.page.evaluate(([key, text]) => { net.leave(); localStorage.setItem(key, text); }, [SEAT_KEY, stored]);
+  await pair.client.page.evaluate(() => net.rejoin());
+  await phaseIs(pair.client.page, 'Starting');
+  assert.equal(await pair.client.page.evaluate(() => net.myId()), 1);
+  await until(pair.host.page, () => net.players().every((p) => !p.away));
+
+  // The host leaves: the room closes and the seat is forgotten.
+  await pair.host.page.evaluate(() => net.leave());
+  await phaseIs(pair.client.page, 'Error');
+  assert.deepEqual(await pair.client.page.evaluate((key) => [net.lastError(), net.canRejoin(), localStorage.getItem(key)], SEAT_KEY), ['HostLeft', false, null]);
+
+  // A stale seat for that closed room: RoomClosed, and forgotten.
+  await pair.client.page.evaluate(([key, text]) => { net.leave(); localStorage.setItem(key, text); }, [SEAT_KEY, stored]);
+  await pair.client.page.reload();
+  assert.equal(await pair.client.page.evaluate(() => net.canRejoin()), true);
+  await pair.client.page.evaluate(() => net.rejoin());
+  await phaseIs(pair.client.page, 'Error');
+  assert.deepEqual(await pair.client.page.evaluate((key) => [net.lastError(), net.errorIndex(), net.canRejoin(), localStorage.getItem(key)], SEAT_KEY), ['RoomClosed', 9, false, null]);
+  assert.deepEqual(pair.client.problems, []);
+  await closeAll(pair.host, pair.client);
+  relay.stop();
+});
+
+test('rejoin: storage that throws still lets a dropped guest reconnect from memory', async () => {
+  const relay = await startRelay();
+  const pair = await startedPair(relay, '&transport=relay', '&transport=relay');
+  await pair.client.page.evaluate(() => {
+    const boom = () => { throw new Error('blocked'); };
+    Object.defineProperty(window, 'localStorage', { get: boom, configurable: true });
+  });
+  await pair.client.page.evaluate(() => window.lastSocket.close());
+  await until(pair.client.page, () => events.some((e) => e.e === 'reconnected'), undefined, 15000);
+  assert.equal(await pair.client.page.evaluate(() => net.myId()), 1);
+  assert.deepEqual(pair.client.problems, []);
+  await closeAll(pair.host, pair.client);
+  relay.stop();
+});
+
 // ---- Game-facing helpers -----------------------------------------------------------
 
 test('bridge helpers: phase and error numbers, snapshot and event list are plain data', async () => {
@@ -527,8 +627,8 @@ test('bridge helpers: phase and error numbers, snapshot and event list are plain
     const again = JSON.parse(net.takeEventsJson());
     return { first, second, kinds: taken.map((e) => e.e), again, phases: net.PHASES, errors: net.ERRORS, host: net.isHost(), id: net.myId() };
   });
-  assert.deepEqual(out.phases, ['Offline', 'Waking', 'Connecting', 'InLobby', 'Starting', 'Error']);
-  assert.deepEqual(out.errors, ['ServerUnreachable', 'NotFound', 'Full', 'Started', 'BadName', 'HostLeft', 'Version', 'Other']);
+  assert.deepEqual(out.phases, ['Offline', 'Waking', 'Connecting', 'InLobby', 'Starting', 'Error', 'Reconnecting']);
+  assert.deepEqual(out.errors, ['ServerUnreachable', 'NotFound', 'Full', 'Started', 'BadName', 'HostLeft', 'Version', 'Other', 'RunEnded', 'RoomClosed', 'Replaced']);
   assert.equal(out.first.phaseIndex, 0);
   assert.equal(out.first.errorIndex, -1);
   assert.equal(out.second.phaseIndex, 3);

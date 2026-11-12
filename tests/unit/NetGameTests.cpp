@@ -802,3 +802,208 @@ TEST_CASE("net codec: zombie targets travel, and out-of-range levels, details an
     size = encodeInput(input, small, sizeof(small));
     CHECK(decodeInput(small, size, inputBack));
 }
+
+// ---- Rejoin ------------------------------------------------------------------------
+
+namespace {
+
+// One host frame with nobody else: the client's machine is gone, so it runs nothing.
+void hostAlone(Rig& rig) {
+    rig.pipe.frame++;
+    rig.pipe.messages.clear();
+    useSession(rig.host);
+    hostReceive();
+    InputFrame inputs[kMaxPlayers];
+    hostFillInputs(*rig.hostState, inputs, rig.hostState->playerCount());
+    hostBeforeStep(*rig.hostState);
+    sim::step(*rig.hostState, inputs, rig.hostState->playerCount());
+    hostAfterFrame(*rig.hostState, kDt, false, false);
+    rig.hostState->events.clear();
+    rig.hostState->players[0].hp = rig.hostState->players[0].maxHp;
+    useSession(nullptr);
+}
+
+// The client's page is reloaded: its machine forgets everything, and it listens again from
+// nothing, as a page opened fresh does after its Rejoin was accepted by the server.
+void reloadClient(Rig& rig) {
+    destroySession(rig.client);
+    rig.client = createSession();
+    useSession(rig.client);
+    setLink(&rig.clientEnd);
+    clientListen();
+    useSession(nullptr);
+    rig.clientState = std::make_unique<GameState>();
+}
+
+// What the game does when the lobby shows the player back.
+void hostSeesBack(Rig& rig) {
+    useSession(rig.host);
+    hostPlayerBack(1);
+    useSession(nullptr);
+}
+
+// Runs frames with the host standing on top of player 1 until they are up again.
+void reviveClient(Rig& rig) {
+    for (int i = 0; i < 60 * 5 && rig.hostState->players[1].downed; ++i) {
+        rig.hostState->players[0].pos = rig.hostState->players[1].pos;
+        rig.hostState->players[0].hp = rig.hostState->players[0].maxHp;
+        rig.frame(0.0f, 0.0f);
+    }
+    for (int i = 0; i < 20; ++i) rig.frame(0.0f, 0.0f);
+}
+
+int buildSize(const Player& p) { return p.weaponCount + p.passiveCount; }
+
+}  // namespace
+
+TEST_CASE("net session: a guest who reloads mid-run gets the run again and the same soldier, level and build") {
+    Rig rig;
+    for (int i = 0; i < 40; ++i) rig.frame(1.0f, 0.0f);
+    // A level and a card, so the player has a build worth keeping.
+    upgrades::addXp(*rig.hostState, 1, rig.hostState->players[1].xpToNext - rig.hostState->players[1].xp);
+    for (int i = 0; i < 20; ++i) rig.frame(0.0f, 0.0f);
+    REQUIRE(rig.clientState->players[1].cardsOpen);
+    useSession(rig.client);
+    clientPickCard(*rig.clientState, 0, false);
+    useSession(nullptr);
+    for (int i = 0; i < 30; ++i) rig.frame(0.0f, 0.0f);
+    REQUIRE_FALSE(rig.hostState->players[1].cardsOpen);
+    const int level = rig.hostState->players[1].level;
+    const int xp = rig.hostState->players[1].xp;
+    const int build = buildSize(rig.hostState->players[1]);
+    REQUIRE(level >= 2);
+
+    // The page goes away. The host holds the player down while they are gone.
+    useSession(rig.host);
+    hostSetConnected(1, false);
+    useSession(nullptr);
+    for (int i = 0; i < 90; ++i) hostAlone(rig);
+    CHECK(rig.hostState->players[1].downed);
+    // A car flattened meanwhile: the new page must still learn of it.
+    rig.hostState->run.crushed[0] = maps::CarId{321, 654};
+    rig.hostState->run.crushedCount = 1;
+    const uint32_t tickAway = rig.hostState->run.tick;
+
+    // The page comes back.
+    reloadClient(rig);
+    hostSeesBack(rig);
+    for (int i = 0; i < 60; ++i) rig.frame(0.0f, 0.0f);
+    const Player& seen = rig.clientState->players[1];
+    CHECK(rig.clientState->localSlot == 1);
+    CHECK(rig.clientState->run.seed == 31337u);
+    CHECK(rig.clientState->run.tick > tickAway);  // The run went on: it was not started again.
+    CHECK(rig.hostState->players[1].level == level);
+    CHECK(rig.hostState->players[1].xp == xp);
+    CHECK(buildSize(rig.hostState->players[1]) == build);
+    CHECK(seen.level == level);
+    CHECK(seen.xp == xp);
+    CHECK(buildSize(seen) == build);
+    CHECK(seen.downed);  // Still down, as the host has them.
+    CHECK(distance(seen.pos, rig.hostState->players[1].pos) < 1.0f);
+    CHECK(rig.clientState->run.crushedCount == 1);
+    useSession(rig.host);
+    CHECK(hostConnected(1));
+    useSession(nullptr);
+
+    // A teammate can get them up as usual, and then they walk, and both agree where they are.
+    reviveClient(rig);
+    REQUIRE_FALSE(rig.hostState->players[1].downed);
+    CHECK_FALSE(rig.clientState->players[1].downed);
+    const Vec2 start = rig.hostState->players[1].pos;
+    for (int i = 0; i < 120; ++i) {
+        rig.hostState->players[1].hp = rig.hostState->players[1].maxHp;
+        rig.frame(0.0f, 1.0f);
+    }
+    for (int i = 0; i < 60; ++i) rig.frame(0.0f, 0.0f);
+    CHECK(distance(start, rig.hostState->players[1].pos) > 100.0f);
+    CHECK(distance(rig.hostState->players[1].pos, rig.clientSeesSelf()) < 1.0f);
+}
+
+TEST_CASE("net session: a guest whose connection drops and comes back keeps its run going, and the repeated settings change nothing") {
+    Rig rig;
+    for (int i = 0; i < 40; ++i) rig.frame(1.0f, 0.0f);
+    // Both machines run, but nothing gets through, and the host learns the player is away.
+    useSession(rig.host);
+    hostSetConnected(1, false);
+    useSession(nullptr);
+    for (int i = 0; i < 90; ++i) {
+        rig.pipe.messages.clear();
+        rig.frame(1.0f, 0.0f);
+    }
+    useSession(rig.client);
+    CHECK(clientHostAway());  // Nothing from the host for a while.
+    useSession(nullptr);
+    const uint32_t clientTick = rig.clientState->run.tick;
+    REQUIRE(clientTick > 30u);
+
+    hostSeesBack(rig);
+    for (int i = 0; i < 60; ++i) rig.frame(0.0f, 0.0f);
+    useSession(rig.client);
+    CHECK_FALSE(clientHostAway());
+    CHECK(settings().seed == 31337u);  // Still the first run's settings.
+    useSession(nullptr);
+    CHECK(rig.clientState->run.tick > clientTick);  // The same run, not a fresh one.
+    CHECK(rig.clientState->players[1].downed);
+    CHECK(distance(rig.clientSeesSelf(), rig.hostState->players[1].pos) < 1.0f);
+
+    reviveClient(rig);
+    REQUIRE_FALSE(rig.hostState->players[1].downed);
+    for (int i = 0; i < 90; ++i) {
+        rig.hostState->players[1].hp = rig.hostState->players[1].maxHp;
+        rig.frame(-1.0f, 0.0f);
+    }
+    for (int i = 0; i < 60; ++i) rig.frame(0.0f, 0.0f);
+    CHECK(distance(rig.hostState->players[1].pos, rig.clientSeesSelf()) < 1.0f);
+}
+
+TEST_CASE("net session: a player who comes back after the host began a run without them is told so, and gets no run") {
+    for (const bool reload : {true, false}) {
+        CAPTURE(reload);
+        Rig rig;
+        for (int i = 0; i < 30; ++i) rig.frame(0.0f, 0.0f);
+        // The player (lobby slot 2) is away when the host plays again with someone else.
+        useSession(rig.host);
+        hostSetConnected(1, false);
+        RunStart again;
+        again.seed = 99;
+        again.playerCount = 2;
+        again.netIds[0] = 0;
+        again.netIds[1] = 1;
+        hostRestart(*rig.hostState, again);
+        CHECK(slotOfNetId(2) == -1);
+        useSession(nullptr);
+        for (int i = 0; i < 10; ++i) hostAlone(rig);
+
+        // They come back, with a fresh page or with the old run still on screen.
+        if (reload) reloadClient(rig);
+        useSession(rig.host);
+        hostSendNotInRun(2);
+        useSession(nullptr);
+        for (int i = 0; i < 10; ++i) rig.frame(0.0f, 0.0f);
+        useSession(rig.client);
+        CHECK(clientNotInRun());
+        CHECK(settings().runNumber != 2);  // The new run never reached them.
+        useSession(nullptr);
+        CHECK(rig.clientState->run.seed != 99u);
+    }
+}
+
+TEST_CASE("net codec: the not-in-this-run message round trips, and broken ones are refused") {
+    NotInRunMessage message;
+    message.runNumber = 7;
+    uint8_t bytes[16];
+    const int size = encodeNotInRun(message, bytes, sizeof(bytes));
+    REQUIRE(size > 0);
+    CHECK(kindOf(bytes, size) == static_cast<uint8_t>(MessageKind::NotInRun));
+    NotInRunMessage back;
+    REQUIRE(decodeNotInRun(bytes, size, back));
+    CHECK(back.runNumber == 7);
+    for (int cut = 0; cut < size; ++cut) CHECK_FALSE(decodeNotInRun(bytes, cut, back));
+    bytes[size] = 0;
+    CHECK_FALSE(decodeNotInRun(bytes, size + 1, back));
+    // Another kind of message is never read as this one.
+    PauseMessage pause;
+    const int pauseSize = encodePause(pause, bytes, sizeof(bytes));
+    CHECK_FALSE(decodeNotInRun(bytes, pauseSize, back));
+    CHECK(encodeNotInRun(message, bytes, 1) == 0);
+}

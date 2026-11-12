@@ -358,7 +358,16 @@ public:
     void start(net::Lobby&) override { starts++; }
     void leave(net::Lobby&) override { leaves++; }
     void update(net::Lobby&, float) override { updates++; }
-    int wakes = 0, hosts = 0, joins = 0, starts = 0, leaves = 0, updates = 0;
+    void rejoin(net::Lobby&) override { rejoins++; }
+    const char* rejoinCode() const override { return seat ? "K7QXM" : ""; }
+    void forgetRejoin() override { seat = false; }
+    void abandon(net::Lobby& lobby, net::LobbyError error) override {
+        seat = false;
+        lobby.phase = net::LobbyPhase::Error;
+        lobby.error = error;
+    }
+    int wakes = 0, hosts = 0, joins = 0, starts = 0, leaves = 0, updates = 0, rejoins = 0;
+    bool seat = false;
     std::string hostName, joinCode, joinName;
 };
 
@@ -387,7 +396,77 @@ TEST_CASE("the backend seam: a replacement backend only receives checked request
     CHECK(recorder.updates == 1);
     net::leaveRoom();
     CHECK(recorder.leaves == 1);
+    // Rejoin only reaches the backend when there is a seat to take back.
+    net::rejoinRoom();
+    CHECK(recorder.rejoins == 0);
+    recorder.seat = true;
+    CHECK(net::canRejoin());
+    net::rejoinRoom();
+    CHECK(recorder.rejoins == 1);
     net::setBackend(nullptr);
+    freshLobby();
+}
+
+TEST_CASE("rejoin on the fake: the button's seat, back into a started run, and refusals forget the seat") {
+    freshLobby();
+    net::debugCommand(net::kDebugWakeDelayMs, 0);
+    net::debugCommand(net::kDebugLatencyMs, 0);
+    CHECK_FALSE(net::canRejoin());
+    CHECK(std::string(net::rejoinCode()).empty());
+    net::rejoinRoom();  // No seat: nothing happens.
+    CHECK(net::lobby().phase == net::LobbyPhase::Offline);
+
+    net::debugCommand(net::kDebugRejoinSeat, 1);
+    CHECK(net::canRejoin());
+    CHECK(std::string(net::rejoinCode()) == "K7QXM");
+    net::rejoinRoom();
+    settle(0.3f);
+    CHECK(net::lobby().phase == net::LobbyPhase::Starting);
+    CHECK(net::lobby().started);
+    CHECK(net::lobby().you == 1);
+    CHECK(std::string(net::lobby().code) == "K7QXM");
+    CHECK(net::hereCount() == 2);
+
+    // Away players stay listed, but do not count as here.
+    net::debugCommand(net::kDebugAwayMask, 2);
+    CHECK(net::lobby().count == 2);
+    CHECK(net::lobby().players[1].away);
+    CHECK_FALSE(net::isHere(net::lobby().players[1]));
+    CHECK(net::hereCount() == 1);
+
+    // Leaving keeps the seat (a closed tab), leaving for good forgets it.
+    net::leaveRoom();
+    CHECK(net::canRejoin());
+    net::forgetRejoin();
+    CHECK_FALSE(net::canRejoin());
+
+    // A refused rejoin shows its error and forgets the seat, so the button goes away.
+    for (const net::LobbyError error : {net::LobbyError::RunEnded, net::LobbyError::RoomClosed}) {
+        net::debugCommand(net::kDebugRejoinSeat, 1);
+        net::debugCommand(net::kDebugNextError, static_cast<int>(error));
+        net::rejoinRoom();
+        settle(0.3f);
+        CHECK(net::lobby().phase == net::LobbyPhase::Error);
+        CHECK(net::lobby().error == error);
+        CHECK_FALSE(net::canRejoin());
+        net::leaveRoom();
+    }
+    // A connection problem is worth a retry, and keeps the seat.
+    net::debugCommand(net::kDebugRejoinSeat, 1);
+    net::debugCommand(net::kDebugNextError, static_cast<int>(net::LobbyError::ServerUnreachable));
+    net::rejoinRoom();
+    settle(0.3f);
+    CHECK(net::lobby().error == net::LobbyError::ServerUnreachable);
+    CHECK(net::canRejoin());
+    net::retry();
+    settle(0.3f);
+    CHECK(net::lobby().phase == net::LobbyPhase::Starting);
+
+    // The game learns the run is over for this player: Error, RunEnded, and no seat.
+    net::abandonRun(net::LobbyError::RunEnded);
+    CHECK(net::lobby().phase == net::LobbyPhase::Error);
+    CHECK(net::lobby().error == net::LobbyError::RunEnded);
+    CHECK_FALSE(net::canRejoin());
     freshLobby();
 }
 

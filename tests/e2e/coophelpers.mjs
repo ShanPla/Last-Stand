@@ -2,17 +2,26 @@
 // They are three files so that each one finishes well inside the test time limit.
 // These tests use the game's fake lobby (the ?fakenet flag) and drive it with debug commands. The real
 // server is tested in coopreal.test.mjs.
+//
+// The second half (startRelay to startCoopRun) is for the co-op run tests (coopplay, cooprejoin),
+// which use the REAL relay server in server/ with two players in two browser contexts.
 import { before, after } from 'node:test';
 import { mkdir } from 'node:fs/promises';
-import { startServer, launchChrome, openGame, readUi, debug, waitScreen, tapButton, clickButton } from './harness.mjs';
+import { createServer } from 'node:net';
+import { spawn } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { startServer, launchChrome, openGame, readUi, debug, waitScreen, tapButton, clickButton, CMD } from './harness.mjs';
 
 // Debug commands for the fake lobby. They match DebugOp in src/components/Net/Net.h.
 export const NET = {
   reset: 100, wakeMs: 101, latencyMs: 102, nextError: 103, room: 104, guestRoom: 105, readyMask: 106,
-  hostLeft: 107, loseServer: 108, wakeSeconds: 109, phase: 110,
+  hostLeft: 107, loseServer: 108, wakeSeconds: 109, phase: 110, rejoinSeat: 111, awayMask: 112,
 };
-export const PHASE = { offline: 0, waking: 1, connecting: 2, inLobby: 3, starting: 4, error: 5 };
-export const ERR = { none: 0, unreachable: 1, notFound: 2, full: 3, started: 4, badName: 5, hostLeft: 6, version: 7, other: 8 };
+export const PHASE = { offline: 0, waking: 1, connecting: 2, inLobby: 3, starting: 4, error: 5, reconnecting: 6 };
+export const ERR = {
+  none: 0, unreachable: 1, notFound: 2, full: 3, started: 4, badName: 5, hostLeft: 6, version: 7, other: 8, runEnded: 9, roomClosed: 10, replaced: 11,
+};
 
 export const desktop = { viewport: { width: 1280, height: 720 } };
 export const phone = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true };
@@ -27,6 +36,7 @@ export const sizes = [
 ];
 
 const rig = { web: null, browser: null };
+const relays = [];
 
 // Call once at the top of a test file. Starts the page server and Chrome, and closes them after.
 export function useBrowser() {
@@ -36,6 +46,7 @@ export function useBrowser() {
     rig.browser = await launchChrome();
   });
   after(async () => {
+    relays.forEach((relay) => relay.stop());
     await rig.browser?.close();
     rig.web?.server.close();
   });
@@ -147,3 +158,89 @@ export function checkLayout(ui, where, allowed = []) {
     }
   }
 }
+
+// ---- Co-op runs over the real relay -------------------------------------------------
+
+// The game's debug commands, with the co-op one. See DebugCommand in App.cpp.
+export const COOP_CMD = { ...CMD, levelUpSlot: 48 };
+
+const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+async function freePort() {
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+// Runs the real server the way Render does. Stopped by useBrowser's after() if a test does not.
+export async function startRelay() {
+  const port = await freePort();
+  const child = spawn(process.execPath, [path.join(repo, 'server/src/index.js')], {
+    env: { ...process.env, PORT: String(port) },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  await new Promise((resolve, reject) => {
+    child.once('exit', (code) => reject(new Error(`relay exited early with code ${code}`)));
+    child.stdout.on('data', (chunk) => { if (String(chunk).includes('relay listening')) resolve(); });
+  });
+  const relay = { port, ws: `ws://127.0.0.1:${port}`, child, stop: () => child.kill() };
+  relays.push(relay);
+  return relay;
+}
+
+export const readCoop = (page) => page.evaluate(() => JSON.parse(Module.ccall('ls_query_coop', 'string', [], [])));
+
+export async function waitCoop(page, check, what, timeout = 10000) {
+  const start = Date.now();
+  for (;;) {
+    const coop = await readCoop(page);
+    if (check(coop)) return coop;
+    if (Date.now() - start > timeout) throw new Error(`timed out waiting for ${what}: ${JSON.stringify(coop)}`);
+    await page.waitForTimeout(50);
+  }
+}
+
+export const gameUrl = (server, extra = '') => `${rig.web.url}?server=${server}&debug${extra}`;
+
+export async function openPlayer(server, extra = '', options = desktop) {
+  const session = await openGame(rig.browser, gameUrl(server, extra), options);
+  await waitScreen(session.page, 'title');
+  return session;
+}
+
+export async function joinByCode(page, code) {
+  await clickButton(page, 'Join Co-op');
+  await waitScreen(page, 'coop-join');
+  await clickButton(page, 'Room code');
+  await typeText(page, code);
+  await page.keyboard.press('Enter');
+  await waitNet(page, (n) => n.editing === 0, 'editing to end');
+  await clickButton(page, 'Join');
+}
+
+// Two players through the real lobby: host, join, ready, start, and both in the run.
+export async function startCoopRun(extra = '') {
+  const relay = await startRelay();
+  const a = await openPlayer(relay.ws, extra);
+  const b = await openPlayer(relay.ws, extra);
+  await toCoop(a.page);
+  const room = await host(a.page);
+  await toCoop(b.page);
+  await joinByCode(b.page, room.code);
+  await waitNet(b.page, (n) => n.phase === PHASE.inLobby && n.count === 2, 'the joined lobby');
+  await clickButton(b.page, 'Ready');
+  await clickButton(a.page, 'Ready');
+  await waitNet(a.page, (n) => n.canStart === 1, 'Start to be enabled');
+  await clickButton(a.page, 'Start');
+  const [hostRun, guestRun] = await Promise.all([
+    waitCoop(a.page, (c) => c.role === 'host' && c.screen === 'playing', 'the host in the run'),
+    waitCoop(b.page, (c) => c.role === 'guest' && c.screen === 'playing' && c.count === 2, 'the guest in the run'),
+  ]);
+  return { relay, a, b, hostRun, guestRun, code: room.code };
+}
+
+export const near = (p, q, tolerance) => Math.hypot(p.x - q.x, p.y - q.y) <= tolerance;

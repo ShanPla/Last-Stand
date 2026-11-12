@@ -117,6 +117,7 @@ LobbyPhase phaseFrom(int index, bool wakeRunning) {
         case 3: return LobbyPhase::InLobby;
         case 4: return LobbyPhase::Starting;
         case 5: return LobbyPhase::Error;
+        case 6: return LobbyPhase::Reconnecting;
         default: return LobbyPhase::Offline;
     }
 }
@@ -130,8 +131,30 @@ LobbyError errorFrom(int index) {
         case 4: return LobbyError::BadName;
         case 5: return LobbyError::HostLeft;
         case 6: return LobbyError::Version;
+        case 8: return LobbyError::RunEnded;
+        case 9: return LobbyError::RoomClosed;
+        case 10: return LobbyError::Replaced;
         default: return LobbyError::Other;
     }
+}
+
+// The other way, for abandon(): the script's index of a C++ error.
+int errorIndexOf(LobbyError error) {
+    switch (error) {
+        case LobbyError::ServerUnreachable: return 0;
+        case LobbyError::NotFound: return 1;
+        case LobbyError::Full: return 2;
+        case LobbyError::Started: return 3;
+        case LobbyError::BadName: return 4;
+        case LobbyError::HostLeft: return 5;
+        case LobbyError::Version: return 6;
+        case LobbyError::RunEnded: return 8;
+        case LobbyError::RoomClosed: return 9;
+        case LobbyError::Replaced: return 10;
+        case LobbyError::Other:
+        case LobbyError::None: break;
+    }
+    return 7;
 }
 
 Transport transportFrom(const char* value) {
@@ -193,6 +216,8 @@ bool applyWebSnapshot(const char* json, Lobby& lobby) {
             player.ready = readBool(findKey(object, "ready"));
             player.transport = transportFrom(findKey(object, "transport"));
             player.rttMs = readInt(findKey(object, "rttMs"), -1);
+            player.away = readBool(findKey(object, "away"));
+            player.returns = readInt(findKey(object, "returns"), 0);
             if (id == myId) next.you = next.count;
             if (id == hostId) next.host = next.count;
             ++next.count;
@@ -201,6 +226,19 @@ bool applyWebSnapshot(const char* json, Lobby& lobby) {
     }
     lobby = next;
     return true;
+}
+
+void readWebRejoin(const char* json, char (&code)[kCodeLength + 1]) {
+    code[0] = '\0';
+    if (!json) return;
+    const Span whole{json, json + std::strlen(json)};
+    const char* playersValue = findKey(whole, "players");
+    const char* playersEnd = playersValue && *playersValue == '[' ? matchClose(playersValue, whole.end) : nullptr;
+    // The key comes after the player list, so a player's own keys can never be mistaken for it.
+    const Span after{playersEnd ? playersEnd + 1 : whole.begin, whole.end};
+    char text[kCodeLength + 1] = {};
+    readString(findKey(after, "rejoin"), text, sizeof(text));
+    if (validCode(text)) std::memcpy(code, text, sizeof(text));
 }
 
 void applyWebStats(const char* json, Lobby& lobby) {
@@ -277,6 +315,29 @@ EM_JS(int, ls_js_net_join, (const char* code, const char* name), {
         var net = LastStandNet.shared();
         net.leave();
         net.join(codeText, nameText);
+        return 1;
+    } catch (error) { return -1; }
+});
+
+EM_JS(int, ls_js_net_rejoin, (), {
+    try {
+        if (typeof LastStandNet === 'undefined') return -1;
+        var net = LastStandNet.shared();
+        if (!net.canRejoin()) return 0;
+        net.leave();
+        net.rejoin();
+        return 1;
+    } catch (error) { return -1; }
+});
+
+EM_JS(int, ls_js_net_forget_rejoin, (), {
+    try { LastStandNet.shared().forgetRejoin(); return 1; } catch (error) { return -1; }
+});
+
+EM_JS(int, ls_js_net_abandon, (int errorIndex), {
+    try {
+        var net = LastStandNet.shared();
+        net.abandon(net.ERRORS[errorIndex] || 'RunEnded');
         return 1;
     } catch (error) { return -1; }
 });
@@ -430,6 +491,30 @@ public:
         ls_js_net_leave();
     }
 
+    void rejoin(Lobby& lobby) override {
+        readyWanted_ = -1;
+        if (ls_js_net_rejoin() < 0) {
+            unavailable(lobby);
+            return;
+        }
+        pull(lobby);
+    }
+
+    const char* rejoinCode() const override { return rejoinCode_; }
+
+    void forgetRejoin() override {
+        ls_js_net_forget_rejoin();
+        rejoinCode_[0] = '\0';
+        dirty_ = true;
+    }
+
+    void abandon(Lobby& lobby, LobbyError error) override {
+        readyWanted_ = -1;
+        ls_js_net_abandon(errorIndexOf(error));
+        rejoinCode_[0] = '\0';
+        pull(lobby);
+    }
+
     bool sendGame(int toId, const unsigned char* bytes, int length, bool reliable) override {
         return ls_js_net_send(toId, bytes, length, reliable ? 1 : 0) > 0;
     }
@@ -473,6 +558,7 @@ private:
         const LobbyPhase before = lobby.phase;
         if (ls_js_net_snapshot(snapshot_, sizeof(snapshot_)) < 0) return;
         if (!applyWebSnapshot(snapshot_, lobby)) return;
+        readWebRejoin(snapshot_, rejoinCode_);
         if (ls_js_net_stats(stats_, sizeof(stats_)) >= 0) applyWebStats(stats_, lobby);
         // The Retry timer counts from the moment the wait began.
         if (lobby.phase != LobbyPhase::Waking || before != LobbyPhase::Waking) lobby.wakeSeconds = 0.0f;
@@ -495,6 +581,7 @@ private:
     int readyWanted_ = -1;  // -1: no press waiting for the server.
     float readyAge_ = 0.0f;
     char snapshot_[4096] = {};
+    char rejoinCode_[kCodeLength + 1] = {};  // The saved seat's room, copied from the script.
     char stats_[1024] = {};
 };
 

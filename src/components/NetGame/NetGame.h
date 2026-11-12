@@ -88,6 +88,17 @@ void hostFillInputs(const GameState& state, InputFrame inputs[], int count);
 void hostSetConnected(int slot, bool connected);
 bool hostConnected(int slot);
 
+// A player of this run is connected again after being away (a reload, a dropped connection, or
+// the same seat taken from another tab). Their soldier, level and build stayed here all along.
+// Everything the host knew about their old connection is reset, and the run's settings are
+// sent to them again until they answer, so a reloaded page builds the run from scratch. Flat
+// cars are sent again from the first one. They are still down, and a teammate can revive them.
+void hostPlayerBack(int slot);
+
+// Tells a player in the room that the current run was made without them (they came back after
+// the host started another run). Their game then leaves with "That run has ended".
+void hostSendNotInRun(int netId);
+
 // Before each step: keeps players who left down, so nobody can revive them.
 void hostBeforeStep(GameState& state);
 
@@ -131,6 +142,7 @@ float clientAlpha();
 bool clientHostPaused();
 bool clientHostAway();      // The host said so, or no snapshot came for a while.
 bool clientRunEnded();      // The host sent the run's end.
+bool clientNotInRun();      // The host said its current run was made without this player.
 const RunEnd& clientRunEnd();
 
 }  // namespace ls::netgame

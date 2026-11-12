@@ -138,6 +138,13 @@ bool g_netOverlay = false;       // The network debug overlay, toggled with F3.
 bool g_cardsWereOpen = false;    // Co-op cards open over the running game, so their delay restarts each time.
 uint16_t g_cardsSerial = 0;      // The set of cards on screen, so a new set restarts the delay too.
 bool g_slotConnected[kMaxPlayers] = {true, true, true, true};
+// How many times each player of the run has come back from away, as last seen. A change means
+// they came back, even if they also went away between two frames (a seat taken over in
+// another tab), so the host still gives them a fresh start.
+int g_slotReturns[kMaxPlayers] = {};
+// The host tells a player who rejoined after another run began that they are not in it, once
+// in a while until they leave. The clock counts down to the next time.
+float g_notInRunClock = 0.0f;
 char g_netDebug[640] = "";
 
 float smooth(float average, float sample) { return average + (sample - average) * 0.05f; }
@@ -226,6 +233,7 @@ bool coopGuest() { return netgame::role() == netgame::Role::Client; }
 void showNewRun() {
     worldview::setFixedDayTime(-1.0f);
     effects::reset();
+    ui::coopHudClearNotice();
     g_inDemo = false;
     g_accumulator = 0.0f;
     g_pendingChoice = ui::LevelUpChoice{};
@@ -240,6 +248,19 @@ void showNewRun() {
     setScreen(Screen::Playing);
 }
 
+const net::LobbyPlayer* lobbyPlayer(int netId);
+
+// Whether this lobby slot has a player who is connected now (not away).
+bool lobbyHas(int netId) {
+    const net::LobbyPlayer* player = lobbyPlayer(netId);
+    return player && net::isHere(*player);
+}
+
+int lobbyReturns(int netId) {
+    const net::LobbyPlayer* player = lobbyPlayer(netId);
+    return player ? player->returns : 0;
+}
+
 // The names and colors of a co-op run's players, from the lobby, kept for the whole run.
 void showNewCoopRun() {
     const net::Lobby& lobby = net::lobby();
@@ -248,8 +269,13 @@ void showNewCoopRun() {
     for (int slot = 0; slot < kMaxPlayers; ++slot) {
         const int id = netgame::netIdOf(slot);
         g_slotConnected[slot] = true;
+        g_slotReturns[slot] = 0;
         if (id < 0) continue;
         colors[slot] = id;
+        // A guest who rejoined a run in progress may find a teammate away already. Starting
+        // from what the lobby says now means no notice about something that did not just happen.
+        g_slotConnected[slot] = lobbyHas(id);
+        g_slotReturns[slot] = lobbyReturns(id);
         for (int i = 0; i < lobby.count; ++i) {
             if (lobby.players[i].id == id) names[slot] = lobby.players[i].name;
         }
@@ -260,7 +286,7 @@ void showNewCoopRun() {
 }
 
 // A co-op run's settings, made from the room as it is now. The host is slot 0, and the others
-// follow in the lobby's order, so a player who has left is not in the run.
+// follow in the lobby's order, so a player who has left, or is away, is not in the run.
 netgame::RunStart coopSettingsFromLobby(uint64_t seed) {
     const net::Lobby& lobby = net::lobby();
     netgame::RunStart start;
@@ -272,7 +298,7 @@ netgame::RunStart coopSettingsFromLobby(uint64_t seed) {
     start.netIds[0] = static_cast<uint8_t>(lobby.players[lobby.host >= 0 ? lobby.host : 0].id);
     start.playerCount = 1;
     for (int i = 0; i < lobby.count && start.playerCount < kMaxPlayers; ++i) {
-        if (i != lobby.host) start.netIds[start.playerCount++] = static_cast<uint8_t>(lobby.players[i].id);
+        if (i != lobby.host && net::isHere(lobby.players[i])) start.netIds[start.playerCount++] = static_cast<uint8_t>(lobby.players[i].id);
     }
     return start;
 }
@@ -283,9 +309,11 @@ void startCoopHost() {
     showNewCoopRun();
 }
 
-// Leaving a co-op run on purpose: out of the room, and back to the title.
+// Leaving a co-op run on purpose: out of the room, and back to the title. This is leaving for
+// good, so the seat saved for a rejoin is forgotten too and the Rejoin button does not appear.
 void leaveCoop() {
     net::leaveRoom();
+    net::forgetRejoin();
     netgame::stop();
     g_hostAway = false;
 }
@@ -293,14 +321,21 @@ void leaveCoop() {
 void startRun(uint64_t seed) {
     if (coopHost()) {
         const uint64_t next = seed != 0 ? seed : pickSeed();
-        // The co-op host's Restart starts another run for whoever is still in the room.
-        if (net::lobby().count >= 2) {
+        // The co-op host's Restart starts another run for whoever is still in the room. A
+        // player who is away right now is left out: they may never come back.
+        if (net::hereCount() >= 2) {
             netgame::hostRestart(*g_state, coopSettingsFromLobby(next));
             showNewCoopRun();
             return;
         }
-        // Everyone else has left, so the next run is an ordinary single-player one.
+        // Everyone else has left, so the next run is an ordinary single-player one. Leaving the
+        // room closes it, so anyone away who tries to rejoin is told the room has closed.
         leaveCoop();
+        g_state->localSlot = 0;
+        sim::newRun(*g_state, next, save::current().difficulty, selectedMap(), save::current().mode);
+        showNewRun();
+        ui::coopHudNotice("Everyone else left. Playing solo.");
+        return;
     }
     g_state->localSlot = 0;
     sim::newRun(*g_state, seed != 0 ? seed : pickSeed(), save::current().difficulty, selectedMap(), save::current().mode);
@@ -465,14 +500,6 @@ void watchFrameRate(float rawDt) {
 
 // ---- Co-op during the run ---------------------------------------------------------
 
-bool lobbyHas(int netId) {
-    const net::Lobby& lobby = net::lobby();
-    for (int i = 0; i < lobby.count; ++i) {
-        if (lobby.players[i].id == netId) return true;
-    }
-    return false;
-}
-
 const net::LobbyPlayer* lobbyPlayer(int netId) {
     const net::Lobby& lobby = net::lobby();
     for (int i = 0; i < lobby.count; ++i) {
@@ -508,9 +535,23 @@ void endCoopToLobby() {
     setScreen(Screen::Coop);
 }
 
+// The host, now and then: anyone in the room who is connected but has no soldier in the
+// current run came back after another run began without them, so they are told.
+void tellPlayersNotInRun(float dt) {
+    g_notInRunClock -= dt;
+    if (g_notInRunClock > 0.0f) return;
+    g_notInRunClock = balance::kNetResendSeconds;
+    const net::Lobby& lobby = net::lobby();
+    for (int i = 0; i < lobby.count; ++i) {
+        const net::LobbyPlayer& player = lobby.players[i];
+        if (i == lobby.host || !net::isHere(player) || netgame::slotOfNetId(player.id) >= 0) continue;
+        netgame::hostSendNotInRun(player.id);
+    }
+}
+
 // Once a frame, before anything is stepped: starts a co-op run when the host presses Start,
 // notices when the room closes, and keeps track of who is still connected.
-void watchCoop() {
+void watchCoop(float dt) {
     const net::Lobby& lobby = net::lobby();
     if (!coopRun()) {
         if (g_screen == Screen::Coop && lobby.phase == net::LobbyPhase::Starting) {
@@ -519,24 +560,47 @@ void watchCoop() {
         }
         return;
     }
-    if (lobby.phase != net::LobbyPhase::Starting) {
+    // While a guest reconnects by itself the run stays on screen: the room is not gone yet.
+    const bool reconnecting = lobby.phase == net::LobbyPhase::Reconnecting;
+    if (lobby.phase != net::LobbyPhase::Starting && !reconnecting) {
         endCoopToLobby();
         return;
     }
-    if (coopHost()) netgame::hostReceive();
+    if (coopHost()) {
+        netgame::hostReceive();
+        tellPlayersNotInRun(dt);
+    }
+    if (coopGuest() && netgame::clientNotInRun()) {
+        // The host started another run while this player was away. Back to the co-op menu, which
+        // shows why; the saved seat is forgotten, so the Rejoin button goes away.
+        net::abandonRun(net::LobbyError::RunEnded);
+        endCoopToLobby();
+        return;
+    }
     if (coopGuest() && netgame::clientNewRun(*g_state)) showNewCoopRun();
-    if (g_inDemo) return;
-    // A player missing from the room has left. The host keeps them in the run, down and still.
+    // While reconnecting, this machine's copy of the room is old, so it says nothing new.
+    if (g_inDemo || reconnecting) return;
+    // A player missing from the room, or away, has left. The host keeps them in the run, down
+    // and still. One who comes back gets the run again from the host.
     for (int slot = 0; slot < g_state->playerCount(); ++slot) {
-        const bool here = lobbyHas(netgame::netIdOf(slot));
-        if (here == g_slotConnected[slot]) continue;
+        if (slot == g_state->localSlot) continue;
+        const int id = netgame::netIdOf(slot);
+        const bool here = lobbyHas(id);
+        const int returns = lobbyReturns(id);
+        const bool back = here && (!g_slotConnected[slot] || returns != g_slotReturns[slot]);
+        g_slotReturns[slot] = returns;
+        if (here == g_slotConnected[slot] && !back) continue;
         g_slotConnected[slot] = here;
-        if (coopHost()) netgame::hostSetConnected(slot, here);
-        if (!here) {
-            char message[64];
-            std::snprintf(message, sizeof(message), "%s left the run", ui::coopHudName(slot)[0] ? ui::coopHudName(slot) : "A player");
-            ui::coopHudNotice(message);
+        const char* name = ui::coopHudName(slot)[0] ? ui::coopHudName(slot) : "A player";
+        char message[64];
+        if (back) {
+            if (coopHost()) netgame::hostPlayerBack(slot);
+            std::snprintf(message, sizeof(message), "%s is back", name);
+        } else {
+            if (coopHost()) netgame::hostSetConnected(slot, false);
+            std::snprintf(message, sizeof(message), "%s left the run", name);
         }
+        ui::coopHudNotice(message);
     }
 }
 
@@ -576,6 +640,7 @@ void buildNetDebug() {
 
 void drawCoopOverlay(float dtReal) {
     ui::CoopHudView view;
+    view.reconnecting = coopGuest() && net::lobby().phase == net::LobbyPhase::Reconnecting;
     view.hostAway = coopGuest() ? netgame::clientHostAway() : false;
     view.hostPaused = coopGuest() && netgame::clientHostPaused();
     view.pingMs = coopPing();
@@ -663,6 +728,8 @@ static void drawUiPass(float dtReal, bool playing) {
         if (playing && g_input.lastDevice == input::Device::Touch) ui::drawVirtualJoystick(g_input);
     }
     if (coopRun() && !g_inDemo && g_screen == Screen::Playing) drawCoopOverlay(dtReal);
+    // A run that began as co-op and went on alone keeps its notice for its few seconds.
+    else if (!coopRun() && !g_inDemo && g_screen == Screen::Playing) ui::drawCoopNotice(dtReal);
 
     switch (g_screen) {
         case Screen::Title: {
@@ -779,7 +846,7 @@ void frame() {
     g_frameMs = smooth(g_frameMs, rawDt * 1000.0f);
     const float dtReal = std::min(rawDt, 0.1f);
     net::update(dtReal);
-    watchCoop();
+    watchCoop(dtReal);
 
     // Input. The joystick only exists while playing, and a touch that starts on the
     // pause button must press it instead. A co-op player choosing a card stands still.
@@ -987,20 +1054,22 @@ const char* queryCoop() {
     const char* role = coopHost() ? "host" : (coopGuest() ? "guest" : "none");
     int n = std::snprintf(json, sizeof(json),
                           "{\"role\":\"%s\",\"screen\":\"%s\",\"demo\":%d,\"run\":%d,\"slot\":%d,\"count\":%d,\"phase\":%d,\"tick\":%u,\"enemies\":%d,"
-                          "\"kills\":%d,\"hostAway\":%d,\"hostPaused\":%d,\"ended\":%d,\"overlay\":%d,\"notice\":\"%s\",\"transport\":\"%s\",\"ping\":%d,"
+                          "\"kills\":%d,\"hostAway\":%d,\"hostPaused\":%d,\"ended\":%d,\"reconnecting\":%d,\"overlay\":%d,\"notice\":\"%s\",\"transport\":\"%s\",\"ping\":%d,"
                           "\"snapOut\":%d,\"snapIn\":%d,\"msgOut\":%d,\"msgIn\":%d,\"bytesOut\":%d,\"bytesIn\":%d,\"snapBytes\":%d,\"snapAvg\":%d,\"snapMax\":%d,"
                           "\"inputsIn\":%d,\"corrections\":%d,\"jumps\":%d,\"near\":[%d,%d,%d,%d],\"players\":[",
                           role, screenName(), g_inDemo ? 1 : 0, netgame::settings().runNumber, s.localSlot, s.playerCount(), static_cast<int>(s.run.phase), s.run.tick,
                           s.enemies.count, s.run.kills, coopGuest() && netgame::clientHostAway() ? 1 : 0, coopGuest() && netgame::clientHostPaused() ? 1 : 0,
-                          coopGuest() && netgame::clientRunEnded() ? 1 : 0, g_netOverlay ? 1 : 0, ui::coopHudLastNotice(), coopRun() ? coopTransport() : "none",
+                          coopGuest() && netgame::clientRunEnded() ? 1 : 0, net::lobby().phase == net::LobbyPhase::Reconnecting ? 1 : 0, g_netOverlay ? 1 : 0,
+                          ui::coopHudLastNotice(), coopRun() ? coopTransport() : "none",
                           coopRun() ? coopPing() : -1, st.snapshotsOutPerSec, st.snapshotsInPerSec, st.messagesOutPerSec, st.messagesInPerSec, st.bytesOutPerSec,
                           st.bytesInPerSec, st.lastSnapshotBytes, st.avgSnapshotBytes, st.maxSnapshotBytes, st.inputsInPerSec, st.corrections, st.snaps,
                           netgame::hostNearEnemies(0), netgame::hostNearEnemies(1), netgame::hostNearEnemies(2), netgame::hostNearEnemies(3));
     for (int slot = 0; slot < s.playerCount() && n > 0 && n < static_cast<int>(sizeof(json)) - 160; ++slot) {
         const Player& p = s.players[slot];
-        n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "%s{\"x\":%.2f,\"y\":%.2f,\"hp\":%.1f,\"downed\":%d,\"cards\":%d,\"level\":%d,\"connected\":%d}",
+        n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n),
+                           "%s{\"x\":%.2f,\"y\":%.2f,\"hp\":%.1f,\"downed\":%d,\"cards\":%d,\"level\":%d,\"xp\":%d,\"weapons\":%d,\"connected\":%d}",
                            slot > 0 ? "," : "", static_cast<double>(p.pos.x), static_cast<double>(p.pos.y), static_cast<double>(p.hp), p.downed ? 1 : 0,
-                           p.cardsOpen ? 1 : 0, p.level, g_slotConnected[slot] ? 1 : 0);
+                           p.cardsOpen ? 1 : 0, p.level, p.xp, p.weaponCount, g_slotConnected[slot] ? 1 : 0);
     }
     std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "]}");
     return json;

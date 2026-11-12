@@ -135,6 +135,7 @@ struct Session {
     bool hostPaused = false;
     bool hostAwaySaid = false;
     bool runEnded = false;
+    bool notInRun = false;     // The host's current run was made without this player.
     RunEnd runEnd;
     QueuedEvent eventQueue[kEventQueueSize];
     int eventHead = 0;
@@ -458,6 +459,7 @@ void clearClient() {
     S().hostPaused = false;
     S().hostAwaySaid = false;
     S().runEnded = false;
+    S().notInRun = false;
     S().eventHead = 0;
     S().eventCount = 0;
     S().pickSent = false;
@@ -635,6 +637,12 @@ void readClientMessages(GameState& state) {
                     S().runEnd = end;
                     S().runEnded = true;
                 }
+                break;
+            }
+            case MessageKind::NotInRun: {
+                // Whatever run this machine still shows, the host has moved on without it.
+                NotInRunMessage message;
+                if (decodeNotInRun(g_buffer, size, message)) S().notInRun = true;
                 break;
             }
             default: break;
@@ -928,6 +936,25 @@ void hostSetConnected(int slot, bool connected) {
 
 bool hostConnected(int slot) { return slot <= 0 || (slot < kMaxPlayers && S().remotes[slot].connected); }
 
+void hostPlayerBack(int slot) {
+    if (S().role != Role::Host || slot <= 0 || slot >= S().settings.playerCount) return;
+    // A fresh record: a reloaded page counts its input steps from 1 again, and would have every
+    // input skipped as an old repeat if the host still remembered the old page's step numbers.
+    // The soldier itself is in the GameState, so nothing of the player's run is lost here.
+    resetRemote(S().remotes[slot]);
+    S().remotes[slot].inRun = true;
+    S().remotes[slot].connected = true;
+    sendStart(slot);
+}
+
+void hostSendNotInRun(int netId) {
+    if (S().role != Role::Host || netId < 0) return;
+    NotInRunMessage message;
+    message.runNumber = S().settings.runNumber;
+    const int size = encodeNotInRun(message, g_buffer, sizeof(g_buffer));
+    sendTo(netId, g_buffer, size, true);
+}
+
 void hostBeforeStep(GameState& state) {
     if (S().role != Role::Host) return;
     for (int slot = 1; slot < state.playerCount(); ++slot) {
@@ -973,7 +1000,9 @@ void hostAfterFrame(GameState& state, float dt, bool paused, bool away) {
     }
     for (int slot = 1; slot < S().settings.playerCount; ++slot) {
         Remote& remote = S().remotes[slot];
-        if (!remote.connected) continue;
+        // Flat cars wait until the player has the run: a reloaded page that has not built it yet
+        // would throw them away.
+        if (!remote.connected || !remote.answered) continue;
         // A player still behind on flat cars a while after they were sent lost one: send again
         // from what they have. The wait leaves time for messages already on their way.
         if (remote.answered && remote.clientCrushed < remote.sentCrushed) {
@@ -1130,6 +1159,7 @@ float clientAlpha() { return std::clamp(S().predictClock / kDt, 0.0f, 1.0f); }
 bool clientHostPaused() { return S().hostPaused; }
 bool clientHostAway() { return S().hostAwaySaid || (S().haveSnapshot && S().sinceSnapshot > balance::kNetHostSilentSeconds); }
 bool clientRunEnded() { return S().runEnded; }
+bool clientNotInRun() { return S().notInRun; }
 const RunEnd& clientRunEnd() { return S().runEnd; }
 
 }  // namespace ls::netgame

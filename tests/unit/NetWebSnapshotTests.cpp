@@ -148,3 +148,48 @@ TEST_CASE("web snapshot: damaged text is refused and bad names are made safe") {
     CHECK(std::strlen(parsed.players[1].name) == static_cast<std::size_t>(net::kNameMax));
     CHECK(std::strlen(parsed.code) == static_cast<std::size_t>(net::kCodeLength));
 }
+
+TEST_CASE("web snapshot: rejoin, Reconnecting, away players and the errors added for rejoin") {
+    // A guest getting its seat back during a run: the old room is still shown, one player is
+    // away, and another has come back once.
+    const char json[] =
+        "{\"phase\":\"Reconnecting\",\"phaseIndex\":6,\"wake\":{\"state\":\"awake\",\"ms\":0,\"attempts\":1},\"error\":\"\",\"errorIndex\":-1,"
+        "\"errorCode\":\"\",\"code\":\"K7QXM\",\"myId\":1,\"hostId\":0,\"isHost\":false,\"started\":true,\"players\":["
+        "{\"id\":0,\"name\":\"Ana\",\"ready\":true,\"isHost\":true,\"isMe\":false,\"transport\":\"none\",\"rttMs\":-1,\"away\":false,\"returns\":0},"
+        "{\"id\":1,\"name\":\"Ben\",\"ready\":true,\"isHost\":false,\"isMe\":true,\"transport\":\"local\",\"rttMs\":-1,\"away\":false,\"returns\":0},"
+        "{\"id\":2,\"name\":\"Cleo\",\"ready\":true,\"isHost\":false,\"isMe\":false,\"transport\":\"none\",\"rttMs\":-1,\"away\":true,\"returns\":0},"
+        "{\"id\":3,\"name\":\"Dev\",\"ready\":true,\"isHost\":false,\"isMe\":false,\"transport\":\"none\",\"rttMs\":-1,\"away\":false,\"returns\":2}],"
+        "\"serverRttMs\":-1,\"forceRelay\":false,\"rejoin\":\"K7QXM\",\"reconnecting\":true}";
+    net::Lobby lobby = parse(json);
+    CHECK(lobby.phase == net::LobbyPhase::Reconnecting);
+    CHECK(lobby.count == 4);
+    CHECK_FALSE(lobby.players[1].away);
+    CHECK(lobby.players[2].away);
+    CHECK(lobby.players[3].returns == 2);
+    CHECK(lobby.players[0].returns == 0);
+    char code[net::kCodeLength + 1] = "XXXXX";
+    net::readWebRejoin(json, code);
+    CHECK(std::strcmp(code, "K7QXM") == 0);
+
+    // No saved seat, a damaged one, or a name that looks like the key: no code.
+    net::readWebRejoin(kGuestInRoom, code);
+    CHECK(code[0] == '\0');
+    net::readWebRejoin("{\"phaseIndex\":0,\"players\":[],\"rejoin\":\"K7Q\"}", code);
+    CHECK(code[0] == '\0');
+    net::readWebRejoin("{\"phaseIndex\":0,\"players\":[{\"id\":0,\"name\":\"x\",\"rejoin\":\"K7QXM\"}],\"rejoin\":\"\"}", code);
+    CHECK(code[0] == '\0');
+    net::readWebRejoin(nullptr, code);
+    CHECK(code[0] == '\0');
+
+    // The errors added on the end of the script's list.
+    const net::LobbyError added[] = {net::LobbyError::RunEnded, net::LobbyError::RoomClosed, net::LobbyError::Replaced};
+    for (int i = 0; i < 3; ++i) {
+        char text[512];
+        std::snprintf(text, sizeof(text),
+                      "{\"phase\":\"Error\",\"phaseIndex\":5,\"wake\":{\"state\":\"awake\",\"ms\":0,\"attempts\":1},\"error\":\"x\",\"errorIndex\":%d,"
+                      "\"errorCode\":\"y\",\"code\":\"\",\"myId\":-1,\"hostId\":-1,\"isHost\":false,\"started\":false,\"players\":[],"
+                      "\"serverRttMs\":-1,\"forceRelay\":false,\"rejoin\":\"\",\"reconnecting\":false}",
+                      8 + i);
+        CHECK(parse(text).error == added[i]);
+    }
+}

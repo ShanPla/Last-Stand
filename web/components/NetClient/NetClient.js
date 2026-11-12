@@ -21,18 +21,36 @@
 // messages themselves (snapshots, inputs) are made in src/components/NetGame.
 //
 // How the states map to the C++ lobby interface:
-//   phases  Offline | Waking | Connecting | InLobby | Starting | Error
+//   phases  Offline | Waking | Connecting | InLobby | Starting | Error | Reconnecting
 //     Waking      the health check is running and the player has asked for nothing yet
-//     Connecting  create or join was pressed: waiting for the server and for the room answer
+//     Connecting  create, join or rejoin was pressed: waiting for the server and its answer
 //     InLobby     in a room that has not started
 //     Starting    the host pressed Start. It stays so until leave(): C++ owns the run from here
 //     Error       something failed. lastError() says what. leave() or wake() clears it
+//     Reconnecting  a guest's socket dropped during a run, and it is getting its seat back by
+//                 itself (see REJOIN below). The run keeps going on screen meanwhile
 //   errors  ServerUnreachable | NotFound | Full | Started | BadName | HostLeft | Version | Other
+//           | RunEnded | RoomClosed | Replaced   (new ones go on the end, so numbers never shift)
 //     server codes: not-found, full, started, bad-name, version have the same-named error.
 //     host-left -> HostLeft. Server gone, socket lost, wake failed, connect timeout
 //     -> ServerUnreachable (the event is also called server-lost when it happens in a room).
 //     bad-request, not-host, not-in-room, server-full, too-big, rate and room expiry -> Other.
+//     A refused rejoin: not-found -> RoomClosed, bad-token -> RunEnded. The same seat taken
+//     from another tab (closed with reason replaced) -> Replaced.
 //     Inside a room only the fatal ones change the phase; rate and similar come as events.
+//
+// REJOIN
+// In a started run the server keeps the seat of a guest whose socket closes, and each player
+// gets a secret token with the `started` message. This file saves { server, code, token, slot,
+// name } in localStorage when a guest's run starts, so the same person can come back:
+//   - by itself, when the socket drops unexpectedly mid-run: it reconnects with a growing wait
+//     between tries (half a second up to five), for up to a minute, in the Reconnecting phase;
+//   - with the Rejoin button on the co-op menu after a reload or a closed tab (rejoin()).
+// The saved seat is forgotten when the room closes, when a rejoin is refused, when the game
+// says the run is over for this player (abandon()), or when the player leaves for good
+// (forgetRejoin()). Closing the tab only leaves, so the seat can still be taken back.
+// After a rejoin the host makes a fresh WebRTC connection to that player, exactly as for a
+// new one, and the old connections on both sides are closed first.
 // ---------------------------------------------------------------------------------------
 (function (global) {
   'use strict';
@@ -44,9 +62,16 @@
   }
 
   var PROTOCOL_VERSION = 1;
-  var PHASES = ['Offline', 'Waking', 'Connecting', 'InLobby', 'Starting', 'Error'];
-  var ERRORS = ['ServerUnreachable', 'NotFound', 'Full', 'Started', 'BadName', 'HostLeft', 'Version', 'Other'];
+  var PHASES = ['Offline', 'Waking', 'Connecting', 'InLobby', 'Starting', 'Error', 'Reconnecting'];
+  var ERRORS = ['ServerUnreachable', 'NotFound', 'Full', 'Started', 'BadName', 'HostLeft', 'Version', 'Other', 'RunEnded', 'RoomClosed', 'Replaced'];
   var SERVER_ERRORS = { 'not-found': 'NotFound', 'full': 'Full', 'started': 'Started', 'bad-name': 'BadName', 'version': 'Version' };
+  // What a refused rejoin means to the player.
+  var REJOIN_ERRORS = { 'not-found': 'RoomClosed', 'bad-token': 'RunEnded' };
+
+  // Where the seat to come back to is kept. It is only a convenience: if storage is blocked the
+  // copy in memory still covers a dropped connection, and only a reload loses it.
+  var REJOIN_KEY = 'lastStand.coopRejoin';
+  var REJOIN_MAX_AGE_MS = 3 * 60 * 60 * 1000;  // the server closes any room this old anyway
 
   var BROADCAST = 255;
   // The relay refuses frames over 16 KB, and it counts the target byte. Every frame we make
@@ -76,6 +101,9 @@
     fallbackMs: 8000,      // a pair with no open WebRTC channel by then is marked as relay
     pingMs: 2000,
     disconnectGraceMs: 3000,
+    reconnectBudgetMs: 60000,  // how long a dropped guest keeps trying to get its seat back
+    reconnectFirstMs: 500,     // the first wait; each try after that waits twice as long...
+    reconnectMaxMs: 5000,      // ...up to this
   };
 
   function now() { return (global.performance && performance.now) ? performance.now() : Date.now(); }
@@ -119,6 +147,13 @@
       rateTimer: 0,
       answerTimer: 0,
       dropped: 0,
+      rejoinInfo: null,      // the seat to come back to, see REJOIN at the top
+      pendingRejoin: false,  // a rejoin was sent and its answer has not come yet
+      reconnecting: false,   // a dropped guest is trying to get its seat back by itself
+      reconnectStart: 0,
+      reconnectTries: 0,
+      reconnectTimer: 0,
+      returns: {},           // player id -> how many times they came back from away
     };
     var listeners = {};
     var eventLog = [];
@@ -153,6 +188,7 @@
     // ---- Phase and errors -------------------------------------------------------------
     function computePhase() {
       if (s.error) return 'Error';
+      if (s.reconnecting) return 'Reconnecting';
       if (s.room && s.started) return 'Starting';
       if (s.room) return 'InLobby';
       if (s.busy) return 'Connecting';
@@ -176,6 +212,43 @@
       closeSession();
       refresh();
       emit('error', { error: error, errorIndex: ERRORS.indexOf(error), code: code || '' });
+    }
+
+    // ---- The saved seat ---------------------------------------------------------------
+    // Storage can be missing or throw (private windows, blocked site data), so every use is
+    // wrapped, and a broken or odd value simply counts as no saved seat.
+    function storage() {
+      try { return global.localStorage || null; } catch (error) { return null; }
+    }
+
+    function validInfo(info) {
+      return !!info && typeof info === 'object' && typeof info.code === 'string' && /^[A-Z0-9]{5}$/.test(info.code) &&
+        typeof info.token === 'string' && info.token.length > 0 && info.token.length <= 64 &&
+        info.server === cfg.wsUrl && typeof info.savedAt === 'number' && Date.now() - info.savedAt < REJOIN_MAX_AGE_MS;
+    }
+
+    function loadRejoin() {
+      if (s.rejoinInfo) return validInfo(s.rejoinInfo) ? s.rejoinInfo : null;
+      var store = storage();
+      if (!store) return null;
+      try {
+        var info = JSON.parse(store.getItem(REJOIN_KEY) || 'null');
+        return validInfo(info) ? info : null;
+      } catch (error) { return null; }
+    }
+
+    function saveRejoin(token) {
+      if (!s.room || s.myId === s.hostId || typeof token !== 'string' || !token) return;
+      var me = s.room.players.filter(function (p) { return p.id === s.myId; })[0];
+      s.rejoinInfo = { v: 1, server: cfg.wsUrl, code: s.room.code, token: token, slot: s.myId, name: me ? me.name : '', savedAt: Date.now() };
+      var store = storage();
+      try { if (store) store.setItem(REJOIN_KEY, JSON.stringify(s.rejoinInfo)); } catch (error) {}
+    }
+
+    function forgetRejoin() {
+      s.rejoinInfo = null;
+      var store = storage();
+      try { if (store) store.removeItem(REJOIN_KEY); } catch (error) {}
     }
 
     // ---- Wake -------------------------------------------------------------------------
@@ -290,6 +363,20 @@
 
     // Drops the socket and everything built on it. Safe to call at any time.
     function closeSession() {
+      closeLink();
+      clearTimeout(s.reconnectTimer);
+      s.reconnectTimer = 0;
+      s.reconnecting = false;
+      s.pendingRejoin = false;
+      s.returns = {};
+      s.room = null;
+      s.started = false;
+      s.myId = s.hostId = -1;
+    }
+
+    // Drops the socket, the timers and every peer, but remembers the room, so a reconnect can
+    // carry on from it.
+    function closeLink() {
       clearInterval(s.pingTimer);
       clearInterval(s.rateTimer);
       clearTimeout(s.answerTimer);
@@ -297,22 +384,105 @@
       s.peers.forEach(closePeer);
       s.peers.clear();
       s.pingSent.clear();
+      dropSocket();
+      s.relayFlag = false;
+      s.serverRtt = -1;
+    }
+
+    function dropSocket() {
       var ws = s.ws;
       s.ws = null; // cleared first, so the close handler knows this one was on purpose
       if (ws) {
         try { ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); } catch (error) {}
       }
-      s.room = null;
-      s.started = false;
-      s.myId = s.hostId = -1;
-      s.relayFlag = false;
-      s.serverRtt = -1;
+    }
+
+    // ---- Reconnecting -----------------------------------------------------------------
+    // A guest in a started run whose socket drops tries to get its seat back by itself. The
+    // run keeps going on screen (the host simply holds this player down meanwhile), so a short
+    // cut costs a few seconds instead of the whole run.
+    function canReconnect() {
+      return !!s.room && s.started && s.myId !== s.hostId && !!loadRejoin() && loadRejoin().code === s.room.code;
+    }
+
+    function beginReconnect() {
+      var attempt = ++s.attempt;  // anything still running for the old socket stops
+      closeLink();
+      s.reconnecting = true;
+      s.pendingRejoin = false;
+      s.reconnectStart = now();
+      s.reconnectTries = 0;
+      refresh();
+      emit('reconnecting', {});
+      retryLater(attempt, opt.reconnectFirstMs);
+    }
+
+    // Plans the next try. Called again by both halves of a failed try (the connect rejecting
+    // and the socket closing), so it always replaces the plan instead of adding a second one.
+    function retryLater(attempt, delayMs) {
+      if (attempt !== s.attempt || !s.reconnecting) return;
+      clearTimeout(s.reconnectTimer);
+      var left = opt.reconnectBudgetMs - (now() - s.reconnectStart);
+      if (left <= 0) {
+        // The server kept the seat, so a later Rejoin from the menu may still work: the saved
+        // seat is kept.
+        giveUpReconnect('ServerUnreachable', 'reconnect-failed');
+        return;
+      }
+      var wait = delayMs !== undefined ? delayMs : Math.min(opt.reconnectMaxMs, opt.reconnectFirstMs * Math.pow(2, s.reconnectTries));
+      s.reconnectTimer = setTimeout(function () { reconnectOnce(attempt); }, Math.min(wait, left));
+    }
+
+    async function reconnectOnce(attempt) {
+      if (attempt !== s.attempt || !s.reconnecting) return;
+      var info = loadRejoin();
+      if (!info) { giveUpReconnect('RunEnded', 'no-seat'); return; }
+      s.reconnectTries++;
+      try {
+        await connectSocket();
+      } catch (error) {
+        dropSocket();
+        retryLater(attempt);
+        return;
+      }
+      if (attempt !== s.attempt || !s.reconnecting) return;
+      s.pendingRejoin = true;
+      sendJson({ t: 'rejoin', code: info.code, token: info.token });
+      clearTimeout(s.answerTimer);
+      s.answerTimer = setTimeout(function () {
+        if (attempt !== s.attempt || !s.pendingRejoin) return;
+        s.pendingRejoin = false;
+        dropSocket();
+        retryLater(attempt);
+      }, opt.answerTimeoutMs);
+    }
+
+    function giveUpReconnect(error, code) {
+      closeSession();
+      s.busy = false;
+      s.error = { error: error, code: code };
+      refresh();
+      if (error === 'ServerUnreachable') emit('server-lost', {});
+      emit('error', { error: error, errorIndex: ERRORS.indexOf(error), code: code });
     }
 
     // The socket died without us asking.
     function onSocketLost() {
+      if (s.reconnecting) {
+        // A try's socket closed. Before its welcome, the try's own failure plans the next one;
+        // after it (waiting for the rejoin answer), this is where the next one is planned.
+        clearTimeout(s.answerTimer);
+        s.pendingRejoin = false;
+        retryLater(s.attempt);
+        return;
+      }
+      if (canReconnect()) {
+        beginReconnect();
+        return;
+      }
       if (s.room) {
-        // No automatic rejoin in this version: the room is gone for us.
+        // A host, or a room that has not started: the room is gone for us. (When the host's
+        // socket goes, the server closes the room for everyone, so there is nothing to rejoin.)
         closeSession();
         s.busy = false;
         s.error = { error: 'ServerUnreachable', code: 'server-lost' };
@@ -366,7 +536,13 @@
       if (!msg || typeof msg.t !== 'string') return;
       switch (msg.t) {
         case 'room': onRoom(msg); break;
-        case 'started': s.started = true; refresh(); emit('started', {}); break;
+        case 'started':
+          s.started = true;
+          // Only this player's copy has its token. A guest keeps it to come back with.
+          saveRejoin(msg.token);
+          refresh();
+          emit('started', {});
+          break;
         case 'signal': onSignal(msg.from, msg.data); break;
         case 'pong': {
           var sent = s.pingSent.get(msg.n);
@@ -381,6 +557,25 @@
     }
 
     function onServerError(code) {
+      if (s.pendingRejoin) {
+        var refused = REJOIN_ERRORS[code];
+        if (refused) {
+          // The seat is gone for good: the room closed, or the run is over for this player.
+          s.pendingRejoin = false;
+          forgetRejoin();
+          if (s.reconnecting) giveUpReconnect(refused, code);
+          else fail(refused, code);
+          return;
+        }
+        if (s.reconnecting) {
+          // Anything else (a rate limit, say) is worth another try a moment later.
+          s.pendingRejoin = false;
+          clearTimeout(s.answerTimer);
+          dropSocket();
+          retryLater(s.attempt);
+          return;
+        }
+      }
       var mapped = SERVER_ERRORS[code] || 'Other';
       // Inside a room only a few things are fatal, the rest are reported and play on.
       if (s.room) {
@@ -391,7 +586,10 @@
     }
 
     function onClosed(reason) {
-      var error = reason === 'host-left' ? 'HostLeft' : 'Other';
+      var error = reason === 'host-left' ? 'HostLeft' : (reason === 'replaced' ? 'Replaced' : 'Other');
+      // A seat taken over from another tab still belongs to this person there, so it is kept.
+      // Any other close means the room is gone.
+      if (reason !== 'replaced') forgetRejoin();
       closeSession();
       s.busy = false;
       s.error = { error: error, code: reason || '' };
@@ -400,18 +598,49 @@
       emit('error', { error: error, errorIndex: ERRORS.indexOf(error), code: reason || '' });
     }
 
+    // The players who have a socket. An away player keeps a seat in the list but has none.
+    function hereIds(room) {
+      return room ? room.players.filter(function (p) { return !p.away; }).map(function (p) { return p.id; }) : [];
+    }
+
     function onRoom(room) {
-      var previous = s.room ? s.room.players.map(function (p) { return p.id; }) : [];
+      var old = s.room;
+      // After a reconnect the socket is new and every peer was closed, so nothing from before
+      // is still connected. The old room is still read, to see who came back meanwhile.
+      var fresh = !old || s.reconnecting;
+      var previous = fresh ? [] : hereIds(old);
+      if (s.reconnecting) {
+        s.reconnecting = false;
+        emit('reconnected', {});
+      }
+      s.pendingRejoin = false;
       clearTimeout(s.answerTimer);
       s.room = room;
       s.myId = room.you;
       s.hostId = room.host;
       s.busy = false;
       if (room.started) s.started = true;
-      var ids = room.players.map(function (p) { return p.id; });
-      if (!previous.length) startTimers();
+      var ids = hereIds(room);
+      if (fresh) startTimers();
+      // A different room than the saved seat's: that seat was given up.
+      var saved = loadRejoin();
+      if (saved && saved.code !== room.code) forgetRejoin();
 
-      // People who vanished: close their pair and tell the game.
+      // Someone who was away is back. The count lets the game notice even when they went away
+      // and came back between two of its frames (a seat taken over from another tab).
+      if (old) {
+        room.players.forEach(function (p) {
+          if (p.away) return;
+          var before = old.players.filter(function (q) { return q.id === p.id; })[0];
+          if (before && before.away) {
+            s.returns[p.id] = (s.returns[p.id] || 0) + 1;
+            emit('peer-back', { id: p.id });
+          }
+        });
+      }
+
+      // People who vanished or went away: close their pair and tell the game. When they come
+      // back, the code below makes a new pair, so the host offers a fresh WebRTC connection.
       previous.forEach(function (id) {
         if (ids.indexOf(id) !== -1) return;
         var peer = s.peers.get(id);
@@ -691,6 +920,7 @@
         if (woke.state !== 'awake') { fail('ServerUnreachable', 'wake-failed'); return false; }
         await connectSocket();
         if (attempt !== s.attempt) return false;
+        s.pendingRejoin = message.t === 'rejoin';
         sendJson(message);
         s.answerTimer = setTimeout(function () {
           if (attempt === s.attempt && s.busy) fail('ServerUnreachable', 'no-answer');
@@ -710,6 +940,35 @@
       try { return enter({ t: 'join', code: String(code == null ? '' : code).trim().toUpperCase(), name: String(name == null ? '' : name) }); } catch (error) { return Promise.resolve(false); }
     }
 
+    // Takes back the saved seat of a run this player was in (after a reload, or a closed tab).
+    // The answer is a room message and then started, like a join; or RoomClosed or RunEnded,
+    // which also forget the seat. Resolves false when there is no seat to take back.
+    function rejoinRoom() {
+      try {
+        var info = loadRejoin();
+        if (!info) return Promise.resolve(false);
+        return enter({ t: 'rejoin', code: info.code, token: info.token });
+      } catch (error) { return Promise.resolve(false); }
+    }
+
+    // The game says this player's run is over (the host started another run without them), or
+    // something else made the seat useless: leave, forget the seat, and show why.
+    function abandon(errorName) {
+      try {
+        var error = ERRORS.indexOf(errorName) !== -1 ? errorName : 'RunEnded';
+        leave();
+        forgetRejoin();
+        s.error = { error: error, code: 'abandoned' };
+        refresh();
+        emit('error', { error: error, errorIndex: ERRORS.indexOf(error), code: 'abandoned' });
+      } catch (error) {}
+    }
+
+    function rejoinInfo() {
+      var info = loadRejoin();
+      return info ? { code: info.code, slot: info.slot, name: info.name } : null;
+    }
+
     function setReady(on) { return s.room ? sendJson({ t: 'ready', ready: !!on }) : false; }
 
     function start() {
@@ -717,7 +976,9 @@
       return sendJson({ t: 'start' });
     }
 
-    // Leaves the room, closes everything and clears any error. Works in every phase.
+    // Leaves the room, closes everything and clears any error. Works in every phase. In a
+    // started run the server keeps the seat, and the saved seat is kept too: closing the tab
+    // comes through here. Leaving for good is leave() and then forgetRejoin().
     function leave() {
       try {
         s.attempt++;
@@ -743,6 +1004,7 @@
           id: p.id, name: p.name, ready: !!p.ready, isHost: p.id === s.hostId, isMe: p.id === s.myId,
           transport: p.id === s.myId ? 'local' : (peer ? peer.transport : 'none'),
           rttMs: peer ? peer.rtt : -1,
+          away: !!p.away, returns: s.returns[p.id] || 0,
         };
       });
     }
@@ -769,7 +1031,13 @@
         error: e ? e.error : '', errorIndex: e ? ERRORS.indexOf(e.error) : -1, errorCode: e ? e.code : '',
         code: s.room ? s.room.code : '', myId: s.myId, hostId: s.hostId, isHost: !!s.room && s.myId === s.hostId,
         started: s.started, players: players(), serverRttMs: s.serverRtt, forceRelay: forceRelay,
+        rejoin: rejoinCode(), reconnecting: s.reconnecting,
       };
+    }
+
+    function rejoinCode() {
+      var info = loadRejoin();
+      return info ? info.code : '';
     }
 
     // Wraps a reader so a bug here can never throw into the game.
@@ -794,6 +1062,12 @@
     client.setReady = safe(setReady, false);
     client.start = safe(start, false);
     client.leave = leave;
+    client.rejoin = rejoinRoom;
+    client.abandon = abandon;
+    client.forgetRejoin = safe(forgetRejoin, undefined);
+    client.canRejoin = safe(function () { return !!loadRejoin(); }, false);
+    client.rejoinInfo = safe(rejoinInfo, null);
+    client.isReconnecting = safe(function () { return s.reconnecting; }, false);
     client.send = send;
     client.onMessage = null; // set to function (from, bytes); bytes is a view, copy it to keep it
     client.on = on;

@@ -363,6 +363,45 @@ test('the host leaving or the server dropping returns to the menu with a notice'
 
 // ---- Join ------------------------------------------------------------------------
 
+test('Rejoin: shown first and selected only when there is a seat, says it is rejoining, and a refusal explains and removes it', async () => {
+  const { context, page, problems } = await open();
+  await toCoop(page);
+  let ui = await frameUi(page);
+  assert.ok(!names(ui).some((n) => n.startsWith('Rejoin')), 'no Rejoin without a saved seat');
+  await waitSelected(page, 'Host Co-op');
+
+  // A saved seat: Rejoin comes first and takes the selection, and Enter presses it.
+  await debug(page, NET.rejoinSeat, 1);
+  ui = await frameUi(page);
+  assert.deepEqual(names(ui).filter((n) => /Co-op|Rejoin|Back/.test(n)), ['Rejoin K7QXM', 'Host Co-op', 'Join Co-op', 'Back']);
+  await waitSelected(page, 'Rejoin K7QXM');
+  await debug(page, NET.latencyMs, 600);
+  await page.keyboard.press('Enter');
+  const waiting = await waitNet(page, (n) => n.phase === PHASE.connecting, 'the rejoin to be sent');
+  assert.equal(waiting.rejoining, 1);
+  assert.equal(waiting.sub, 'coop-host');
+  await shot(page, 'rejoining');
+  await waitNet(page, (n) => n.phase === PHASE.starting && n.started === 1 && n.you === 1, 'back in the started run');
+  assert.deepEqual(problems, []);
+  await context.close();
+
+  // A refused one: back on the menu with the reason, and no Rejoin any more.
+  for (const [error, text] of [[ERR.runEnded, /That run has ended/], [ERR.roomClosed, /Room closed/]]) {
+    const fresh = await open();
+    await toCoop(fresh.page);
+    await debug(fresh.page, NET.rejoinSeat, 1);
+    await debug(fresh.page, NET.nextError, error);
+    await clickButton(fresh.page, 'Rejoin K7QXM');
+    const refused = await waitNet(fresh.page, (n) => n.sub === 'coop-menu' && text.test(n.notice), `the notice for error ${error}`);
+    assert.equal(refused.rejoin, '');
+    ui = await frameUi(fresh.page);
+    assert.ok(!names(ui).some((n) => n.startsWith('Rejoin')), 'the button is gone');
+    if (error === ERR.runEnded) await shot(fresh.page, 'rejoin-refused');
+    assert.deepEqual(fresh.problems, []);
+    await fresh.context.close();
+  }
+});
+
 test('Join: a code is typed in any case, only valid characters stay, and Join waits for all five', async () => {
   const { context, page, problems } = await open();
   await toCoop(page);

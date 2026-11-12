@@ -16,9 +16,11 @@ namespace {
 
 enum class Sub { Menu, Host, Join };
 
-// Focus orders. The name comes first because it is first on screen, but Host is selected when
-// the menu opens, so one Enter still starts the usual thing.
-enum MenuFocus { kMenuName = 0, kMenuHost, kMenuJoin, kMenuBack, kMenuCount };
+// Focus orders. The name comes first because it is first on screen, but the next one is
+// selected when the menu opens, so one Enter still starts the usual thing: Rejoin when there
+// is a run to go back to (it is only shown then), and Host otherwise. The menu's own order is
+// worked out each frame in MenuOrder, because Rejoin comes and goes.
+enum MenuFocus { kMenuName = 0, kMenuFirst = 1 };
 enum HostFocus { kRoomCopy = 0, kRoomReady, kRoomStart, kRoomLeave };
 enum JoinFocus { kJoinCode = 0, kJoinJoin, kJoinRetry, kJoinBack };
 
@@ -33,6 +35,7 @@ TextEntry g_name;
 TextEntry g_code;
 char g_notice[80] = "";
 bool g_wasInRoom = false;  // The lobby was live, so an error afterwards means a connection was lost.
+bool g_rejoining = false;  // The waiting view is for Rejoin, not Host, so it says so.
 float g_copiedAt = -100.0f;
 
 // ---- Small drawing helpers ------------------------------------------------------
@@ -100,6 +103,9 @@ const char* errorText(net::LobbyError error) {
         case net::LobbyError::HostLeft: return "The host left. The run has ended.";
         case net::LobbyError::Version: return "This game is out of date. Reload the page and try again.";
         case net::LobbyError::Other: return "Something went wrong. Please try again.";
+        case net::LobbyError::RunEnded: return "That run has ended.";
+        case net::LobbyError::RoomClosed: return "Room closed. That run has ended.";
+        case net::LobbyError::Replaced: return "You went back into the run from another tab.";
         case net::LobbyError::None: return "";
     }
     return "";
@@ -122,7 +128,8 @@ void goTo(Sub sub) {
     if (sub == Sub::Join) g_joinNav.selected = kJoinCode;
     if (sub == Sub::Menu) {
         g_menuNav = Nav{};
-        g_menuNav.selected = kMenuHost;
+        g_menuNav.selected = kMenuFirst;
+        g_rejoining = false;
     }
 }
 
@@ -158,7 +165,12 @@ Status statusFor(const net::Lobby& lobby, bool hosting) {
             }
             break;
         case net::LobbyPhase::Connecting:
-            status.head = hosting ? "Creating your room..." : "Joining the room...";
+            status.head = g_rejoining ? "Rejoining the run..." : (hosting ? "Creating your room..." : "Joining the room...");
+            status.spin = true;
+            break;
+        case net::LobbyPhase::Reconnecting:
+            status.head = "Reconnecting...";
+            status.sub = "The connection dropped. Getting your place back.";
             status.spin = true;
             break;
         case net::LobbyPhase::Error:
@@ -183,6 +195,30 @@ void drawBackdrop() { pixelRect(Rectangle{0.0f, 0.0f, layout().w, layout().h}, t
 
 // ---- Menu ----------------------------------------------------------------------
 
+// Where each menu button sits in the focus order. Rejoin is only there while a run can be
+// rejoined, and the others move down one when it is.
+struct MenuOrder {
+    bool rejoin = false;
+    int rejoinFocus = -1;
+    int host = kMenuFirst;
+    int join = kMenuFirst + 1;
+    int back = kMenuFirst + 2;
+    int count = kMenuFirst + 3;
+};
+
+MenuOrder menuOrder() {
+    MenuOrder order;
+    order.rejoin = net::canRejoin();
+    if (order.rejoin) {
+        order.rejoinFocus = kMenuFirst;
+        order.host++;
+        order.join++;
+        order.back++;
+        order.count++;
+    }
+    return order;
+}
+
 CoopResult drawMenu(SaveData& data) {
     const Layout& l = layout();
     const float u = l.u;
@@ -190,6 +226,7 @@ CoopResult drawMenu(SaveData& data) {
     const bool keys = textKeyboardOpen();
     setInputEnabled(!keys);
     drawBackdrop();
+    const MenuOrder order = menuOrder();
 
     const float panelWidth = std::min(l.width(), kPanelMax * u);
     const float x = l.centerX() - panelWidth * 0.5f;
@@ -204,7 +241,13 @@ CoopResult drawMenu(SaveData& data) {
     const float noticeHeight = hasNotice ? noticeTextHeight + noticePad * 2.0f + gap : 0.0f;
     const bool waking = net::lobby().phase == net::LobbyPhase::Waking;
     const float statusHeight = waking ? 30.0f * u : 0.0f;
-    const float content = titleHeight + subtitleHeight + noticeHeight + fieldHeight + gap + (buttonHeight + gap) * 3.0f + statusHeight;
+    const float above = titleHeight + subtitleHeight + noticeHeight + fieldHeight + gap + statusHeight;
+    float content = above + (buttonHeight + gap) * (order.rejoin ? 4.0f : 3.0f);
+    // On a very short window the extra Rejoin row may not fit. Host and Join then share one
+    // row, side by side, so every button stays on screen at its full touch height.
+    const bool pairRow = order.rejoin && content > l.height();
+    if (pairRow) content = above + (buttonHeight + gap) * 3.0f;
+    const float pairWidth = (panelWidth - gap) * 0.5f;
     float y = l.top + std::max(0.0f, (l.height() - content) * 0.5f);
 
     textShadowed("CO-OP", l.centerX(), y, 44.0f * u, theme::kUiAccent, font::Align::Center, l.px);
@@ -220,12 +263,30 @@ CoopResult drawMenu(SaveData& data) {
         y += noticeHeight;
     }
 
-    if (!keys) navigate(g_menuNav, kMenuCount);
+    if (!keys) navigate(g_menuNav, order.count);
+    if (g_menuNav.selected >= order.count) g_menuNav.selected = order.count - 1;
 
     textField(g_menuNav, kMenuName, Rectangle{x, y, panelWidth, fieldHeight}, "Your name", g_name, TextKind::Name, "Optional. Empty means Player N.");
     y += fieldHeight + gap;
 
-    if (button(g_menuNav, kMenuHost, Rectangle{x, y, panelWidth, buttonHeight}, "Host Co-op", ButtonLook::Primary, promptConfirm())) {
+    if (order.rejoin) {
+        // The run this player was in, after a reload or a closed tab. It goes first and is the
+        // main button, because it is almost always what someone back on this menu wants.
+        char label[32];
+        std::snprintf(label, sizeof(label), "Rejoin %s", net::rejoinCode());
+        if (button(g_menuNav, order.rejoinFocus, Rectangle{x, y, panelWidth, buttonHeight}, label, ButtonLook::Primary, promptConfirm())) {
+            if (commitName(data)) result.saveChanged = true;
+            g_notice[0] = '\0';
+            g_wasInRoom = false;
+            net::rejoinRoom();
+            goTo(Sub::Host);
+            g_rejoining = true;
+            return result;
+        }
+        y += buttonHeight + gap;
+    }
+    if (button(g_menuNav, order.host, Rectangle{x, y, pairRow ? pairWidth : panelWidth, buttonHeight}, "Host Co-op",
+               order.rejoin ? ButtonLook::Normal : ButtonLook::Primary, order.rejoin ? nullptr : promptConfirm())) {
         if (commitName(data)) result.saveChanged = true;
         char name[net::kNameMax + 1];
         effectiveName(true, name, sizeof(name));
@@ -235,8 +296,9 @@ CoopResult drawMenu(SaveData& data) {
         goTo(Sub::Host);
         return result;
     }
-    y += buttonHeight + gap;
-    if (button(g_menuNav, kMenuJoin, Rectangle{x, y, panelWidth, buttonHeight}, "Join Co-op")) {
+    if (!pairRow) y += buttonHeight + gap;
+    const Rectangle joinRect = pairRow ? Rectangle{x + pairWidth + gap, y, pairWidth, buttonHeight} : Rectangle{x, y, panelWidth, buttonHeight};
+    if (button(g_menuNav, order.join, joinRect, "Join Co-op")) {
         if (commitName(data)) result.saveChanged = true;
         g_notice[0] = '\0';
         g_wasInRoom = false;
@@ -246,7 +308,7 @@ CoopResult drawMenu(SaveData& data) {
         return result;
     }
     y += buttonHeight + gap;
-    const bool backPressed = button(g_menuNav, kMenuBack, Rectangle{x, y, panelWidth, buttonHeight}, "Back", ButtonLook::Normal, promptBack());
+    const bool backPressed = button(g_menuNav, order.back, Rectangle{x, y, panelWidth, buttonHeight}, "Back", ButtonLook::Normal, promptBack());
     y += buttonHeight + gap;
 
     if (waking) {
@@ -303,13 +365,14 @@ void drawPlayerRow(Rectangle row, int slot, const net::Lobby& lobby) {
     const float tagHeight = std::min(row.height * 0.6f, 22.0f * u);
     // The word beside the mark only shows when the name, the tags and the word all fit. The mark
     // alone is enough to read the state.
-    const char* word = player.ready ? "READY" : "WAITING";
+    // In a started run someone whose connection is gone is shown as away: they may come back.
+    const char* word = player.away ? "AWAY" : (player.ready ? "READY" : "WAITING");
     const float wordSize = std::min(row.height * 0.38f, 16.0f * u);
     const float tagsWidth = (slot == lobby.you ? font::measure("YOU", tagHeight * 0.55f, p) + tagHeight * 0.7f + 4.0f * p : 0.0f) +
                             (slot == lobby.host ? font::measure("HOST", tagHeight * 0.55f, p) + tagHeight * 0.7f + 4.0f * p : 0.0f);
     const float wordWidth = font::measure(word, wordSize, p) + 8.0f * p;
     if (right - nameX - tagsWidth - wordWidth >= font::measure(player.name, nameSize)) {
-        textMiddle(word, right, cy, wordSize, player.ready ? theme::kCoopReady : theme::kCoopWaiting, font::Align::Right, p);
+        textMiddle(word, right, cy, wordSize, player.ready && !player.away ? theme::kCoopReady : theme::kCoopWaiting, font::Align::Right, p);
         right -= wordWidth;
     }
     if (slot == lobby.you) right = drawTag("YOU", theme::kCoopYou, right, cy, tagHeight) - 4.0f * p;
@@ -494,6 +557,10 @@ bool checkRoomLost() {
     if (lobby.phase != net::LobbyPhase::Error) return false;
     if (lobby.error == net::LobbyError::HostLeft) {
         setNotice("The host left. The run has ended.");
+    } else if (lobby.error == net::LobbyError::RunEnded || lobby.error == net::LobbyError::RoomClosed || lobby.error == net::LobbyError::Replaced) {
+        // A refused rejoin, or a run that went on without this player. The saved seat is gone
+        // already (except for Replaced, where the other tab has it), so the menu shows no Rejoin.
+        setNotice(errorText(lobby.error));
     } else if (g_wasInRoom && lobby.error == net::LobbyError::ServerUnreachable) {
         setNotice("Lost the connection to the server.");
     } else {
@@ -521,7 +588,7 @@ CoopResult drawHost() {
     bool retry = false;
     bool cancel = false;
     const bool failed = lobby.phase == net::LobbyPhase::Error;
-    drawWaitingView(g_hostNav, true, failed ? "Back" : "Cancel", &retry, &cancel);
+    drawWaitingView(g_hostNav, !g_rejoining, failed ? "Back" : "Cancel", &retry, &cancel);
     if (retry) net::retry();
     if (cancel) {
         net::leaveRoom();
@@ -653,16 +720,16 @@ const char* coopDebugJson() {
     int n = std::snprintf(json, sizeof(json),
                           "{\"sub\":\"%s\",\"phase\":%d,\"error\":%d,\"code\":\"%s\",\"you\":%d,\"host\":%d,\"started\":%d,\"count\":%d,"
                           "\"canStart\":%d,\"wake\":%.1f,\"name\":\"%s\",\"codeText\":\"%s\",\"editing\":%d,\"keys\":%d,\"notice\":\"%s\","
-                          "\"serverRtt\":%d,\"players\":[",
+                          "\"serverRtt\":%d,\"rejoin\":\"%s\",\"rejoining\":%d,\"players\":[",
                           coopScreenName(), static_cast<int>(lobby.phase), static_cast<int>(lobby.error), lobby.code, lobby.you, lobby.host,
                           lobby.started ? 1 : 0, lobby.count, net::canStart() ? 1 : 0, static_cast<double>(lobby.wakeSeconds), g_name.text,
-                          g_code.text, textEditing() ? 1 : 0, textKeyboardOpen() ? 1 : 0, g_notice, lobby.serverRttMs);
+                          g_code.text, textEditing() ? 1 : 0, textKeyboardOpen() ? 1 : 0, g_notice, lobby.serverRttMs, net::rejoinCode(), g_rejoining ? 1 : 0);
     for (int i = 0; i < lobby.count && n > 0 && n < static_cast<int>(sizeof(json)) - 220; ++i) {
         const net::LobbyPlayer& player = lobby.players[i];
         n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n),
-                           "%s{\"id\":%d,\"name\":\"%s\",\"ready\":%d,\"transport\":\"%s\",\"rtt\":%d,\"msgsIn\":%d,\"msgsOut\":%d}", i > 0 ? "," : "",
-                           player.id, player.name, player.ready ? 1 : 0, net::transportName(player.transport), player.rttMs, player.msgsInPerSec,
-                           player.msgsOutPerSec);
+                           "%s{\"id\":%d,\"name\":\"%s\",\"ready\":%d,\"away\":%d,\"returns\":%d,\"transport\":\"%s\",\"rtt\":%d,\"msgsIn\":%d,\"msgsOut\":%d}",
+                           i > 0 ? "," : "", player.id, player.name, player.ready ? 1 : 0, player.away ? 1 : 0, player.returns,
+                           net::transportName(player.transport), player.rttMs, player.msgsInPerSec, player.msgsOutPerSec);
     }
     std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "]}");
     return json;

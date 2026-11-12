@@ -137,6 +137,17 @@ void coopHudNotice(const char* message) {
 
 const char* coopHudLastNotice() { return g_lastNotice; }
 
+void coopHudClearNotice() {
+    g_notice[0] = '\0';
+    g_noticeLeft = 0.0f;
+}
+
+void drawCoopNotice(float dtReal) {
+    if (g_noticeLeft <= 0.0f) return;
+    g_noticeLeft -= dtReal;
+    drawBanner(g_notice, layout().top + 70.0f * layout().u, layout().u);
+}
+
 int connectionQuality(int pingMs, float snapshotAge) {
     if (snapshotAge > balance::kNetHostSilentSeconds) return 0;
     if (pingMs < 0) return snapshotAge > 0.5f ? 1 : 2;
@@ -153,7 +164,12 @@ void drawCoopHud(const GameState& state, const CoopHudView& view, float dtReal) 
 
     // Under the timer, so it never covers the soldier in the middle of the screen.
     float bannerY = l.top + 70.0f * u;
-    if (view.hostAway) {
+    // Reconnecting comes first: with this guest's own connection gone, nothing from the host
+    // arrives either, and "Host is away" would blame the wrong person.
+    if (view.reconnecting) {
+        drawBanner("Reconnecting...", bannerY, u);
+        bannerY += 50.0f * u;
+    } else if (view.hostAway) {
         drawBanner("Host is away", bannerY, u);
         bannerY += 50.0f * u;
     } else if (view.hostPaused) {

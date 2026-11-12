@@ -12,6 +12,10 @@ namespace ls::net {
 // when the text is not a snapshot.
 bool applyWebSnapshot(const char* json, Lobby& lobby);
 
+// Reads the room code of the saved seat ("rejoin" in the snapshot) into code, or makes it
+// empty when there is none or it is not a valid code.
+void readWebRejoin(const char* json, char (&code)[kCodeLength + 1]);
+
 // Adds the per-second message counts from the script's statsJson to the players of the lobby.
 void applyWebStats(const char* json, Lobby& lobby);
 

@@ -21,8 +21,11 @@ enum class LobbyPhase {
     Waking,      // Waiting for the server to answer. Can take a minute on a free host.
     Connecting,  // The server is awake. Waiting for it to accept a host or join request.
     InLobby,     // In a room. The player list is live.
-    Starting,    // The host pressed Start. The run is about to begin.
+    Starting,    // The host pressed Start. The run is about to begin, or is going on.
     Error,       // Something failed. Lobby::error says what.
+    // A guest's connection dropped during a run, and it is getting its seat back by itself.
+    // The run stays on screen meanwhile. It comes last so the numbers above never change.
+    Reconnecting,
 };
 
 enum class LobbyError {
@@ -35,6 +38,9 @@ enum class LobbyError {
     HostLeft,           // The host left, so the room is gone.
     Version,            // This page and the server speak different protocol versions.
     Other,              // Anything else, such as a full server or a rate limit.
+    RunEnded,           // A rejoin was refused: the run this player was in is over for them.
+    RoomClosed,         // A rejoin found no room: the host left, or the room expired.
+    Replaced,           // The same player took their seat back from another tab.
 };
 
 // How game messages travel between this player and another one. Only the web backend knows.
@@ -51,6 +57,12 @@ struct LobbyPlayer {
     int id = -1;            // The server's slot, 0 to 3. The host is always slot 0.
     char name[kNameMax + 1] = {};
     bool ready = false;
+    // In a started run, a player whose connection is gone keeps their seat and is listed as
+    // away, because they may come back. An away player has no connection to send to.
+    bool away = false;
+    // How many times this player has come back from away. It only goes up, so a return is seen
+    // even when the player left and came back between two frames.
+    int returns = 0;
     // Numbers for the debug overlay. They stay at these values with the fake backend.
     Transport transport = Transport::None;
     int rttMs = -1;          // Round trip to this player in milliseconds, or -1 when not measured.
@@ -82,6 +94,16 @@ const Lobby& lobby();
 // players in it and every player ready. The Start button and startRun() both use this.
 bool canStart();
 
+// The players in the room who are connected right now, that is, not away.
+int hereCount();
+bool isHere(const LobbyPlayer& player);
+
+// The room code of a run this player can take their seat back in (after a reload or a closed
+// tab), or an empty string when there is none. The browser keeps the seat; natively only the
+// fake backend can pretend to have one.
+const char* rejoinCode();
+bool canRejoin();
+
 // ---- Rules the screens and the server share --------------------------------------
 
 // 1 to 12 letters, digits and spaces, with no space at either end.
@@ -106,10 +128,21 @@ void hostRoom(const char* name);
 // Join a room. The code may be in any case. A code that cannot be a code is NotFound.
 void joinRoom(const char* code, const char* name);
 
+// Takes back the seat of the run in rejoinCode(). Waking, then Connecting, then Starting like a
+// join, or Error with RunEnded or RoomClosed (and then the saved seat is gone).
+void rejoinRoom();
+
+// Forgets the saved seat. Call when the player leaves a run for good.
+void forgetRejoin();
+
+// Leaves the room, forgets the saved seat, and shows this error. For when the game learns the
+// run is over for this player, such as the host starting a new run without them.
+void abandonRun(LobbyError error);
+
 void setReady(bool ready);
 void startRun();   // Host only, and only when canStart() says so. Otherwise nothing happens.
 void leaveRoom();  // Back to Offline. Also clears an error.
-void retry();      // Repeats the last host, join or wake that failed or timed out.
+void retry();      // Repeats the last host, join, rejoin or wake that failed or timed out.
 
 // Call once per frame, with the time since the last frame, so timers and the backend advance.
 void update(float dt);
@@ -141,6 +174,8 @@ enum DebugOp {
     kDebugLoseServer = 108,   // The connection drops: phase Error, error ServerUnreachable.
     kDebugWakeSeconds = 109,  // Sets Lobby::wakeSeconds, to reach the Retry timeout quickly.
     kDebugPhase = 110,        // Forces a phase (as a number), keeping the rest of the lobby.
+    kDebugRejoinSeat = 111,   // 1: the fake keeps a seat to rejoin in room K7QXM. 0: none.
+    kDebugAwayMask = 112,     // Bit n set: player n of the fake room is away.
 };
 void debugCommand(int op, int value);
 

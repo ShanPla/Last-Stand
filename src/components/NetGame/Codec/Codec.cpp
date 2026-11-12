@@ -663,6 +663,23 @@ bool decodePause(const uint8_t* data, int size, PauseMessage& out) {
     return true;
 }
 
+int encodeNotInRun(const NotInRunMessage& m, uint8_t* out, int capacity) {
+    Writer w{out, capacity};
+    startMessage(w, MessageKind::NotInRun);
+    w.u8(m.runNumber);
+    return finish(w);
+}
+
+bool decodeNotInRun(const uint8_t* data, int size, NotInRunMessage& out) {
+    Reader r{data, size};
+    if (!openMessage(r, MessageKind::NotInRun)) return false;
+    NotInRunMessage m;
+    m.runNumber = static_cast<uint8_t>(r.u8());
+    if (!done(r)) return false;
+    out = m;
+    return true;
+}
+
 int encodeRunEnd(const RunEnd& m, uint8_t* out, int capacity) {
     Writer w{out, capacity};
     startMessage(w, MessageKind::RunEnd);

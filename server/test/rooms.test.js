@@ -110,7 +110,9 @@ describe('rooms and the lobby', () => {
       const room = await c.nextJson();
       assert.equal(room.t, 'room');
       assert.equal(room.started, true);
-      assert.deepEqual(await c.nextJson(), { t: 'started' });
+      const started = await c.nextJson();
+      assert.equal(started.t, 'started');
+      assert.match(started.token, /^[A-Za-z0-9_-]{22}$/, 'each player gets a rejoin token');
     }
     // Starting twice is an error and does not send a second started.
     host.sendJson({ t: 'start' });

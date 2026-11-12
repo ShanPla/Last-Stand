@@ -25,6 +25,13 @@ public:
     virtual void setReady(Lobby& lobby, bool ready) = 0;
     virtual void start(Lobby& lobby) = 0;
     virtual void leave(Lobby& lobby) = 0;
+    // Takes back the saved seat of a started run. Answers come like a join's.
+    virtual void rejoin(Lobby& lobby) = 0;
+    // The room code of the saved seat, or "" when there is none.
+    virtual const char* rejoinCode() const = 0;
+    virtual void forgetRejoin() = 0;
+    // Leaves, forgets the saved seat, and puts the lobby in Error with this error.
+    virtual void abandon(Lobby& lobby, LobbyError error) = 0;
     // Advances timers and reads answers. Called every frame.
     virtual void update(Lobby& lobby, float dt) = 0;
     // Game messages once the run has started. See sendGame and receiveGame in Net.h.

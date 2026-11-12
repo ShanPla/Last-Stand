@@ -15,8 +15,15 @@ const char* coopHudName(int slot);
 // A short message near the top of the screen, such as "Ana left the run". Shown for a few seconds.
 void coopHudNotice(const char* text);
 const char* coopHudLastNotice();
+// Drops the notice on screen, so an old one never shows over a new run.
+void coopHudClearNotice();
+
+// Draws only the notice, for a run that is no longer co-op: when the host's Play Again finds
+// nobody else connected, the solo run that follows still says why.
+void drawCoopNotice(float dtReal);
 
 struct CoopHudView {
+    bool reconnecting = false; // This guest's connection dropped and it is getting its seat back.
     bool hostAway = false;     // The host's tab is hidden, or nothing has come from the host for a while.
     bool hostPaused = false;   // The host has the pause menu open.
     int pingMs = -1;           // Round trip to the host, or the slowest player for the host. -1 when unknown.

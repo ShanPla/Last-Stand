@@ -54,6 +54,23 @@ public:
 
     void leave(Lobby&) override { pending_ = Pending::None; }
 
+    // The fake keeps a pretend seat (set by kDebugRejoinSeat). Taking it back answers like a
+    // join into a run that has already started, or fails with the error set by kDebugNextError.
+    void rejoin(Lobby& lobby) override {
+        if (!seat_) return;
+        pending_ = Pending::Rejoin;
+        beginRequest(lobby);
+    }
+
+    const char* rejoinCode() const override { return seat_ ? kFakeCode : ""; }
+
+    void forgetRejoin() override { seat_ = false; }
+
+    void abandon(Lobby& lobby, LobbyError error) override {
+        seat_ = false;
+        dropToError(lobby, error);
+    }
+
     void update(Lobby& lobby, float dt) override {
         if (wakeStarted_ && !awake_ && wakeDelay_ >= 0.0f) {
             wakeTimer_ += dt;
@@ -89,6 +106,10 @@ public:
             case kDebugReadyMask:
                 for (int i = 0; i < lobby.count; ++i) lobby.players[i].ready = ((value >> i) & 1) != 0;
                 break;
+            case kDebugRejoinSeat: seat_ = value != 0; break;
+            case kDebugAwayMask:
+                for (int i = 0; i < lobby.count; ++i) lobby.players[i].away = ((value >> i) & 1) != 0;
+                break;
             case kDebugHostLeft: dropToError(lobby, LobbyError::HostLeft); break;
             case kDebugLoseServer: dropToError(lobby, LobbyError::ServerUnreachable); break;
             default: break;
@@ -96,7 +117,7 @@ public:
     }
 
 private:
-    enum class Pending { None, Host, Join };
+    enum class Pending { None, Host, Join, Rejoin };
 
     void startWaking(Lobby& lobby) {
         wakeStarted_ = true;
@@ -125,13 +146,26 @@ private:
             lobby = Lobby{};
             lobby.phase = LobbyPhase::Error;
             lobby.error = nextError_;
+            // A refused rejoin means the seat is gone, as the real one does.
+            if (what == Pending::Rejoin && (nextError_ == LobbyError::RunEnded || nextError_ == LobbyError::RoomClosed)) seat_ = false;
             nextError_ = LobbyError::None;
             return;
         }
         lobby = Lobby{};
         lobby.phase = LobbyPhase::InLobby;
         lobby.host = 0;
-        if (what == Pending::Host) {
+        if (what == Pending::Rejoin) {
+            // Back in a run that is already going: straight to Starting, in the old slot.
+            copyText(lobby.code, sizeof(lobby.code), kFakeCode);
+            lobby.phase = LobbyPhase::Starting;
+            lobby.started = true;
+            lobby.you = 1;
+            lobby.count = 2;
+            lobby.players[0].id = 0;
+            copyText(lobby.players[0].name, sizeof(lobby.players[0].name), kOtherNames[0]);
+            lobby.players[1].id = 1;
+            copyText(lobby.players[1].name, sizeof(lobby.players[1].name), kOtherNames[1]);
+        } else if (what == Pending::Host) {
             copyText(lobby.code, sizeof(lobby.code), kFakeCode);
             lobby.you = 0;
             lobby.count = 1;
@@ -183,6 +217,7 @@ private:
     char myName_[kNameMax + 1] = {};
     char pendingCode_[kCodeLength + 1] = {};
     LobbyError nextError_ = LobbyError::None;
+    bool seat_ = false;  // A pretend seat to rejoin, in room kFakeCode.
 };
 
 }  // namespace

@@ -12,7 +12,7 @@ Lobby g_lobby;
 Backend* g_backend = nullptr;  // Null means the default.
 
 // What retry() repeats. Only the last request is kept.
-enum class Request { None, Wake, Host, Join };
+enum class Request { None, Wake, Host, Join, Rejoin };
 Request g_lastRequest = Request::None;
 char g_lastName[kNameMax + 1] = {};
 char g_lastCode[kCodeLength + 1] = {};
@@ -86,6 +86,21 @@ bool canStart() {
     return true;
 }
 
+bool isHere(const LobbyPlayer& player) { return !player.away; }
+
+int hereCount() {
+    int here = 0;
+    for (int i = 0; i < g_lobby.count; ++i) here += isHere(g_lobby.players[i]) ? 1 : 0;
+    return here;
+}
+
+const char* rejoinCode() {
+    const char* code = backend().rejoinCode();
+    return code ? code : "";
+}
+
+bool canRejoin() { return rejoinCode()[0] != '\0'; }
+
 bool nameCharAllowed(char c) { return isLetter(c) || isDigit(c) || c == ' '; }
 
 bool codeCharAllowed(char c) {
@@ -148,6 +163,20 @@ void joinRoom(const char* code, const char* name) {
     backend().join(g_lobby, upper, clean);
 }
 
+void rejoinRoom() {
+    if (!canRejoin()) return;
+    g_lastRequest = Request::Rejoin;
+    forget();
+    backend().rejoin(g_lobby);
+}
+
+void forgetRejoin() { backend().forgetRejoin(); }
+
+void abandonRun(LobbyError error) {
+    backend().abandon(g_lobby, error);
+    g_lastRequest = Request::None;
+}
+
 void setReady(bool ready) {
     if (g_lobby.phase != LobbyPhase::InLobby || g_lobby.started) return;
     backend().setReady(g_lobby, ready);
@@ -173,6 +202,14 @@ void retry() {
     switch (request) {
         case Request::Host: hostRoom(name); break;
         case Request::Join: joinRoom(code, name); break;
+        case Request::Rejoin:
+            if (canRejoin()) {
+                rejoinRoom();
+                break;
+            }
+            forget();
+            wakeServer();
+            break;
         case Request::Wake:
         case Request::None:
             forget();

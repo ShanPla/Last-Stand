@@ -29,6 +29,7 @@ export class Lobby {
     switch (msg.t) {
       case 'create': return this.#create(conn, msg);
       case 'join': return this.#join(conn, msg);
+      case 'rejoin': return this.#rejoin(conn, msg);
       case 'ready': return this.#ready(conn, msg);
       case 'start': return this.#start(conn);
       case 'leave': return this.#leave(conn);
@@ -93,6 +94,42 @@ export class Lobby {
     room.broadcastRoom();
   }
 
+  /**
+   * A player of a started run comes back to the seat that was kept for them. The token proves
+   * who they are. Only someone who was in the run can do this: a new player has no token.
+   */
+  #rejoin(conn, msg) {
+    if (conn.room) return conn.sendError('bad-request');
+    if (typeof msg.code !== 'string' || typeof msg.token !== 'string') return conn.sendError('bad-request');
+    const room = this.registry.find(msg.code);
+    if (!room) return conn.sendError('not-found');
+    const slot = room.slotOfToken(msg.token);
+    // The host never rejoins: when the host goes, the room goes. A room that has not started
+    // keeps no seats, so there is nothing to come back to.
+    if (!room.started || slot === -1 || slot === HOST_SLOT) return conn.sendError('bad-token');
+
+    const player = room.players[slot];
+    if (player.conn) {
+      // The seat still has a socket. With the right token this is the same player on a new
+      // connection: a phone that changed networks, or a page reloaded before the server noticed
+      // the old socket was dead (that can take over a minute). The new socket wins. The old
+      // one is told why, and the others see the player leave and come back, so the host builds
+      // a fresh connection to them.
+      const old = player.conn;
+      old.room = null;
+      old.slot = -1;
+      old.sendJson({ t: 'closed', reason: 'replaced' });
+      room.markAway(slot);
+      room.broadcastRoom();
+    }
+    room.takeSeat(slot, conn);
+    conn.room = room;
+    conn.slot = slot;
+    this.log('player rejoined');
+    room.broadcastRoom();
+    conn.sendJson({ t: 'started', token: player.token });
+  }
+
   #ready(conn, msg) {
     if (!conn.room) return conn.sendError('not-in-room');
     if (typeof msg.ready !== 'boolean') return conn.sendError('bad-request');
@@ -108,7 +145,8 @@ export class Lobby {
     room.started = true;
     // The lobby update goes first, so a client that sees `started` already knows the final roster.
     room.broadcastRoom();
-    for (const p of room.members()) p.conn.sendJson({ t: 'started' });
+    // Each player's copy carries their own rejoin token, and nobody else ever sees it.
+    for (const p of room.members()) p.conn.sendJson({ t: 'started', token: p.token });
   }
 
   #leave(conn) {
@@ -123,8 +161,9 @@ export class Lobby {
       return conn.sendError('bad-request');
     }
     const target = room.players[msg.to];
-    // Someone who just left is not an error worth reporting: the signal is simply useless now.
-    if (!target || target.conn === conn) return;
+    // Someone who just left, or is away, is not an error worth reporting: the signal is simply
+    // useless now.
+    if (!target || !target.conn || target.conn === conn) return;
     target.conn.sendJson({ t: 'signal', from: conn.slot, data: msg.data });
   }
 
@@ -152,7 +191,7 @@ export class Lobby {
       recipients = room.members().filter((p) => p.conn !== conn);
     } else {
       const p = room.players[target]; // undefined for ids 4 to 254, so those are dropped too
-      recipients = p && p.conn !== conn ? [p] : [];
+      recipients = p && p.conn && p.conn !== conn ? [p] : []; // an away seat has no socket
     }
     if (recipients.length === 0) return;
 
@@ -172,14 +211,20 @@ export class Lobby {
     conn.slot = player.id;
   }
 
-  /** Takes a connection out of its room. If it was the host, the whole room closes. */
+  /**
+   * Takes a connection out of its room. If it was the host, the whole room closes. In a started
+   * run anyone else keeps their seat as away, whether they left or lost the connection, because
+   * the host's game still holds their soldier and they may come back with `rejoin`. Before the
+   * start there is nothing to keep, so the seat is freed for someone else.
+   */
   #removeFromRoom(conn, hostReason) {
     const room = conn.room;
     if (conn.slot === HOST_SLOT) {
       this.closeRoom(room, hostReason, conn);
       return;
     }
-    room.removePlayer(conn.slot);
+    if (room.started) room.markAway(conn.slot);
+    else room.removePlayer(conn.slot);
     conn.room = null;
     conn.slot = -1;
     room.broadcastRoom();

@@ -39,6 +39,15 @@ for (const [name, options] of shapes) {
     checkLayout(ui, `menu ${name}`);
     await shot(page, `${name}-menu`);
 
+    // The same menu with a run to rejoin: one more button, still inside the safe area.
+    await debug(page, NET.rejoinSeat, 1);
+    ui = await frameUi(page);
+    assert.ok(hasButton(ui, 'Rejoin K7QXM'), `buttons: ${ui.buttons.map((b) => b.n)}`);
+    checkLayout(ui, `menu with rejoin ${name}`);
+    await shot(page, `${name}-menu-rejoin`);
+    await debug(page, NET.rejoinSeat, 0);
+    await frameUi(page);  // A frame without it, so the next press finds the buttons where they are now.
+
     // Waiting for the server, with Retry.
     await debug(page, NET.reset);
     await debug(page, NET.wakeMs, -1);
