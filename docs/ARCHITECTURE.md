@@ -1240,14 +1240,14 @@ The tests use [doctest](https://github.com/doctest/doctest) and run natively, wi
 | [`BotRunTests.cpp`](../tests/unit/BotRunTests.cpp) | 12 | Full runs with a simple bot, including the desert, valid state at every step, determinism through the boss fight |
 | [`BossMovesTests.cpp`](../tests/unit/BossMovesTests.cpp), [`EndlessTests.cpp`](../tests/unit/EndlessTests.cpp), [`PoolFullTests.cpp`](../tests/unit/PoolFullTests.cpp) | 10, 13 and 6 | The boss move sets per difficulty, Endless mode, and behavior when a pool is full |
 | [`CoopTests.cpp`](../tests/unit/CoopTests.cpp) | 21 | The multi-player simulation: targeting, downed and revive, level-ups that do not pause, scaling, the boss, obstacle windows, the hash ([section 11](#the-multi-player-simulation)) |
-| [`NetLobbyTests.cpp`](../tests/unit/NetLobbyTests.cpp), [`NetWebSnapshotTests.cpp`](../tests/unit/NetWebSnapshotTests.cpp) | 22 and 5 | Names and codes, lobby phases and errors against the fake backend, the backend seam, and the reader of the browser script's JSON |
+| [`NetLobbyTests.cpp`](../tests/unit/NetLobbyTests.cpp), [`NetWebSnapshotTests.cpp`](../tests/unit/NetWebSnapshotTests.cpp) | 23 and 6 | Names and codes, lobby phases, rejoin and errors against the fake backend, the backend seam, and the reader of the browser script's JSON |
 | [`SoloGoldenTests.cpp`](../tests/unit/SoloGoldenTests.cpp) | 6 | Fingerprints of whole single-player runs recorded before co-op, which must still match |
 | [`SaveTests.cpp`](../tests/unit/SaveTests.cpp) | 21 | Round trip, corrupt text, NaN, clamping, newer versions, large text, difficulty, map |
 | [`UiFixesTests.cpp`](../tests/unit/UiFixesTests.cpp) | 9 | The debug overlay switch, merging best runs, a missing save versus an unreadable one, the safe write |
 | [`AudioTests.cpp`](../tests/unit/AudioTests.cpp) | 16 | Every sound is clean and ends in silence, music loops join without a click, layers, router limits |
 | [`TestMain.cpp`](../tests/unit/TestMain.cpp) | 2 | Random number generator |
 
-**Measured result.** The last full run passed **361 of 361** unit test cases.
+**Measured result.** The last full run passed **367 of 367** unit test cases.
 
 ### The determinism test
 
@@ -1311,13 +1311,13 @@ These numbers tune the game, but a bot is not a person. A human playtest decides
 - Solid cars ([`solidcars.test.mjs`](../tests/e2e/solidcars.test.mjs)).
 - Crushed cars ([`crush.test.mjs`](../tests/e2e/crush.test.mjs)).
 - Installing and offline play ([`install.test.mjs`](../tests/e2e/install.test.mjs)).
-- Online co-op: the networking layer against a real relay with two browsers, the co-op screens, and the real lobby ([section 11](#testing-co-op)). The server has its own 79 tests, run with `npm test` in `server/`.
+- Online co-op: the networking layer against a real relay with two browsers, the co-op screens, and the real lobby ([section 11](#testing-co-op)). The server has its own 90 tests, run with `npm test` in `server/`.
 
 The tests also take a **real pixel check** ([`countColorNearCenter`](../tests/e2e/harness.mjs) counts screen pixels of a color). This exists because a state query can pass while nothing is visible on screen (see [bugs](#bugs-worth-knowing-about)).
 
 The functional tests run Chrome with a software renderer, so they check behavior, not speed. [`perf.mjs`](../tests/e2e/perf.mjs) is run by hand and uses the machine's real GPU.
 
-**Measured result.** The last full browser run passed **340 of 340** tests, with none skipped, including the real-lobby and co-op run tests.
+**Measured result.** The last full browser run passed **349 of 349** tests, with none skipped, including the real-lobby and co-op run tests.
 
 ### Performance
 
@@ -1611,7 +1611,7 @@ Links are relative to this document.
 | 11 | Co-op screens | [`src/components/Ui/CoopScreens`](../src/components/Ui/CoopScreens) |
 | 11 | Multi-player simulation: players array, nearest standing player, windows, hash | [`GameState.h`](../src/core/GameState.h), [`Sim.h`](../src/core/Sim.h), [`Sim.cpp`](../src/core/Sim.cpp) (`stateHash`), [`Obstacles`](../src/components/Obstacles) |
 | 11 | Co-op numbers | `kCoop...` and `kRevive...` in [`Balance.h`](../src/data/Balance.h) |
-| 11 | Co-op tests | [`CoopTests.cpp`](../tests/unit/CoopTests.cpp), [`NetLobbyTests.cpp`](../tests/unit/NetLobbyTests.cpp), [`NetWebSnapshotTests.cpp`](../tests/unit/NetWebSnapshotTests.cpp), [`SoloGoldenTests.cpp`](../tests/unit/SoloGoldenTests.cpp), [`netclient`](../tests/e2e/netclient.test.mjs), [`coopreal`](../tests/e2e/coopreal.test.mjs) and [`coopscreens`](../tests/e2e/coopscreens.test.mjs) browser tests |
+| 11 | Co-op tests | [`CoopTests.cpp`](../tests/unit/CoopTests.cpp), [`NetLobbyTests.cpp`](../tests/unit/NetLobbyTests.cpp), [`NetWebSnapshotTests.cpp`](../tests/unit/NetWebSnapshotTests.cpp), [`SoloGoldenTests.cpp`](../tests/unit/SoloGoldenTests.cpp), [`NetGameTests.cpp`](../tests/unit/NetGameTests.cpp), [`netclient`](../tests/e2e/netclient.test.mjs), [`coopreal`](../tests/e2e/coopreal.test.mjs), [`coopscreens`](../tests/e2e/coopscreens.test.mjs), [`coopplay`](../tests/e2e/coopplay.test.mjs) and [`cooprejoin`](../tests/e2e/cooprejoin.test.mjs) browser tests |
 | 12 | Deploy workflow | [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) |
 
 ---
@@ -1629,6 +1629,7 @@ Up to four players can share one run. This section covers what is built and what
 - A simulation that runs 2 to 4 players.
 - The game itself over the network, in [`NetGame`](../src/components/NetGame): the host sends the world, the guests send their inputs, each guest predicts its own movement, and every player is drawn with a team color and a name tag. See [running the game over the network](#running-the-game-over-the-network).
 - A network overlay and a signal indicator, in [`CoopHud`](../src/components/Ui/CoopHud).
+- Rejoin: a guest who loses the connection or reloads the page can come back to the same run, as the same player. See [leaving and rejoining](#leaving-and-rejoining).
 
 **Not done yet:** the relay is not deployed, so the live site has no server address (see below). Co-op has only been tested on one computer, with two browser windows, and only with 2 players in a browser.
 
@@ -1709,7 +1710,7 @@ The browsers form a star, not a mesh. Every guest talks to the host, and guests 
 
 [`server/`](../server) is a small Node.js program with one dependency, the `ws` package. It runs no game logic and stores nothing on disk. The message formats are written down in [`server/PROTOCOL.md`](../server/PROTOCOL.md). In short:
 
-- **Rooms.** A room holds up to 4 players. Each takes a slot from 0 to 3, which is that player's id in every message. The player who creates the room is the host and takes slot 0. A guest leaving frees a slot for the next joiner. If the host leaves, the room closes for everyone. An empty room is deleted, and a room older than 3 hours is closed. Once the host sends `start`, nobody new can join.
+- **Rooms.** A room holds up to 4 players. Each takes a slot from 0 to 3, which is that player's id in every message. The player who creates the room is the host and takes slot 0. Before the start, a guest leaving frees a slot for the next joiner. After the start, the slot is kept for that guest, marked away, so they can come back with their rejoin token. If the host leaves, the room closes for everyone. An empty room is deleted, and a room older than 3 hours is closed. Once the host sends `start`, nobody new can join.
 - **Room codes.** 5 characters from `ABCDEFGHJKMNPQRSTUVWXY23456789`: no 0, O, 1, I, L or Z. Zero and O, and one, I and L, look alike on a screen. Z is left out because the game's pixel font draws it like a 2. The code is chosen with `crypto.randomInt`, and a code already in use is never given out again. Joining ignores letter case. The game checks codes with the same alphabet before it asks the server.
 - **Names.** 1 to 12 letters, digits and spaces. The server refuses anything else.
 - **Limits.** A message may be at most 16 KB. Each connection may send 150 messages a second, with room to burst to 300. A steady flood gets warnings, then the socket is closed. The server holds at most 200 rooms and 1,000 connections at a time. A socket that has been silent for 60 seconds is pinged and is closed if it does not answer. All of these can be lowered with environment variables, which is how the tests check them without opening thousands of sockets.
@@ -1812,9 +1813,19 @@ void step(GameState& state, const InputFrame inputs[], int inputCount);
 
 **Rules of a co-op run.**
 - Only the host can pause. If the host's tab is hidden, everyone sees "Host is away" and the run stops. A guest's Esc opens a menu, but the run goes on.
-- If the host leaves, the run ends for everyone, with a message. A guest who leaves stays in the run, downed and out of reach, and the others are told.
-- When the run ends, everyone sees the results. The host can play again in the same room, with whoever is still there. If nobody else is left, the next run is an ordinary single-player one.
+- If the host leaves, the run ends for everyone, with a message. A guest who leaves stays in the run, downed and out of reach, and the others are told. They can come back (see below).
+- When the run ends, everyone sees the results. The host can play again in the same room, with whoever is still connected. If nobody else is, the next run is an ordinary single-player one, and it says so: "Everyone else left. Playing solo."
 - Co-op runs are never saved as best runs.
+
+### Leaving and rejoining
+
+A connection can end for many reasons: a closed tab, a reload, a Wi-Fi cut, a phone going to sleep. Only someone who was in the run can come back, and only to their own seat. New people still cannot join a run in progress.
+
+- **The seat is kept.** When the run starts, the server sends each player a secret rejoin token, 16 random bytes, in that player's own copy of the `started` message. Nobody else sees it, and the server compares tokens in constant time. When a guest's connection ends in a started room, their slot is marked away instead of freed. The host's game still holds their soldier, downed, with their level, XP and build.
+- **Coming back.** A new `rejoin` message with the room code and the token puts the socket back in that slot. The host sees the player return, opens a fresh WebRTC connection to them (with the usual 8 second fall-back to the relay), and sends the run's settings again. The returning player comes back still down, and a teammate revives them as usual, so leaving is never a way out of a bad spot.
+- **The right token wins, even over a live socket.** After a reload or a network change, the server can take a minute to notice that the old socket is dead. So a rejoin with the right token takes the seat from the old socket, and that old tab is told it was replaced. A wrong token changes nothing.
+- **By itself, or with a button.** A short cut reconnects by itself, trying again after 0.5 s and then twice as long each time up to 5 s, for 60 seconds, with a "Reconnecting..." banner over the running game. The browser saves the seat in local storage, so after a reload or a closed tab the Co-op menu offers **Rejoin** and the room code. The saved seat is forgotten when the room closes, when the player leaves from a menu on purpose, or after 3 hours.
+- **A run that has moved on.** If the host pressed Play Again while a player was away, the new run was built without them. The host then sends that player a `NotInRun` message, and they see "That run has ended" on the Co-op menu.
 
 **Drawing the team.** `GameState::localSlot` says which player this screen belongs to. The camera, the HUD, the cards and this player's sounds follow it. The simulation never reads it, so it is not in the state hash. Teammates have a colored ring, a helmet and vest in their color, and a name tag. A downed player lies down, with a DOWN mark and a revive bar everyone can see.
 
@@ -1824,14 +1835,15 @@ void step(GameState& state, const InputFrame inputs[], int inputCount);
 
 Counts below come from reading the test files (a `test(` or `TEST_CASE(` per case), not from a recorded run, and some cases run more than once.
 
-- **Server: 79 tests** in [`server/test`](../server/test), run with `npm test` in `server/`. Handshake and versions (7), rooms and the lobby (20), signaling (6), the binary fallback (10), limits (19), origins (11) and the health check (6). The tests start their own servers on random ports.
-- **Browser networking: 12 tests** in [`netclient.test.mjs`](../tests/e2e/netclient.test.mjs), against the real server with two headless Chrome windows on a bare test page. They cover the address rules, waking, forced relay with 240 messages each way, a mixed pair, errors and leaving. One test tries a **real WebRTC connection between two headless Chrome windows**. If it connects, the test checks that no game message went through the server and that a round trip was measured. If this machine cannot connect, the test still passes on the fallback and says so in its output. Setting `NET_REQUIRE_WEBRTC=1` makes it strict. This document does not record which of the two happened on a given run.
-- **Co-op screens: 21 tests** in [`coopscreens.test.mjs`](../tests/e2e/coopscreens.test.mjs) (16), [`coopscreens-input.test.mjs`](../tests/e2e/coopscreens-input.test.mjs) (4) and [`coopscreens-layout.test.mjs`](../tests/e2e/coopscreens-layout.test.mjs) (1). They use the fake backend and cover every screen, keyboard, mouse, touch and gamepad, and several window sizes. Screenshots are saved in [`tests/e2e/screenshots`](../tests/e2e/screenshots).
+- **Server: 90 tests** in [`server/test`](../server/test), run with `npm test` in `server/`. Handshake and versions (7), rooms and the lobby (20), signaling (6), the binary fallback (10), limits (19), origins (11), the health check (6) and rejoin (11). The tests start their own servers on random ports.
+- **Browser networking: 16 tests** in [`netclient.test.mjs`](../tests/e2e/netclient.test.mjs), against the real server with two headless Chrome windows on a bare test page. They cover the address rules, waking, forced relay with 240 messages each way, a mixed pair, errors, leaving, reconnecting by itself on both paths, and rejoining after a reload with a right, wrong or stale token. One test tries a **real WebRTC connection between two headless Chrome windows**. If it connects, the test checks that no game message went through the server and that a round trip was measured. If this machine cannot connect, the test still passes on the fallback and says so in its output. Setting `NET_REQUIRE_WEBRTC=1` makes it strict. This document does not record which of the two happened on a given run.
+- **Co-op screens: 22 tests** in [`coopscreens.test.mjs`](../tests/e2e/coopscreens.test.mjs) (17), [`coopscreens-input.test.mjs`](../tests/e2e/coopscreens-input.test.mjs) (4) and [`coopscreens-layout.test.mjs`](../tests/e2e/coopscreens-layout.test.mjs) (1). They use the fake backend and cover every screen, keyboard, mouse, touch and gamepad, and several window sizes. Screenshots are saved in [`tests/e2e/screenshots`](../tests/e2e/screenshots).
 - **Real lobby: 7 tests** in [`coopreal.test.mjs`](../tests/e2e/coopreal.test.mjs). Two game windows, real clicks, the real server: host, join, ready and start (once with WebRTC allowed and once forced through the server), errors, the host leaving, the server disappearing, and the wake on page load.
-- **Unit tests:** [`CoopTests.cpp`](../tests/unit/CoopTests.cpp) (21 cases) for targeting, downed and revive, level-ups, scaling, the boss, obstacle windows and the hash; [`NetLobbyTests.cpp`](../tests/unit/NetLobbyTests.cpp) (22) and [`NetWebSnapshotTests.cpp`](../tests/unit/NetWebSnapshotTests.cpp) (5) for the lobby rules, the fake backend and the reader of the script's JSON; and [`SoloGoldenTests.cpp`](../tests/unit/SoloGoldenTests.cpp) (6).
+- **Unit tests:** [`CoopTests.cpp`](../tests/unit/CoopTests.cpp) (21 cases) for targeting, downed and revive, level-ups, scaling, the boss, obstacle windows and the hash; [`NetLobbyTests.cpp`](../tests/unit/NetLobbyTests.cpp) (23) and [`NetWebSnapshotTests.cpp`](../tests/unit/NetWebSnapshotTests.cpp) (6) for the lobby rules, the fake backend and the reader of the script's JSON; and [`SoloGoldenTests.cpp`](../tests/unit/SoloGoldenTests.cpp) (6).
 
 - **Co-op runs: 6 tests** in [`coopplay.test.mjs`](../tests/e2e/coopplay.test.mjs), with two game windows and the real server. Both players move with real key presses, and both windows must agree on both soldiers within 4 units and on the zombie and kill counts within a tolerance, once over WebRTC and once forced through the relay. Others cover the 8 KB cap with a full crowd, the overlay, game over and play again, the host hiding its tab, the host leaving, a revive, a guest's card pick over the running game, and a guest leaving.
-- **Unit tests:** [`NetGameTests.cpp`](../tests/unit/NetGameTests.cpp) (19 cases) for every message, rounding limits, the 8 KB cut, broken messages, and a host and guest joined by a pipe with delay and 33% loss. They check that the prediction ends within 1 unit of the host, that lost card picks, flattened cars and run ends are repaired, that a pick for older cards is ignored, and that a dropped dash still happens.
+- **Rejoin: 4 tests** in [`cooprejoin.test.mjs`](../tests/e2e/cooprejoin.test.mjs): a guest reloads and presses Rejoin, and is back in the same slot with the same level and build; a guest's socket is cut and it reconnects by itself, over WebRTC and over the relay; and Play Again alone shows the solo notice, after which a stale Rejoin says the room closed.
+- **Unit tests:** [`NetGameTests.cpp`](../tests/unit/NetGameTests.cpp) (23 cases) for every message, rounding limits, the 8 KB cut, broken messages, and a host and guest joined by a pipe with delay and 33% loss. They check that the prediction ends within 1 unit of the host, that lost card picks, flattened cars and run ends are repaired, that a pick for older cards is ignored, that a dropped dash still happens, and that a player who drops and comes back keeps their build and can be revived.
 
 **Not tested:** real phones, real home networks with real NAT, real internet delay in a browser (only the unit pipe has delay and loss), 3 or 4 players in a browser, touch and gamepad during a co-op run, and how it feels to play.
 
