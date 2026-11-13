@@ -1247,7 +1247,7 @@ The tests use [doctest](https://github.com/doctest/doctest) and run natively, wi
 | [`AudioTests.cpp`](../tests/unit/AudioTests.cpp) | 16 | Every sound is clean and ends in silence, music loops join without a click, layers, router limits |
 | [`TestMain.cpp`](../tests/unit/TestMain.cpp) | 2 | Random number generator |
 
-**Measured result.** The last full run passed **377 of 377** unit test cases.
+**Measured result.** The last full run passed **380 of 380** unit test cases.
 
 ### The determinism test
 
@@ -1317,7 +1317,7 @@ The tests also take a **real pixel check** ([`countColorNearCenter`](../tests/e2
 
 The functional tests run Chrome with a software renderer, so they check behavior, not speed. [`perf.mjs`](../tests/e2e/perf.mjs) is run by hand and uses the machine's real GPU.
 
-**Measured result.** The last full browser run passed **375 of 375** tests, with none skipped, including the real-lobby and co-op run tests.
+**Measured result.** The last full browser run passed **376 of 376** tests, with none skipped, including the real-lobby and co-op run tests.
 
 ### Performance
 
@@ -1813,7 +1813,11 @@ void step(GameState& state, const InputFrame inputs[], int inputCount);
 
 **Everything else is drawn a little behind.** The guest keeps the last 4 snapshots and draws the world 100 ms behind the newest one, so there are almost always two snapshots to blend between. Zombies and other players are matched by id and moved smoothly between them. Shots are carried along their speed.
 
-**At the host.** Each guest has a queue of input steps, and the host takes one per simulation step. With nothing waiting, it repeats the guest's last movement for up to 15 steps, then stands them still. A dash is never repeated, and a dash in a step the host has to drop is moved to the next one.
+**At the host.** Each guest has a queue of input steps, and the host takes one per simulation step. With nothing waiting, the guest's soldier waits where it is, and their steps are used in order when they arrive. An earlier version guessed instead, repeating the guest's last movement. Every guess put the host's soldier somewhere the guest's own screen never showed, so it came back as a correction, and the steps that then piled up were dropped, which pulled the soldier back again. On a jittery link the guest's own soldier felt late and rubbery. Waiting costs the others a short pause in that soldier's walk, and the guest sees nothing.
+
+The host's page must not lose time either, or the guests' steps pile up behind it. Single-player runs at most 5 steps in one frame and lets a longer stall go. A co-op host catches up to 15 steps (a quarter second) in its next frame (`kNetHostCatchUpSteps`). In a browser test where the host's page froze for 160 ms every 1.3 s, the guest's prediction needed about 16 corrections of 11 to 31 units in about 22 seconds of walking, turning and dashing before this change, and 0 or 1 of 4 units after it.
+
+Steps can still pile up: after a long stall (more than 12 waiting are dropped at once), or when the host's page stalls for longer than a quarter second. Steps that went unused for a whole second are spare, and all but 2 of them are dropped. A step where the guest stood still goes first, because leaving it out moves nobody. When there is none and at least 2 are spare, one walking step goes per second, which corrects the guest's screen by one step. Steps of a dash go last, and a dash press in a dropped step is moved to the next one. The debug overlay (F3) counts late and dropped steps on the host. In a unit test with 67 to 167 ms delays and uneven frames, the guest's prediction needed 56 corrections in about 47 seconds of walking with the old queue, and none with this one.
 
 **Reliable messages are repaired, not trusted.** A card pick is sent again every 0.75 s while the guest still sees the same cards, and the run's end is sent again until the next run. Each input says how many flattened cars the guest has, so the host sends again from there if one was lost. A card pick names the set of cards it was made for (`Player::offerSerial`), and the host ignores a pick for an older set.
 
@@ -1850,8 +1854,9 @@ Counts below come from reading the test files (a `test(` or `TEST_CASE(` per cas
 - **Unit tests:** [`CoopTests.cpp`](../tests/unit/CoopTests.cpp) (21 cases) for targeting, downed and revive, level-ups, scaling, the boss, obstacle windows and the hash; [`NetLobbyTests.cpp`](../tests/unit/NetLobbyTests.cpp) (26) and [`NetWebSnapshotTests.cpp`](../tests/unit/NetWebSnapshotTests.cpp) (7) for the lobby rules, the fake backend and the reader of the script's JSON; and [`SoloGoldenTests.cpp`](../tests/unit/SoloGoldenTests.cpp) (6).
 
 - **Co-op runs: 6 tests** in [`coopplay.test.mjs`](../tests/e2e/coopplay.test.mjs), with two game windows and the real server. Both players move with real key presses, and both windows must agree on both soldiers within 4 units and on the zombie and kill counts within a tolerance, once over WebRTC and once forced through the relay. Others cover the 8 KB cap with a full crowd, the overlay, game over and play again, the host hiding its tab, the host leaving, a revive, a guest's card pick over the running game, and a guest leaving.
+- **Movement feel: 1 test** in [`coopfeel.test.mjs`](../tests/e2e/coopfeel.test.mjs): the host's page stalls again and again while the guest walks, and the host may drop only a few of the guest's input steps, with no jumps.
 - **Rejoin: 4 tests** in [`cooprejoin.test.mjs`](../tests/e2e/cooprejoin.test.mjs): a guest reloads and presses Rejoin, and is back in the same slot with the same level and build; a guest's socket is cut and it reconnects by itself, over WebRTC and over the relay; and Play Again alone shows the solo notice, after which a stale Rejoin says the room closed.
-- **Unit tests:** [`NetGameTests.cpp`](../tests/unit/NetGameTests.cpp) (24 cases) for every message, rounding limits, the 8 KB cut, broken messages, and a host and guest joined by a pipe with delay and 33% loss. They check that the prediction ends within 1 unit of the host, that lost card picks, flattened cars and run ends are repaired, that a pick for older cards is ignored, that a dropped dash still happens, that a player who drops and comes back keeps their build and can be revived, and that every player's open cards and shield time survive a snapshot. [`ShieldBubbleTests.cpp`](../tests/unit/ShieldBubbleTests.cpp) (5) checks the bubble's strength over time.
+- **Unit tests:** [`NetGameTests.cpp`](../tests/unit/NetGameTests.cpp) (27 cases) for every message, rounding limits, the 8 KB cut, broken messages, and a host and guest joined by a pipe with delay, jitter, uneven frames and 33% loss. They check that the prediction ends within 1 unit of the host, that lost card picks, flattened cars and run ends are repaired, that a pick for older cards is ignored, that a dropped dash still happens, that a player who drops and comes back keeps their build and can be revived, and that every player's open cards and shield time survive a snapshot. [`ShieldBubbleTests.cpp`](../tests/unit/ShieldBubbleTests.cpp) (5) checks the bubble's strength over time.
 
 **Not tested:** real phones, real home networks with real NAT, real internet delay in a browser (only the unit pipe has delay and loss), 3 or 4 players in a browser, touch and gamepad during a co-op run, and how it feels to play.
 
