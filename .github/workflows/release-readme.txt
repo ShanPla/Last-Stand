@@ -23,6 +23,8 @@ Delete the file to reset your progress.
 
 PLAY IN A BROWSER INSTEAD
 No download needed: https://shanpla.github.io/Last-Stand/
+Online co-op for 2 to 4 players is only in the browser version. This
+download is single-player.
 
 LICENSES
 Last Stand is released under the MIT License (LICENSE.txt).

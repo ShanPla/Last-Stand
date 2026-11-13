@@ -26,6 +26,15 @@ enum MenuFocus { kMenuName = 0, kMenuFirst = 1 };
 enum JoinFocus { kJoinCode = 0, kJoinJoin, kJoinRetry, kJoinBack };
 
 constexpr float kCopiedSeconds = 1.6f;
+// Online co-op needs the browser: its networking is the browser's own WebSocket and WebRTC. The
+// PC download has none, so its co-op menu says so and keeps Host and Join off, instead of
+// opening a lobby that could never fill.
+#ifdef __EMSCRIPTEN__
+constexpr bool kCoopOnline = true;
+#else
+constexpr bool kCoopOnline = false;
+#endif
+constexpr const char* kCoopBrowserOnly = "Co-op is only in the browser version, at shanpla.github.io/Last-Stand";
 constexpr double kStartingHintSeconds = 10.0;  // How long Starting the run... shows before it offers a way out in words.
 double g_startingSince = -1.0;                 // When the lobby entered Starting, in uiSeconds(). Negative when it is not.
 constexpr float kPanelMax = 480.0f;  // Widest a single-column screen gets, in design units.
@@ -305,7 +314,7 @@ CoopResult drawMenu(SaveData& data) {
         y += buttonHeight + gap;
     }
     if (button(g_menuNav, order.host, Rectangle{x, y, pairRow ? pairWidth : panelWidth, buttonHeight}, "Host Co-op",
-               order.rejoin ? ButtonLook::Normal : ButtonLook::Primary)) {
+               order.rejoin ? ButtonLook::Normal : ButtonLook::Primary, nullptr, kCoopOnline)) {
         if (commitName(data)) result.saveChanged = true;
         char name[net::kNameMax + 1];
         effectiveName(true, name, sizeof(name));
@@ -317,7 +326,7 @@ CoopResult drawMenu(SaveData& data) {
     }
     if (!pairRow) y += buttonHeight + gap;
     const Rectangle joinRect = pairRow ? Rectangle{x + pairWidth + gap, y, pairWidth, buttonHeight} : Rectangle{x, y, panelWidth, buttonHeight};
-    if (button(g_menuNav, order.join, joinRect, "Join Co-op")) {
+    if (button(g_menuNav, order.join, joinRect, "Join Co-op", ButtonLook::Normal, nullptr, kCoopOnline)) {
         if (commitName(data)) result.saveChanged = true;
         g_notice[0] = '\0';
         g_wasInRoom = false;
@@ -834,6 +843,7 @@ CoopResult drawJoin(SaveData& data) {
 void openCoopScreens(const SaveData& data) {
     textSet(g_name, TextKind::Name, data.coopName);
     goTo(Sub::Menu);
+    if (!kCoopOnline) setNotice(kCoopBrowserOnly);
 }
 
 CoopResult drawCoopScreens(SaveData& data) {

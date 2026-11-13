@@ -75,6 +75,8 @@ jobs:
             "The program is not code signed, so Windows may warn about it. Choose More info, then Run anyway." \
             "" \
             "You can also play in a browser with nothing to install: https://shanpla.github.io/Last-Stand/" \
+            "" \
+            "Online co-op for 2 to 4 players is in the browser version only. This download is single-player." \
             > release-notes.txt
           # Replacing the asset is safe here: the build above is of this tag's own commit.
           if gh release view "$TAG" > /dev/null 2>&1; then
