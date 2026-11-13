@@ -105,6 +105,10 @@ bool downAndRevive(GameState& state) {
         player.reviveProgress = 0.0f;
         player.dashLeft = 0.0f;
         player.dashInvulnerable = 0.0f;
+        // Open cards close with the player. The levels still owed stay in pendingLevels, and
+        // upgrades::update offers a fresh set (and a fresh shield) once they stand again.
+        player.cardsOpen = false;
+        player.cardShield = 0.0f;
         pushPlayerEvent(state, EventType::PlayerDowned, slot, player.pos);
     }
     // Then, if the whole team is down at once, the run is over and nobody can be revived.

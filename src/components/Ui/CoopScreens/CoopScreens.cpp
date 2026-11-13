@@ -26,6 +26,8 @@ enum MenuFocus { kMenuName = 0, kMenuFirst = 1 };
 enum JoinFocus { kJoinCode = 0, kJoinJoin, kJoinRetry, kJoinBack };
 
 constexpr float kCopiedSeconds = 1.6f;
+constexpr double kStartingHintSeconds = 10.0;  // How long Starting the run... shows before it offers a way out in words.
+double g_startingSince = -1.0;                 // When the lobby entered Starting, in uiSeconds(). Negative when it is not.
 constexpr float kPanelMax = 480.0f;  // Widest a single-column screen gets, in design units.
 
 // The room's focus order, top to bottom: Copy, then (for the host) Difficulty, Map and Mode, then
@@ -133,6 +135,7 @@ void effectiveName(bool host, char* out, size_t size) {
 void goTo(Sub sub) {
     textCancel();
     g_sub = sub;
+    g_startingSince = -1.0;
     g_hostNav = Nav{};
     g_joinNav = Nav{};
     if (sub == Sub::Host) {
@@ -650,8 +653,20 @@ void drawRoomView(Nav& nav, const net::Lobby& lobby, SaveData& data, CoopResult&
         drawSpinner(bx + 14.0f * u, by + 12.0f * u, 22.0f * u);
         text("Starting the run...", bx + 34.0f * u, by + 2.0f * u, 20.0f * u, theme::kUiText);
         registerExtent("coop status", Rectangle{bx, by, bw, 26.0f * u});
+        // Leave stays here, so a run that never begins is not a trap. It does what Leave does in the
+        // lobby, and Esc or B does the same.
+        if (g_startingSince < 0.0) g_startingSince = uiSeconds();
+        by += 34.0f * u;
+        if (button(nav, order.leave, Rectangle{bx, by, bw, buttonHeight}, "Leave", ButtonLook::Normal, promptBack())) *leave = true;
+        by += buttonHeight + gap * 0.5f;
+        if (uiSeconds() - g_startingSince > kStartingHintSeconds && by + hintHeight <= l.bottom) {
+            paragraph("This is taking long. You can leave and try again.", bx, by, bw, 16.0f * u, theme::kUiTextDim, font::Align::Center, 2);
+            registerExtent("coop starting hint", Rectangle{bx, by, bw, hintHeight});
+        }
+        if (input().back) *leave = true;
         return;
     }
+    g_startingSince = -1.0;
     if (checkBox(nav, order.ready, Rectangle{bx, by, bw, buttonHeight}, "Ready", &ready)) net::setReady(ready);
     by += buttonHeight + gap;
     if (isHost) {
@@ -828,6 +843,12 @@ CoopResult drawCoopScreens(SaveData& data) {
         case Sub::Join: return drawJoin(data);
     }
     return CoopResult{};
+}
+
+void coopRoomClosed(const char* message) {
+    g_wasInRoom = false;
+    goTo(Sub::Menu);
+    setNotice(message);
 }
 
 const char* coopScreenName() {

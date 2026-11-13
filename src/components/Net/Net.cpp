@@ -110,9 +110,11 @@ const char* transportName(Transport transport) {
 bool canStart() {
     if (g_lobby.phase != LobbyPhase::InLobby || g_lobby.started) return false;
     if (g_lobby.you < 0 || g_lobby.you != g_lobby.host) return false;
-    if (g_lobby.count < 2) return false;
+    // Only players who are here count: one who is away is not in the run, so they neither make
+    // the two the run needs nor hold it up by not being ready.
+    if (hereCount() < 2) return false;
     for (int i = 0; i < g_lobby.count; ++i) {
-        if (!g_lobby.players[i].ready) return false;
+        if (isHere(g_lobby.players[i]) && !g_lobby.players[i].ready) return false;
     }
     return true;
 }

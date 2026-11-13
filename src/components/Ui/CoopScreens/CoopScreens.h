@@ -25,6 +25,10 @@ void openCoopScreens(const SaveData& data);
 // Draws the current co-op screen over the demo and reads its input.
 CoopResult drawCoopScreens(SaveData& data);
 
+// The room is over before a run could begin (for example everyone else is away when the host's
+// run starts): goes back to the co-op menu with this note. The caller has left the room already.
+void coopRoomClosed(const char* message);
+
 // Which co-op screen is showing, for the tests: "coop-menu", "coop-host" or "coop-join".
 const char* coopScreenName();
 

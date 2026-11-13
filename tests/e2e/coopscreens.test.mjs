@@ -361,6 +361,74 @@ test('the host leaving or the server dropping returns to the menu with a notice'
   await context.close();
 });
 
+// ---- Starting the run ------------------------------------------------------------
+
+// A guest whose room has started waits for the host's run. If it never comes, there must be a way out.
+async function guestWaitingToStart(page) {
+  await toCoop(page);
+  await host(page);
+  await debug(page, NET.guestRoom, 3);
+  await debug(page, NET.phase, PHASE.starting);
+  await waitNet(page, (n) => n.phase === PHASE.starting && n.you === 1, 'the guest to be in Starting');
+  const ui = await frameUi(page);
+  assert.ok(extentOf(ui, 'coop status'), 'it says the run is starting');
+  assert.ok(hasButton(ui, 'Leave'), `Leave is there while starting: ${names(ui)}`);
+  assert.ok(!hasButton(ui, 'Ready') && !hasButton(ui, 'Start'), 'nothing else can be pressed');
+}
+
+test('a guest who is waiting for the run to start can leave with the button', async () => {
+  const { context, page, problems } = await open();
+  await guestWaitingToStart(page);
+  await shot(page, 'starting-leave');
+  await clickButton(page, 'Leave');
+  await waitScreen(page, 'coop-menu');
+  const net = await readNet(page);
+  assert.equal(net.phase, PHASE.offline);
+  assert.equal(net.sub, 'coop-menu');
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test('a guest who is waiting for the run to start can leave with Esc', async () => {
+  const { context, page, problems } = await open();
+  await guestWaitingToStart(page);
+  await page.keyboard.press('Escape');
+  await waitScreen(page, 'coop-menu');
+  assert.equal((await readNet(page)).phase, PHASE.offline);
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test('a guest who waits long for the run to start is told they can leave', async () => {
+  const { context, page, problems } = await open();
+  await guestWaitingToStart(page);
+  assert.ok(!extentOf(await frameUi(page), 'coop starting hint'), 'no hint at first');
+  await page.waitForTimeout(10500);
+  const ui = await frameUi(page);
+  assert.ok(extentOf(ui, 'coop starting hint'), 'the hint shows after ten seconds');
+  assert.ok(hasButton(ui, 'Leave'));
+  await clickButton(page, 'Leave');
+  await waitScreen(page, 'coop-menu');
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
+test('a room that starts with everyone else away does not begin a run: the host is told and the room closes', async () => {
+  const { context, page, problems } = await open();
+  await toCoop(page);
+  await host(page);
+  await debug(page, NET.room, 2);
+  await debug(page, NET.readyMask, 0b11);
+  await debug(page, NET.awayMask, 0b10);
+  await debug(page, NET.phase, PHASE.starting);
+  const net = await waitNet(page, (n) => n.sub === 'coop-menu' && n.notice !== '', 'the host to be sent back to the menu');
+  assert.match(net.notice, /other players left/);
+  assert.equal(net.phase, PHASE.offline);
+  assert.equal((await readUi(page)).screen, 'coop-menu', 'no run was started');
+  assert.deepEqual(problems, []);
+  await context.close();
+});
+
 // ---- Join ------------------------------------------------------------------------
 
 test('Rejoin: shown first and selected only when there is a seat, says it is rejoining, and a refusal explains and removes it', async () => {

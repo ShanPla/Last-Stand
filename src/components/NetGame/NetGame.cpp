@@ -121,6 +121,7 @@ struct Session {
     bool sentAway = false;
     float endResend = 0.0f;   // Seconds until the run's end is sent again.
     Stored stored[kStoredSnapshots];
+    const GameState* hostState = nullptr;  // The host's own state, read to see what dropping a queued step would cost.
     bool pendingStart = false;
     bool haveRun = false;
     uint32_t newestTick = 0;
@@ -210,6 +211,7 @@ void sendStart(int slot) {
 void beginHostRun(GameState& state) {
     sim::newRun(state, S().settings.seed, S().settings.difficulty, S().settings.map, S().settings.mode, S().settings.playerCount);
     state.localSlot = 0;
+    S().hostState = &state;
     S().snapshotClock = 0.0f;
     S().sentPaused = S().sentAway = false;
     S().endResend = 0.0f;
@@ -229,20 +231,6 @@ void dropOldest(Remote& remote) {
     if (!dash) return;
     if (remote.queueCount > 0) remote.queue[remote.queueHead].dash = true;
     else remote.carryDash = true;
-}
-
-void pushQueued(Remote& remote, uint32_t seq, const InputSample& sample) {
-    if (remote.queueCount == kQueueCapacity) dropOldest(remote);
-    const int at = (remote.queueHead + remote.queueCount) % kQueueCapacity;
-    remote.queue[at] = sample;
-    if (remote.carryDash) {
-        remote.queue[at].dash = true;
-        remote.carryDash = false;
-    }
-    remote.queueSeq[at] = seq;
-    remote.queueCount++;
-    remote.newestQueued = seq;
-    remote.anyQueued = true;
 }
 
 // What leaving out the waiting step at place k would cost the player: 0 when they stood still
@@ -291,7 +279,28 @@ void dropOne(Remote& remote, const Player& player, bool stillOnly) {
     S().stats.droppedSteps++;
 }
 
-void onInput(Remote& remote, const InputMessage& message) {
+// A full line (the host is paused or stalled) first gives up a step where the player stood
+// still, because the newest steps are the ones that are walking. Only when there is none does
+// the oldest go. The player is needed to see whether a dash is running.
+void pushQueued(Remote& remote, const Player& player, uint32_t seq, const InputSample& sample) {
+    if (remote.queueCount == kQueueCapacity) {
+        const int before = remote.queueCount;
+        dropOne(remote, player, true);
+        if (remote.queueCount == before) dropOldest(remote);
+    }
+    const int at = (remote.queueHead + remote.queueCount) % kQueueCapacity;
+    remote.queue[at] = sample;
+    if (remote.carryDash) {
+        remote.queue[at].dash = true;
+        remote.carryDash = false;
+    }
+    remote.queueSeq[at] = seq;
+    remote.queueCount++;
+    remote.newestQueued = seq;
+    remote.anyQueued = true;
+}
+
+void onInput(Remote& remote, const Player& player, const InputMessage& message) {
     if (message.newestSeq < static_cast<uint32_t>(message.count)) return;  // Steps start at 1.
     remote.answered = true;
     remote.clientCrushed = message.crushedCount;
@@ -302,7 +311,7 @@ void onInput(Remote& remote, const InputMessage& message) {
     for (int i = message.count - 1; i >= 0; --i) {
         const uint32_t seq = message.newestSeq - static_cast<uint32_t>(i);
         if (remote.anyQueued && seq <= remote.newestQueued) continue;
-        pushQueued(remote, seq, message.samples[i]);
+        pushQueued(remote, player, seq, message.samples[i]);
     }
 }
 
@@ -688,6 +697,9 @@ void readClientMessages(GameState& state) {
                 S().settings = start;
                 S().pendingStart = true;
                 S().haveRun = true;
+                // A new run that includes this player outranks a not-in-run notice that came just
+                // before it: that notice was about the run before.
+                S().notInRun = false;
                 break;
             }
             case MessageKind::Snapshot:
@@ -714,8 +726,13 @@ void readClientMessages(GameState& state) {
             }
             case MessageKind::NotInRun: {
                 // Whatever run this machine still shows, the host has moved on without it.
+                // A late notice about an older run than the one this machine is in (the host sends
+                // it again and again until the player has a soldier) must not end the newer run.
                 NotInRunMessage message;
-                if (decodeNotInRun(g_buffer, size, message)) S().notInRun = true;
+                if (!decodeNotInRun(g_buffer, size, message)) break;
+                const bool older = S().haveRun && message.runNumber != S().settings.runNumber &&
+                                   static_cast<uint8_t>(message.runNumber - S().settings.runNumber) >= 128;
+                if (!older) S().notInRun = true;
                 break;
             }
             default: break;
@@ -885,6 +902,7 @@ namespace {
 
 void forgetSession() {
     S().role = Role::None;
+    S().hostState = nullptr;
     S().settings = RunStart{};
     for (Remote& remote : S().remotes) resetRemote(remote);
     clearClient();
@@ -946,7 +964,9 @@ void hostReceive() {
         switch (static_cast<MessageKind>(kindOf(g_buffer, size))) {
             case MessageKind::Input: {
                 InputMessage message;
-                if (decodeInput(g_buffer, size, message) && message.runNumber == S().settings.runNumber) onInput(remote, message);
+                if (decodeInput(g_buffer, size, message) && message.runNumber == S().settings.runNumber && S().hostState) {
+                    onInput(remote, S().hostState->players[slot], message);
+                }
                 break;
             }
             case MessageKind::CardPick: {

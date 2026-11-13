@@ -303,8 +303,19 @@ netgame::RunStart coopSettingsFromLobby(uint64_t seed) {
     return start;
 }
 
+void leaveCoop();
+
 // The host pressed Start: this machine runs the real game, with the lobby's players in it.
 void startCoopHost() {
+    // The room can start while the others have already dropped out (they are away by the time
+    // this machine sees it). A co-op run needs two players, so it does not begin: the room is
+    // closed and the host is told, instead of getting a run with solo rules and the others
+    // a notice that they are not in it.
+    if (net::hereCount() < 2) {
+        leaveCoop();
+        ui::coopRoomClosed("The other players left before the run began. Host a new room to try again.");
+        return;
+    }
     netgame::hostStart(*g_state, coopSettingsFromLobby(pickSeed()));
     showNewCoopRun();
 }
@@ -377,11 +388,11 @@ void finishRun() {
     g_summary.kills = s.run.kills;
     g_summary.level = s.localPlayer().level;
     for (int i = 0; i < static_cast<int>(WeaponId::Count); ++i) g_summary.damageByWeapon[i] = s.run.damageByWeapon[i];
-    if (coopRun()) {
+    if (coopRun() || s.isCoop()) {
         // Each player sees their own share of the damage, and a co-op run is never a best run:
         // a team of four should not beat a record set alone.
         g_summary.coop = true;
-        g_summary.canRestart = coopHost();
+        g_summary.canRestart = !coopRun() || coopHost();  // (A co-op state with no live room can only restart alone.)
         if (coopGuest() && netgame::clientRunEnded()) {
             const netgame::RunEnd& end = netgame::clientRunEnd();
             g_summary.won = end.phase == RunPhase::Won;
@@ -905,8 +916,12 @@ void frame() {
     // second game window on the same PC). The guests' input steps keep coming 60 a second, and
     // every step the host lost would pile up and have to be dropped, pulling their soldiers back.
     const float frameDt = coopHost() && !g_inDemo ? std::min(rawDt, static_cast<float>(balance::kNetHostCatchUpSteps) * kDt) : dtReal;
-    const float simDt = effects::filterSimulationTime(frameDt);
-    const bool paused = simDt < frameDt;
+    const float filteredDt = effects::filterSimulationTime(frameDt);
+    const bool paused = filteredDt < frameDt;
+    // A co-op host still shows the hit pause (particles and numbers wait), but the run keeps full
+    // time: the guests send 60 steps a second, and every step the host did not run would pile up
+    // in their queues and come back as a correction.
+    const float simDt = coopHost() && !g_inDemo ? frameDt : filteredDt;
 
     // Time only moves in a real run on the play screen, or in the title demo.
     const bool demoRuns = g_inDemo && g_screen != Screen::Over;

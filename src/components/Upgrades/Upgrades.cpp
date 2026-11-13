@@ -127,7 +127,7 @@ void update(GameState& state) {
 }
 
 bool choosing(const GameState& state, int slot) {
-    if (state.isCoop()) return state.players[slot].cardsOpen;
+    if (state.isCoop()) return state.players[slot].cardsOpen && !state.players[slot].downed;
     return slot == 0 && state.run.phase == RunPhase::LevelUp;
 }
 

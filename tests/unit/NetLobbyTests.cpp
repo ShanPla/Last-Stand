@@ -286,6 +286,29 @@ TEST_CASE("Start needs the host, two players, and everyone ready") {
     CHECK_FALSE(net::canStart());
 }
 
+TEST_CASE("Start counts only the players who are here: an away player neither makes the two nor holds it up") {
+    freshLobby();
+    net::debugCommand(net::kDebugRoom, 3);
+    net::debugCommand(net::kDebugReadyMask, 0b111);
+    CHECK(net::canStart());
+    // One of three is away, and not ready: the two who are here can still start.
+    net::debugCommand(net::kDebugReadyMask, 0b011);
+    net::debugCommand(net::kDebugAwayMask, 0b100);
+    CHECK(net::hereCount() == 2);
+    CHECK(net::canStart());
+    // But two present players who are not both ready can't.
+    net::debugCommand(net::kDebugReadyMask, 0b001);
+    CHECK_FALSE(net::canStart());
+    // Everyone else away leaves the host alone, so no co-op run can start, however ready they were.
+    net::debugCommand(net::kDebugReadyMask, 0b111);
+    net::debugCommand(net::kDebugAwayMask, 0b110);
+    CHECK(net::hereCount() == 1);
+    CHECK_FALSE(net::canStart());
+    net::startRun();
+    CHECK(net::lobby().phase == net::LobbyPhase::InLobby);
+    CHECK_FALSE(net::lobby().started);
+}
+
 TEST_CASE("Start with the conditions not met does nothing, and with them met moves to Starting") {
     freshLobby();
     net::debugCommand(net::kDebugRoom, 2);

@@ -385,6 +385,56 @@ TEST_CASE("co-op level-up doesn't pause: cards open, weapons hold fire, and the 
     CHECK(state->players[0].hp < hpAfterPick);
 }
 
+TEST_CASE("co-op: going down closes the open cards, a downed player can't pick, and a revive brings fresh cards") {
+    auto state = coopRun(2);
+    disarm(*state);
+    const Vec2 ground = openGround(*state);
+    place(*state, 0, ground + Vec2{900.0f, 0.0f});
+    place(*state, 1, ground);
+    obstacles::update(*state);
+    state->players[1].pendingLevels = 1;
+    stepQuiet(*state);
+    REQUIRE(state->players[1].cardsOpen);
+    REQUIRE(state->players[1].cardShield > 0.0f);
+    const uint16_t firstSerial = state->players[1].offerSerial;
+
+    // Going down takes the cards (and the safety) away, but the level is still owed.
+    state->players[1].hp = 0.0f;
+    stepQuiet(*state);
+    REQUIRE(state->players[1].downed);
+    CHECK_FALSE(state->players[1].cardsOpen);
+    CHECK(state->players[1].cardShield == 0.0f);
+    CHECK(state->players[1].pendingLevels == 1);
+
+    // A pick from a downed player does nothing, however it arrives: Heal would be wasted at 0 HP.
+    InputFrame inputs[2];
+    inputs[1].chooseCard = 0;
+    stepQuiet(*state, 5, inputs);
+    upgrades::choose(*state, 1, 0);
+    upgrades::reroll(*state, 1);
+    CHECK(state->players[1].pendingLevels == 1);
+    CHECK(state->players[1].rerollsLeft == balance::kStartingRerolls);
+    CHECK(state->players[1].downed);
+
+    // Still no cards while the player lies there, however long it takes.
+    stepQuiet(*state, 120);
+    CHECK_FALSE(state->players[1].cardsOpen);
+
+    // Revived: the cards come back, new ones, with a full safety, and picking works again.
+    place(*state, 0, ground + Vec2{10.0f, 0.0f});
+    const int needed = static_cast<int>(std::lround(balance::kReviveSeconds / kDt));
+    stepQuiet(*state, needed + 2);
+    REQUIRE_FALSE(state->players[1].downed);
+    stepQuiet(*state, 2);
+    REQUIRE(state->players[1].cardsOpen);
+    CHECK(state->players[1].offerSerial != firstSerial);
+    CHECK(state->players[1].cardShield > balance::kCoopCardShieldSeconds - 0.1f);
+    inputs[1].chooseCard = 0;
+    stepQuiet(*state, 1, inputs);
+    CHECK_FALSE(state->players[1].cardsOpen);
+    CHECK(state->players[1].pendingLevels == 0);
+}
+
 TEST_CASE("co-op: several levels at once share one card safety, and a reroll is per player") {
     auto state = coopRun(2);
     disarm(*state);

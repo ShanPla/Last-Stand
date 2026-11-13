@@ -1032,6 +1032,82 @@ TEST_CASE("net session: a player who comes back after the host began a run witho
     }
 }
 
+namespace {
+
+// A not-in-run notice from the host (net id 0) to the client (net id 2), as if it were on the wire.
+void sendNotInRunToClient(Rig& rig, uint8_t runNumber) {
+    NotInRunMessage message;
+    message.runNumber = runNumber;
+    uint8_t bytes[16];
+    const int size = encodeNotInRun(message, bytes, sizeof(bytes));
+    rig.pipe.messages.push_back(Pipe::Message{0, 2, rig.pipe.frame + rig.pipe.delayFrames, true, std::vector<uint8_t>(bytes, bytes + size)});
+}
+
+}  // namespace
+
+TEST_CASE("net session: a late not-in-run notice about an older run doesn't end the run the guest is in") {
+    Rig rig;
+    for (int i = 0; i < 30; ++i) rig.frame(0.0f, 0.0f);
+    useSession(rig.client);
+    const uint8_t now = settings().runNumber;
+    useSession(nullptr);
+    sendNotInRunToClient(rig, static_cast<uint8_t>(now - 1));
+    for (int i = 0; i < 10; ++i) rig.frame(0.0f, 0.0f);
+    useSession(rig.client);
+    CHECK_FALSE(clientNotInRun());
+    useSession(nullptr);
+    // A notice about this run or a newer one still does.
+    sendNotInRunToClient(rig, static_cast<uint8_t>(now + 1));
+    for (int i = 0; i < 10; ++i) rig.frame(0.0f, 0.0f);
+    useSession(rig.client);
+    CHECK(clientNotInRun());
+    useSession(nullptr);
+}
+
+TEST_CASE("net session: a not-in-run notice that comes just before a new run that includes the guest is dropped") {
+    Rig rig;
+    for (int i = 0; i < 30; ++i) rig.frame(0.0f, 0.0f);
+    // The notice (about the run before) and then the new run's settings, in the same stretch of
+    // messages. The app checks the notice before it starts the new run, so it must be gone by then.
+    sendNotInRunToClient(rig, 2);
+    useSession(rig.host);
+    RunStart again;
+    again.seed = 4242;
+    again.playerCount = 2;
+    again.netIds[0] = 0;
+    again.netIds[1] = 2;
+    hostRestart(*rig.hostState, again);
+    useSession(nullptr);
+    for (int i = 0; i < 12; ++i) {
+        rig.frame(0.0f, 0.0f);
+        useSession(rig.client);
+        CHECK_FALSE(clientNotInRun());
+        useSession(nullptr);
+    }
+    CHECK(rig.clientState->run.seed == 4242u);
+}
+
+TEST_CASE("net session: a full line of waiting steps gives up the ones where the guest stood still, not the newest walking ones") {
+    Rig rig;
+    for (int i = 0; i < 30; ++i) rig.frame(0.0f, 0.0f);
+    // The host is paused (the tab is hidden, a long stall) while the guest walks, then stands.
+    // More steps arrive than the line holds.
+    rig.hostDt = 0.0f;
+    for (int i = 0; i < 12; ++i) rig.frame(1.0f, 0.0f);
+    for (int i = 0; i < 40; ++i) rig.frame(0.0f, 0.0f);
+    useSession(rig.host);
+    CHECK(stats().droppedSteps > 0);  // The still steps went first.
+    useSession(nullptr);
+    // Back to normal: every one of the walking steps was kept, so the host's copy of the guest
+    // is where the guest's screen has it, and nothing had to be put right.
+    rig.hostDt = kDt;
+    for (int i = 0; i < 240; ++i) rig.frame(0.0f, 0.0f);
+    CHECK(distance(rig.hostState->players[1].pos, rig.clientSeesSelf()) < 0.01f);
+    useSession(rig.client);
+    CHECK(stats().corrections == 0);
+    useSession(nullptr);
+}
+
 TEST_CASE("net codec: the not-in-this-run message round trips, and broken ones are refused") {
     NotInRunMessage message;
     message.runNumber = 7;
