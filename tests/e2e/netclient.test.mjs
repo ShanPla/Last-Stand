@@ -236,9 +236,10 @@ test('config: localhost, placeholder, ?server and the health address', async () 
   assert.equal(out.local.wsUrl, 'ws://localhost:8787');
   assert.equal(out.local.healthUrl, 'http://localhost:8787/healthz');
   assert.equal(out.loopback.wsUrl, 'ws://localhost:8787');
-  assert.match(out.live.wsUrl, /^wss:\/\/REPLACE-WITH-RENDER-ADDRESS/);
-  assert.equal(out.live.isPlaceholder, true);
-  assert.equal(out.live.healthUrl, 'https://REPLACE-WITH-RENDER-ADDRESS.onrender.com/healthz');
+  assert.equal(out.live.wsUrl, 'wss://last-stand-relay.onrender.com');
+  assert.equal(out.live.isPlaceholder, false);
+  assert.equal(out.live.healthUrl, 'https://last-stand-relay.onrender.com/healthz');
+  assert.equal(out.live.wakeOnLoad, true);
   assert.equal(out.override.wsUrl, 'wss://x.example.com');
   assert.equal(out.override.healthUrl, 'https://x.example.com/healthz');
   assert.equal(out.override.isPlaceholder, false);

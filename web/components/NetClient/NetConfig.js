@@ -8,9 +8,10 @@
 (function (global) {
   'use strict';
 
-  // Replace this with the real address once the relay is deployed on Render.
-  // While it still has this text, the page knows there is no server to reach and says so at once
-  // instead of waiting a minute for a name that will never answer.
+  // The relay on Render, used by the live site.
+  var LIVE = 'wss://last-stand-relay.onrender.com';
+  // If the live address is ever set back to this text, the page knows there is no server to
+  // reach and says so at once instead of waiting a minute for a name that will never answer.
   var PLACEHOLDER = 'wss://REPLACE-WITH-RENDER-ADDRESS.onrender.com';
   var LOCAL = 'ws://localhost:8787';
 
@@ -41,7 +42,7 @@
     try { params = new URLSearchParams(search || ''); } catch (error) { params = new URLSearchParams(''); }
     var override = normalizeServer(params.get('server'));
     var local = hostname === 'localhost' || hostname === '127.0.0.1';
-    var wsUrl = override || (local ? LOCAL : PLACEHOLDER);
+    var wsUrl = override || (local ? LOCAL : LIVE);
     var budget = Number(params.get('wakebudget'));
     return {
       wsUrl: wsUrl,
@@ -60,5 +61,5 @@
     return resolve(loc.hostname, loc.search);
   }
 
-  global.LastStandNetConfig = { resolve: resolve, fromPage: fromPage, normalizeServer: normalizeServer, PLACEHOLDER: PLACEHOLDER };
+  global.LastStandNetConfig = { resolve: resolve, fromPage: fromPage, normalizeServer: normalizeServer, LIVE: LIVE, PLACEHOLDER: PLACEHOLDER };
 }(window));
