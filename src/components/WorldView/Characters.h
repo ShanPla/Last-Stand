@@ -43,7 +43,7 @@ void drawSoldierRing(const View& view, Vec2 worldFeet);
 void drawSoldierRingOverCrowd(const View& view, Vec2 worldFeet);
 // The ring under another co-op player, in that player's color.
 void drawTeammateRing(const View& view, Vec2 worldFeet, int slot);
-// The bubble around a co-op soldier whose level-up cards are open and whose shield is up.
+// The bubble around a co-op soldier whose card shield is up: while choosing, and just after the pick.
 // Goes in a flat pass above the crowd. Returns whether it drew one.
 bool drawShieldBubble(const GameState& state, int slot, const ScreenPoint& feet);
 void drawMuzzleFlash(const GameState& state, int slot, const ScreenPoint& feet);

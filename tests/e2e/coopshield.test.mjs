@@ -71,9 +71,14 @@ test('co-op shield: everyone sees the bubble while a player chooses, the cards c
   await b.page.screenshot({ path: 'tests/e2e/screenshots/coop-shield-gone-guest.png' });
   await a.page.screenshot({ path: 'tests/e2e/screenshots/coop-shield-gone-host.png' });
 
+  // After the pick the guest is safe for a moment more, so they can get away, and the bubble
+  // stays on everyone's screen until that runs out.
   await pickCard(a, b);
-  await a.page.waitForTimeout(300);
-  assert.equal((await readWorld(a.page)).shields, 0);
+  const afterPick = await waitCoop(a.page, (c) => c.players[1].shield > 0, 'the after-pick shield');
+  assert.ok(afterPick.players[1].shield <= 2.05, `the after-pick shield is short: ${afterPick.players[1].shield}`);
+  await waitWorld(a.page, (w) => w.shields === 1, 'the bubble after the pick');
+  await waitWorld(a.page, (w) => w.shields === 0, 'the bubble to end after the pick', 5000);
+  assert.equal((await readCoop(a.page)).players[1].shield, 0);
 
   // The settings that quiet the effects must not hide the shield: reduced motion and no flash.
   await debug(a.page, CMD.setReducedMotion, 1);

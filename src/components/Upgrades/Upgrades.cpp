@@ -174,7 +174,8 @@ void choose(GameState& state, int slot, int index) {
         pushPlayerEvent(state, EventType::LevelUp, slot, player.pos, static_cast<float>(player.level));
     } else if (state.isCoop()) {
         player.cardsOpen = false;
-        player.cardShield = 0.0f;
+        // A short safety after the pick, so the player can get away from the crowd.
+        player.cardShield = balance::kCoopAfterPickShieldSeconds;
     } else {
         state.run.phase = RunPhase::Playing;
     }

@@ -40,9 +40,9 @@ void tryStartDash(GameState& state, int slot, Vec2 move) {
 void update(GameState& state, int slot, float moveX, float moveY, bool dashPressed) {
     Player& player = state.players[slot];
     player.prevPos = player.pos;
-    // The card shield only runs down while cards are open, and only in co-op, where it is set.
-    // The last step's tiny float leftover is dropped, so the 5 seconds are never 5 and a bit.
-    if (player.cardsOpen) {
+    // The card shield runs down while cards are open and for a moment after the pick. Only co-op
+    // sets it. The last step's tiny float leftover is dropped, so 5 seconds are never 5 and a bit.
+    if (player.cardShield > 0.0f) {
         player.cardShield -= kDt;
         if (player.cardShield < 1e-4f) player.cardShield = 0.0f;
     }
@@ -76,8 +76,9 @@ void update(GameState& state, int slot, float moveX, float moveY, bool dashPress
 void damage(GameState& state, int slot, float amount) {
     Player& player = state.players[slot];
     if (player.invulnerable > 0.0f || player.dashInvulnerable > 0.0f || player.hp <= 0.0f) return;
-    // Co-op: picking a card is safe, but only for kCoopCardShieldSeconds.
-    if (player.cardsOpen && player.cardShield > 0.0f) return;
+    // Co-op: picking a card is safe, but only for kCoopCardShieldSeconds, and so is the moment
+    // after the pick (kCoopAfterPickShieldSeconds).
+    if (player.cardShield > 0.0f) return;
     // Every hit on a player comes through here, so difficulty needs only this one line.
     const float scaled = amount * balance::difficultyTuning(state.run.difficulty).enemyDamage;
     const float taken = std::max(balance::kMinDamageTaken, scaled - player.stats.armor);

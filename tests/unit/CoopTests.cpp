@@ -361,18 +361,28 @@ TEST_CASE("co-op level-up doesn't pause: cards open, weapons hold fire, and the 
     player::damage(*state, 0, 30.0f);
     CHECK(state->players[0].hp < state->players[0].maxHp);
 
-    // Taking a card closes them, and the weapons fire again.
+    // Taking a card closes them, and the weapons fire again. Even after a slow pick, the player
+    // is safe for a moment, so they can get away from the crowd.
     InputFrame inputs[2];
     inputs[0].chooseCard = 0;
     stepQuiet(*state, 1, inputs);
     CHECK_FALSE(state->players[0].cardsOpen);
     CHECK(state->players[0].pendingLevels == 0);
+    CHECK(state->players[0].cardShield == doctest::Approx(balance::kCoopAfterPickShieldSeconds).epsilon(0.02));
+    const float hpAfterPick = state->players[0].hp;
+    const int afterSteps = static_cast<int>(std::lround(balance::kCoopAfterPickShieldSeconds / kDt));
     int firedAfter = 0;
-    for (int i = 0; i < 120; ++i) {
+    for (int i = 0; i < afterSteps - 2; ++i) {
         stepQuiet(*state);
         firedAfter += countEvents(*state, EventType::WeaponFired, 0);
+        player::damage(*state, 0, 30.0f);
     }
     CHECK(firedAfter > 0);
+    CHECK(state->players[0].hp == hpAfterPick);
+    stepQuiet(*state, 3);
+    CHECK(state->players[0].cardShield == 0.0f);
+    player::damage(*state, 0, 30.0f);
+    CHECK(state->players[0].hp < hpAfterPick);
 }
 
 TEST_CASE("co-op: several levels at once share one card safety, and a reroll is per player") {

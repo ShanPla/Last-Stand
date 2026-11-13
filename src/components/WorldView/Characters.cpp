@@ -483,13 +483,14 @@ void drawTeammateRing(const View& view, Vec2 worldFeet, int slot) {
     groundRing(view, worldFeet, balance::kPlayerRadius * 1.9f, 3.0f, 3, fade(theme::kCoopSlotColors[g_teamColor[slot] % kTeamRows], 0.8f));
 }
 
-// A bubble of shield around a co-op soldier whose level-up cards are open. It is a pixel
+// A bubble of shield around a co-op soldier who is choosing a level-up card, or has just picked
+// one and is still safe. It is a pixel
 // ellipse: a one-pixel edge, a faint body, and two bright pixels on its shoulder. Every
 // player sees it, so the team knows who cannot be hurt right now and for how much longer.
 bool drawShieldBubble(const GameState& state, int slot, const ScreenPoint& feet) {
     if (!state.isCoop() || state.run.phase != RunPhase::Playing) return false;
     const Player& player = state.players[slot];
-    if (!player.cardsOpen || player.downed || player.hp <= 0.0f) return false;
+    if (player.cardShield <= 0.0f || player.downed || player.hp <= 0.0f) return false;
     const ShieldBubbleLook look = shieldBubbleLook(player.cardShield, state.run.tick, effects::flickerAllowed(), effects::flashScale());
     if (look.outline <= 0.0f) return false;
 

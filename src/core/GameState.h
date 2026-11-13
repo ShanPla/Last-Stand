@@ -197,7 +197,7 @@ struct Player {
     float damageByWeapon[static_cast<int>(WeaponId::Count)] = {};
     // Co-op only. A single-player run never changes these, so they keep their starting values.
     float reviveProgress = 0.0f;  // Seconds a teammate has stood close while this player was down.
-    float cardShield = 0.0f;      // Seconds of safety left while choosing a card.
+    float cardShield = 0.0f;      // Seconds of safety left while choosing a card, or just after the pick.
     bool downed = false;          // At 0 HP and waiting for a teammate. Zombies ignore a downed player.
     bool cardsOpen = false;       // Cards are offered. The run goes on, and this player's weapons hold fire.
     // Goes up each time a new set of cards is offered, so a pick sent over the network can say
