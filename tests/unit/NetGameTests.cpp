@@ -9,7 +9,9 @@
 #include "core/Sim.h"
 #include "data/Balance.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <memory>
@@ -385,6 +387,10 @@ struct Pipe {
     std::deque<Message> messages;
     int frame = 0;
     int delayFrames = 2;
+    // Each message also waits up to this many more frames, at random. Messages to one player
+    // still arrive in the order they were sent, as on a connection that holds the line.
+    int jitterFrames = 0;
+    int lastReady[8] = {};
     float lossShare = 0.0f;
     Rng rng;
     int sentUnreliable = 0;
@@ -410,7 +416,13 @@ public:
             if (pipe_.rng.next01() < pipe_.lossShare) return true;
             if (kindOf(data, size) == static_cast<uint8_t>(MessageKind::Snapshot) && size > pipe_.maxSnapshotBytes) pipe_.maxSnapshotBytes = size;
         }
-        pipe_.messages.push_back(Pipe::Message{me_, to, pipe_.frame + pipe_.delayFrames, reliable, std::vector<uint8_t>(data, data + size)});
+        int ready = pipe_.frame + pipe_.delayFrames;
+        if (pipe_.jitterFrames > 0) {
+            ready += static_cast<int>(pipe_.rng.next01() * static_cast<float>(pipe_.jitterFrames + 1));
+            ready = std::max(ready, pipe_.lastReady[to & 7]);
+            pipe_.lastReady[to & 7] = ready;
+        }
+        pipe_.messages.push_back(Pipe::Message{me_, to, ready, reliable, std::vector<uint8_t>(data, data + size)});
         return true;
     }
     int receive(uint8_t* buffer, int capacity, int* from) override {
@@ -444,6 +456,9 @@ struct Rig {
     std::unique_ptr<GameState> hostState = std::make_unique<GameState>();
     std::unique_ptr<GameState> clientState = std::make_unique<GameState>();
     float hostClock = 0.0f;
+    // Frame lengths. Real frames are never exactly 1/60 s, so a frame can run no step or two.
+    float hostDt = kDt;
+    float clientDt = kDt;
 
     Rig() {
         useSession(host);
@@ -471,7 +486,7 @@ struct Rig {
         pipe.frame++;
         useSession(host);
         hostReceive();
-        hostClock += kDt;
+        hostClock += hostDt;
         while (hostClock >= kDt - 1e-6f) {
             hostClock -= kDt;
             InputFrame inputs[kMaxPlayers];
@@ -479,11 +494,11 @@ struct Rig {
             hostBeforeStep(*hostState);
             sim::step(*hostState, inputs, hostState->playerCount());
         }
-        hostAfterFrame(*hostState, kDt, false, false);
+        hostAfterFrame(*hostState, hostDt, false, false);
         hostState->events.clear();
         useSession(client);
         clientNewRun(*clientState);
-        clientFrame(*clientState, kDt, clientMoveX, clientMoveY, clientDash);
+        clientFrame(*clientState, clientDt, clientMoveX, clientMoveY, clientDash);
         clientState->events.clear();
         useSession(nullptr);
     }
@@ -579,10 +594,11 @@ TEST_CASE("net session: a card picked on the client is taken by the host, once")
     CHECK_FALSE(rig.clientState->players[1].cardsOpen);
 }
 
-TEST_CASE("net session: a player who left stays down, and the host keeps a late player's last input only briefly") {
+TEST_CASE("net session: a player who left stays down, and a late player's soldier waits instead of being guessed") {
     Rig rig;
     for (int i = 0; i < 20; ++i) rig.frame(1.0f, 0.0f);
-    // The client goes quiet: the host keeps it walking for a moment, then it stops.
+    // The client goes quiet (its messages are lost): the host uses any steps it already has, then
+    // the soldier waits where it is instead of walking on a guess.
     const Vec2 before = rig.hostState->players[1].pos;
     useSession(rig.host);
     for (int i = 0; i < 60; ++i) {
@@ -595,8 +611,8 @@ TEST_CASE("net session: a player who left stays down, and the host keeps a late 
         rig.hostState->events.clear();
     }
     const float walked = distance(before, rig.hostState->players[1].pos);
-    CHECK(walked > 1.0f);
-    CHECK(walked < balance::kPlayerSpeed * kDt * static_cast<float>(balance::kNetHoldInputSteps + 12));
+    CHECK(walked < balance::kPlayerSpeed * kDt * static_cast<float>(balance::kNetMaxQueuedInputs + 1));
+    CHECK(stats().lateSteps > 40);
 
     hostSetConnected(1, false);
     for (int i = 0; i < 5; ++i) {
@@ -760,14 +776,14 @@ TEST_CASE("net session: a dash in an input step the host drops still happens") {
     start.netIds[0] = 0;
     start.netIds[1] = 2;
     hostStart(*state, start);
-    // Twelve steps arrive at once, after a stall. Only the newest eight are kept, and the
-    // dash was in step 2.
-    for (uint32_t newest : {6u, 12u}) {
+    // Eighteen walking steps arrive at once, after a stall, and the dash was in step 2. Only
+    // kNetMaxQueuedInputs are kept: the walking steps go first, then a step of the dash.
+    for (uint32_t newest : {6u, 12u, 18u}) {
         InputMessage message;
         message.runNumber = 1;
         message.newestSeq = newest;
         message.count = 6;
-        for (int i = 0; i < 6; ++i) message.samples[i] = quantizeInput(0.0f, 0.0f, newest - static_cast<uint32_t>(i) == 2u);
+        for (int i = 0; i < 6; ++i) message.samples[i] = quantizeInput(1.0f, 0.0f, newest - static_cast<uint32_t>(i) == 2u);
         uint8_t bytes[64];
         const int size = encodeInput(message, bytes, sizeof(bytes));
         pipe.messages.push_back(Pipe::Message{2, 0, 0, false, std::vector<uint8_t>(bytes, bytes + size)});
@@ -779,6 +795,7 @@ TEST_CASE("net session: a dash in an input step the host drops still happens") {
         sim::step(*state, inputs, 2);
         state->events.clear();
     }
+    CHECK(stats().droppedSteps == 18 - balance::kNetMaxQueuedInputs);
     CHECK(state->players[1].dashCooldown > 0.0f);
     destroySession(session);
 }
@@ -1033,4 +1050,118 @@ TEST_CASE("net codec: the not-in-this-run message round trips, and broken ones a
     const int pauseSize = encodePause(pause, bytes, sizeof(bytes));
     CHECK_FALSE(decodeNotInRun(bytes, pauseSize, back));
     CHECK(encodeNotInRun(message, bytes, 1) == 0);
+}
+
+// ---- The guest's own soldier on an uneven link --------------------------------------
+
+namespace {
+
+// Real frames are never exactly 1/60 s: each starts a little early or late. The clocks still
+// keep real time, so the lateness of one frame is taken back in the next.
+struct UnevenFrames {
+    Rng rng;
+    float hostLate = 0.0f;
+    float clientLate = 0.0f;
+    explicit UnevenFrames(uint64_t seed) { rng.seed(seed); }
+    void next(Rig& rig, float share) {
+        const float h = kDt * rng.range(-share, share);
+        const float c = kDt * rng.range(-share, share);
+        rig.hostDt = kDt + h - hostLate;
+        rig.clientDt = kDt + c - clientLate;
+        hostLate = h;
+        clientLate = c;
+    }
+};
+
+}  // namespace
+
+TEST_CASE("net session: on a link with uneven delays and frames, the guest's own soldier is never corrected") {
+    // Messages take 4 to 10 frames each way, in order, as on a slow relay, and neither machine
+    // draws its frames on time. Inputs reach the host late and in bursts. The host used to guess
+    // a late player on, then drop the steps that piled up, and both came back to the guest as
+    // corrections dragging its soldier around: 56 in this walk.
+    Rig rig;
+    rig.pipe.delayFrames = 4;
+    rig.pipe.jitterFrames = 6;
+    rig.pipe.rng.seed(1);
+    UnevenFrames frames(100);
+    for (int i = 0; i < 60; ++i) rig.frame(0.0f, 0.0f);
+    struct Leg {
+        float x, y;
+        int frames;
+        bool dash;
+    };
+    // Walks, sharp turns, a dash, stops.
+    const Leg legs[] = {{1, 0, 120, false}, {-1, 0, 60, false}, {0, 1, 60, true}, {0, 0, 40, false}, {0, -1, 90, false}, {1, 0, 30, false}, {0, 1, 30, false}, {0, 0, 40, false}};
+    for (int round = 0; round < 6; ++round) {
+        for (const Leg& leg : legs) {
+            for (int i = 0; i < leg.frames; ++i) {
+                frames.next(rig, 0.3f);
+                rig.frame(leg.x, leg.y, leg.dash && i == 20);
+            }
+        }
+    }
+    for (int i = 0; i < 90; ++i) rig.frame(0.0f, 0.0f);
+    useSession(rig.host);
+    const int late = stats().lateSteps;
+    useSession(rig.client);
+    const int corrections = stats().corrections;
+    const int snaps = stats().snaps;
+    useSession(nullptr);
+    CHECK(late > 0);  // Inputs really were late at the host.
+    CHECK(corrections == 0);
+    CHECK(snaps == 0);
+    CHECK(distance(rig.hostState->players[1].pos, rig.clientSeesSelf()) < 0.01f);
+}
+
+TEST_CASE("net session: after the host loses time, the guest's spare steps go where it stood still") {
+    Rig rig;
+    for (int i = 0; i < 60; ++i) rig.frame(0.0f, 0.0f);
+    // How far the host's copy of the walking guest trails the guest's own screen.
+    const auto trail = [&rig]() { return distance(rig.hostState->players[1].pos, rig.clientSeesSelf()); };
+    for (int i = 0; i < 60; ++i) rig.frame(1.0f, 0.0f);
+    const float trailBefore = trail();
+    // The guest stops, and the host's page stalls for five frames (a hitch, a hit pause): from
+    // now on five of the guest's steps wait at the host longer than they need to.
+    for (int i = 0; i < 10; ++i) rig.frame(0.0f, 0.0f);
+    rig.hostDt = 0.0f;
+    for (int i = 0; i < 5; ++i) rig.frame(0.0f, 0.0f);
+    rig.hostDt = kDt;
+    // While the guest stands, the spare steps are dropped, all but a small cushion. They move
+    // nobody, so nothing on the guest's screen is corrected.
+    for (int i = 0; i < 150; ++i) rig.frame(0.0f, 0.0f);
+    for (int i = 0; i < 60; ++i) rig.frame(1.0f, 0.0f);
+    const float step = balance::kPlayerSpeed * kDt;
+    CHECK(trail() <= trailBefore + step * static_cast<float>(balance::kNetSpareSteps) + 0.01f);
+    useSession(rig.host);
+    CHECK(stats().droppedSteps >= 5 - balance::kNetSpareSteps);
+    useSession(rig.client);
+    CHECK(stats().corrections == 0);
+    useSession(nullptr);
+}
+
+TEST_CASE("net session: a guest who never stops still gets back to the present after the host loses time") {
+    Rig rig;
+    for (int i = 0; i < 60; ++i) rig.frame(0.0f, 0.0f);
+    const auto trail = [&rig]() { return distance(rig.hostState->players[1].pos, rig.clientSeesSelf()); };
+    for (int i = 0; i < 60; ++i) rig.frame(1.0f, 0.0f);
+    const float trailBefore = trail();
+    rig.hostDt = 0.0f;
+    for (int i = 0; i < 6; ++i) rig.frame(1.0f, 0.0f);
+    rig.hostDt = kDt;
+    const float step = balance::kPlayerSpeed * kDt;
+    CHECK(trail() > trailBefore + 5.0f * step);
+    // With no still step to drop, one walking step goes at each check, so every correction on
+    // the guest's screen is one step long and the soldier is never pulled back hard.
+    // A single spare walking step is kept, since it is often needed again.
+    for (int i = 0; i < 60 * 8; ++i) rig.frame(1.0f, 0.0f);
+    CHECK(trail() <= trailBefore + step * static_cast<float>(balance::kNetSpareSteps + 1) + 0.01f);
+    useSession(rig.host);
+    CHECK(stats().droppedSteps >= 6 - balance::kNetSpareSteps - 1);
+    CHECK(stats().droppedSteps <= 6);
+    useSession(rig.client);
+    CHECK(stats().corrections >= 1);
+    CHECK(stats().snaps == 0);
+    CHECK(stats().predictionError < balance::kPlayerSpeed * kDt + 0.1f);
+    useSession(nullptr);
 }

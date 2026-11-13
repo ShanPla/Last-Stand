@@ -48,6 +48,9 @@ struct Stats {
     float predictionError = 0.0f;  // Client: size of the last correction, in world units.
     int corrections = 0;           // Client: snapshots that moved the prediction.
     int snaps = 0;                 // Client: corrections too big to smooth.
+    float drawnOffset = 0.0f;      // Client: how far the drawn soldier is from the prediction now.
+    int lateSteps = 0;             // Host: steps a player stood still because their input was late.
+    int droppedSteps = 0;          // Host: input steps left out because too many waited.
 };
 
 // ---- For everyone --------------------------------------------------------------

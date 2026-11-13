@@ -52,8 +52,10 @@ struct Remote {
     bool anyQueued = false;
     uint32_t newestQueued = 0;
     uint32_t ackSeq = 0;       // The newest step that was used. Sent back so they can check their prediction.
-    InputSample last;
-    int heldSteps = 0;
+    // The fewest steps that waited at any host step since spareClock last ran out. Steps that
+    // were never needed in that time are spare, and some of them can go.
+    int fewestWaiting = kQueueCapacity;
+    float spareClock = 0.0f;
     bool hasPick = false;
     CardPick pick;
     // Events since the last snapshot that this player should see or hear.
@@ -243,20 +245,91 @@ void pushQueued(Remote& remote, uint32_t seq, const InputSample& sample) {
     remote.anyQueued = true;
 }
 
+// What leaving out the waiting step at place k would cost the player: 0 when they stood still
+// in it, with no dash pressed or running (their prediction, which did use the step, still agrees
+// with the host), 1 when they walked (one step's walk, put right on their screen), and 2 when a
+// dash was pressed or running in it (a dash step is much longer, and the press must not be lost).
+int dropCost(const Remote& remote, const Player& player, int k) {
+    const InputSample& sample = remote.queue[(remote.queueHead + k) % kQueueCapacity];
+    const float dashSteps = balance::kDashSeconds / kDt + 1.0f;
+    bool dashing = sample.dash || (player.dashLeft > 0.0f && static_cast<float>(k) < dashSteps);
+    for (int j = 0; j < k && !dashing; ++j) {
+        dashing = remote.queue[(remote.queueHead + j) % kQueueCapacity].dash && static_cast<float>(k - j) < dashSteps;
+    }
+    if (dashing) return 2;
+    return sample.moveX != 0 || sample.moveY != 0 ? 1 : 0;
+}
+
+// Takes one waiting step out of the line, to bring a player who is behind back to the present:
+// the cheapest one, oldest first among equals. With stillOnly, only a step that costs nothing.
+void dropOne(Remote& remote, const Player& player, bool stillOnly) {
+    int best = -1;
+    int bestCost = 3;
+    for (int k = 0; k < remote.queueCount && bestCost > 0; ++k) {
+        const int cost = dropCost(remote, player, k);
+        if (cost < bestCost) {
+            best = k;
+            bestCost = cost;
+        }
+    }
+    if (best < 0 || (stillOnly && bestCost > 0)) return;
+    // A dash press is never lost: it moves on to the next step.
+    const int at = (remote.queueHead + best) % kQueueCapacity;
+    if (remote.queue[at].dash) {
+        if (best + 1 < remote.queueCount) remote.queue[(at + 1) % kQueueCapacity].dash = true;
+        else remote.carryDash = true;
+    }
+    // Every older step moves up one place, over it.
+    for (int j = best; j > 0; --j) {
+        const int to = (remote.queueHead + j) % kQueueCapacity;
+        const int from = (remote.queueHead + j - 1) % kQueueCapacity;
+        remote.queue[to] = remote.queue[from];
+        remote.queueSeq[to] = remote.queueSeq[from];
+    }
+    remote.queueHead = (remote.queueHead + 1) % kQueueCapacity;
+    remote.queueCount--;
+    S().stats.droppedSteps++;
+}
+
 void onInput(Remote& remote, const InputMessage& message) {
     if (message.newestSeq < static_cast<uint32_t>(message.count)) return;  // Steps start at 1.
     remote.answered = true;
     remote.clientCrushed = message.crushedCount;
     S().inputsIn.add();
-    // Oldest first. Steps already queued (the repeats) are skipped.
+    // Oldest first. Steps already queued (the repeats) are skipped. How many may wait is
+    // decided where they are used, in hostFillInputs, because a burst that arrives at once
+    // after a late message is not a player who is behind.
     for (int i = message.count - 1; i >= 0; --i) {
         const uint32_t seq = message.newestSeq - static_cast<uint32_t>(i);
         if (remote.anyQueued && seq <= remote.newestQueued) continue;
         pushQueued(remote, seq, message.samples[i]);
     }
-    // A player whose inputs pile up (a burst after a stall) is brought back to the present:
-    // old steps are dropped, so their controls do not lag behind for the rest of the run.
-    while (remote.queueCount > balance::kNetMaxQueuedInputs) dropOldest(remote);
+}
+
+// Keeps the line of waiting steps short, without moving anyone who did not move. Two reasons
+// for steps to pile up: a long stall (more than kNetMaxQueuedInputs wait, dropped at once), and
+// a host that lost time, or a late message that has since caught up (steps that went unused for
+// a whole kNetSpareCheckSeconds, dropped a few at a time, still ones first).
+void trimQueue(Remote& remote, const Player& player) {
+    while (remote.queueCount > balance::kNetMaxQueuedInputs) dropOne(remote, player, false);
+    remote.fewestWaiting = std::min(remote.fewestWaiting, remote.queueCount);
+    remote.spareClock += kDt;
+    if (remote.spareClock < balance::kNetSpareCheckSeconds) return;
+    // The step about to be used and a small cushion are needed. The rest never were.
+    const int spare = remote.fewestWaiting - 1 - balance::kNetSpareSteps;
+    remote.spareClock = 0.0f;
+    remote.fewestWaiting = kQueueCapacity;
+    if (spare <= 0) return;
+    // Still steps cost nothing, so every spare one can go. A step that moves costs a small
+    // correction on the player's screen, so one of those goes only when two or more are spare
+    // (one spare step is often just a late message's worth, needed again soon).
+    const int before = remote.queueCount;
+    for (int i = 0; i < spare; ++i) {
+        const int count = remote.queueCount;
+        dropOne(remote, player, true);
+        if (remote.queueCount == count) break;  // No still step is left.
+    }
+    if (remote.queueCount == before && spare >= 2) dropOne(remote, player, false);
 }
 
 // Whether a player should be told about an event. Their own events always, the big moments
@@ -896,21 +969,20 @@ void hostFillInputs(const GameState& state, InputFrame inputs[], int count) {
         InputFrame& input = inputs[slot];
         input = InputFrame{};
         if (!remote.connected) continue;
+        trimQueue(remote, state.players[slot]);
         if (remote.queueCount > 0) {
             const InputSample& sample = remote.queue[remote.queueHead];
             remote.ackSeq = remote.queueSeq[remote.queueHead];
             remote.queueHead = (remote.queueHead + 1) % kQueueCapacity;
             remote.queueCount--;
-            remote.last = sample;
-            remote.heldSteps = 0;
             input.moveX = unquantizeMove(sample.moveX);
             input.moveY = unquantizeMove(sample.moveY);
             input.dash = sample.dash;
-        } else if (remote.heldSteps < balance::kNetHoldInputSteps) {
-            // Late: keep going the way they were going for a moment. A dash is never repeated.
-            remote.heldSteps++;
-            input.moveX = unquantizeMove(remote.last.moveX);
-            input.moveY = unquantizeMove(remote.last.moveY);
+        } else if (remote.anyQueued) {
+            // Late: they wait where they are, and their steps are used in order when they come.
+            // Guessing would move them somewhere their own screen never showed, and every guess
+            // would come back to them as a correction pulling their soldier around.
+            S().stats.lateSteps++;
         }
         if (remote.carryDash && remote.queueCount == 0) {
             // A dropped step had a dash and nothing newer is waiting: it is used now.
@@ -1131,6 +1203,7 @@ void clientFrame(GameState& state, float dt, float moveX, float moveY, bool dash
     const float keep = std::pow(1.0f - balance::kNetCorrectionRate, std::max(0.0f, dt * 60.0f));
     S().offset *= keep;
     if (lengthSq(S().offset) < 0.01f) S().offset = Vec2{};
+    S().stats.drawnOffset = length(S().offset);
     applyOffset(state, S().offset);
     S().offsetApplied = true;
 }

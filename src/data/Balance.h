@@ -679,10 +679,16 @@ inline constexpr int kNetMaxEvents = 72;
 // The other players are drawn this far in the past, so there are almost always two snapshots
 // to blend between, even when one arrives late. 60 steps are one second.
 inline constexpr float kNetInterpDelaySteps = 6.0f;
-// The host holds a player's last input this long when no new one arrives, then stops them.
-inline constexpr int kNetHoldInputSteps = 15;
-// Inputs waiting at the host beyond this many are old, so the oldest are dropped.
-inline constexpr int kNetMaxQueuedInputs = 8;
+// A player's input steps wait at the host until used, one per step, so a late message only
+// delays them. Beyond this many waiting (a long stall), the extra ones are dropped at once.
+inline constexpr int kNetMaxQueuedInputs = 12;
+// Steps that went unused for this long were not needed, and some of them are dropped, so a
+// player's soldier at the host does not stay behind them. This many are kept as a cushion.
+inline constexpr float kNetSpareCheckSeconds = 1.0f;
+inline constexpr int kNetSpareSteps = 2;
+// After its page stalls, a co-op host runs up to this many steps in one frame to catch up
+// (single-player stops at 5). A host that lost time would leave its guests' steps piling up.
+inline constexpr int kNetHostCatchUpSteps = 15;
 // A prediction this far from the host's answer is moved at once instead of smoothly.
 inline constexpr float kNetSnapDistance = 160.0f;
 // The share of a small prediction error taken away each drawn frame.

@@ -431,8 +431,10 @@ void runSimulation(float dtReal) {
     frameInput.moveX = choosing ? 0.0f : g_input.moveX;
     frameInput.moveY = choosing ? 0.0f : g_input.moveY;
 
+    // A co-op host catches up after a longer stall. See frameDt in frame().
+    const int maxSteps = coopHost() ? balance::kNetHostCatchUpSteps : kMaxStepsPerFrame;
     int steps = 0;
-    while (g_accumulator >= kDt && steps < kMaxStepsPerFrame) {
+    while (g_accumulator >= kDt && steps < maxSteps) {
         // A menu choice applies once, even when this frame runs several steps.
         frameInput.chooseCard = static_cast<int8_t>(g_pendingChoice.card);
         frameInput.reroll = g_pendingChoice.reroll;
@@ -453,7 +455,7 @@ void runSimulation(float dtReal) {
         g_accumulator -= kDt;
         steps++;
     }
-    if (steps == kMaxStepsPerFrame) g_accumulator = 0.0f;
+    if (steps == maxSteps) g_accumulator = 0.0f;
     g_lastSteps = steps;
     // Each step's time, not each frame's, so numbers compare across refresh rates.
     if (steps > 0) g_simMs = smooth(g_simMs, static_cast<float>((GetTime() - start) * 1000.0) / static_cast<float>(steps));
@@ -622,12 +624,12 @@ void keepEventsForThisPlayer() {
 
 void buildNetDebug() {
     const netgame::Stats& st = netgame::stats();
-    int n = std::snprintf(g_netDebug, sizeof(g_netDebug), "NET %s  slot %d of %d  via %s\nping %d ms  server %d ms\nsnapshots out %d/s  in %d/s  age %.0f ms\nsnapshot %d B  avg %d  max %d\nmessages out %d/s  in %d/s\nbytes out %.1f KB/s  in %.1f KB/s\nprediction fixes %d  jumps %d  last %.1f",
+    int n = std::snprintf(g_netDebug, sizeof(g_netDebug), "NET %s  slot %d of %d  via %s\nping %d ms  server %d ms\nsnapshots out %d/s  in %d/s  age %.0f ms\nsnapshot %d B  avg %d  max %d\nmessages out %d/s  in %d/s\nbytes out %.1f KB/s  in %.1f KB/s\nprediction fixes %d  jumps %d  last %.1f\ninput steps late %d  dropped %d",
                           coopHost() ? "host" : "guest", g_state->localSlot, g_state->playerCount(), coopTransport(), coopPing(), net::lobby().serverRttMs,
                           st.snapshotsOutPerSec, st.snapshotsInPerSec, static_cast<double>(st.snapshotAge * 1000.0f), st.lastSnapshotBytes,
                           st.avgSnapshotBytes, st.maxSnapshotBytes, st.messagesOutPerSec, st.messagesInPerSec,
                           static_cast<double>(st.bytesOutPerSec) / 1024.0, static_cast<double>(st.bytesInPerSec) / 1024.0, st.corrections, st.snaps,
-                          static_cast<double>(st.predictionError));
+                          static_cast<double>(st.predictionError), st.lateSteps, st.droppedSteps);
     // Each other player's own line, as the relay and the browser count them.
     for (int slot = 0; slot < g_state->playerCount() && n > 0 && n < static_cast<int>(sizeof(g_netDebug)) - 80; ++slot) {
         if (slot == g_state->localSlot || (coopGuest() && slot != 0)) continue;
@@ -897,8 +899,12 @@ void frame() {
 
     // A hit pause keeps back a little of this frame's time. The steps still run in the
     // same order with the same kind of input, only later, so runs stay deterministic.
-    const float simDt = effects::filterSimulationTime(dtReal);
-    const bool paused = simDt < dtReal;
+    // A co-op host keeps real time through a stall of up to a quarter second (a busy page, a
+    // second game window on the same PC). The guests' input steps keep coming 60 a second, and
+    // every step the host lost would pile up and have to be dropped, pulling their soldiers back.
+    const float frameDt = coopHost() && !g_inDemo ? std::min(rawDt, static_cast<float>(balance::kNetHostCatchUpSteps) * kDt) : dtReal;
+    const float simDt = effects::filterSimulationTime(frameDt);
+    const bool paused = simDt < frameDt;
 
     // Time only moves in a real run on the play screen, or in the title demo.
     const bool demoRuns = g_inDemo && g_screen != Screen::Over;
@@ -1059,13 +1065,14 @@ const char* queryCoop() {
                           "{\"role\":\"%s\",\"screen\":\"%s\",\"demo\":%d,\"run\":%d,\"slot\":%d,\"count\":%d,\"phase\":%d,\"tick\":%u,\"enemies\":%d,"
                           "\"kills\":%d,\"hostAway\":%d,\"hostPaused\":%d,\"ended\":%d,\"reconnecting\":%d,\"overlay\":%d,\"notice\":\"%s\",\"transport\":\"%s\",\"ping\":%d,"
                           "\"snapOut\":%d,\"snapIn\":%d,\"msgOut\":%d,\"msgIn\":%d,\"bytesOut\":%d,\"bytesIn\":%d,\"snapBytes\":%d,\"snapAvg\":%d,\"snapMax\":%d,"
-                          "\"inputsIn\":%d,\"corrections\":%d,\"jumps\":%d,\"near\":[%d,%d,%d,%d],\"shieldText\":\"%s\",\"runMap\":%d,\"runDifficulty\":%d,\"runMode\":%d,\"players\":[",
+                          "\"inputsIn\":%d,\"corrections\":%d,\"jumps\":%d,\"predErr\":%.2f,\"offset\":%.2f,\"late\":%d,\"dropped\":%d,\"near\":[%d,%d,%d,%d],\"shieldText\":\"%s\",\"runMap\":%d,\"runDifficulty\":%d,\"runMode\":%d,\"players\":[",
                           role, screenName(), g_inDemo ? 1 : 0, netgame::settings().runNumber, s.localSlot, s.playerCount(), static_cast<int>(s.run.phase), s.run.tick,
                           s.enemies.count, s.run.kills, coopGuest() && netgame::clientHostAway() ? 1 : 0, coopGuest() && netgame::clientHostPaused() ? 1 : 0,
                           coopGuest() && netgame::clientRunEnded() ? 1 : 0, net::lobby().phase == net::LobbyPhase::Reconnecting ? 1 : 0, g_netOverlay ? 1 : 0,
                           ui::coopHudLastNotice(), coopRun() ? coopTransport() : "none",
                           coopRun() ? coopPing() : -1, st.snapshotsOutPerSec, st.snapshotsInPerSec, st.messagesOutPerSec, st.messagesInPerSec, st.bytesOutPerSec,
                           st.bytesInPerSec, st.lastSnapshotBytes, st.avgSnapshotBytes, st.maxSnapshotBytes, st.inputsInPerSec, st.corrections, st.snaps,
+                          static_cast<double>(st.predictionError), static_cast<double>(st.drawnOffset), st.lateSteps, st.droppedSteps,
                           netgame::hostNearEnemies(0), netgame::hostNearEnemies(1), netgame::hostNearEnemies(2), netgame::hostNearEnemies(3), ui::levelUpShieldText(),
                           static_cast<int>(s.run.map), static_cast<int>(s.run.difficulty), static_cast<int>(s.run.mode));
     for (int slot = 0; slot < s.playerCount() && n > 0 && n < static_cast<int>(sizeof(json)) - 160; ++slot) {
