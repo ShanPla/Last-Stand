@@ -1822,7 +1822,7 @@ Steps can still pile up: after a long stall (more than 12 waiting are dropped at
 **Reliable messages are repaired, not trusted.** A card pick is sent again every 0.75 s while the guest still sees the same cards, and the run's end is sent again until the next run. Each input says how many flattened cars the guest has, so the host sends again from there if one was lost. A card pick names the set of cards it was made for (`Player::offerSerial`), and the host ignores a pick for an older set.
 
 **Rules of a co-op run.**
-- Only the host can pause. If the host's tab is hidden, everyone sees "Host is away" and the run stops. A guest's Esc opens a menu, but the run goes on.
+- Only the host can pause. If the host's tab is hidden, everyone sees "Host is away" and the run stops. A guest's Esc opens a menu, but the run goes on. Unlike single-player, a co-op run does not pause just because the window lost focus (a click on another window, or a second monitor), because the host's pause would stop the run for everyone. F3, which shows the network overlay, has the browser's own use of the key turned off, so it never opens the find bar and takes focus away.
 - If the host leaves, the run ends for everyone, with a message. A guest who leaves stays in the run, downed and out of reach, and the others are told. They can come back (see below).
 - When the run ends, everyone sees the results. The host can play again in the same room, with whoever is still connected. If nobody else is, the next run is an ordinary single-player one, and it says so: "Everyone else left. Playing solo."
 - Co-op runs are never saved as best runs.
