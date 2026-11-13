@@ -4,6 +4,7 @@
 #include "components/Enemies/Charger/Charger.h"
 #include "components/Effects/Effects.h"
 #include "components/WorldView/DashPath.h"
+#include "components/WorldView/ShieldBubble.h"
 #include "data/Balance.h"
 #include "data/Theme.h"
 
@@ -480,6 +481,61 @@ void drawSoldierRingOverCrowd(const View& view, Vec2 worldFeet) {
 void drawTeammateRing(const View& view, Vec2 worldFeet, int slot) {
     // A thinner ring than this screen's own soldier, in his player's color.
     groundRing(view, worldFeet, balance::kPlayerRadius * 1.9f, 3.0f, 3, fade(theme::kCoopSlotColors[g_teamColor[slot] % kTeamRows], 0.8f));
+}
+
+// A bubble of shield around a co-op soldier whose level-up cards are open. It is a pixel
+// ellipse: a one-pixel edge, a faint body, and two bright pixels on its shoulder. Every
+// player sees it, so the team knows who cannot be hurt right now and for how much longer.
+bool drawShieldBubble(const GameState& state, int slot, const ScreenPoint& feet) {
+    if (!state.isCoop() || state.run.phase != RunPhase::Playing) return false;
+    const Player& player = state.players[slot];
+    if (!player.cardsOpen || player.downed || player.hp <= 0.0f) return false;
+    const ShieldBubbleLook look = shieldBubbleLook(player.cardShield, state.run.tick, effects::flickerAllowed(), effects::flashScale());
+    if (look.outline <= 0.0f) return false;
+
+    const SpriteRef& body = soldierBody(kFacingSide, kSoldierIdlePose);
+    const float height = static_cast<float>(body.h);
+    const int centerX = roundToInt(feet.x);
+    const int radiusX = roundToInt(height * 0.58f);
+    const int radiusY = roundToInt(height * 0.68f);
+    const int centerY = roundToInt(feet.y) - roundToInt(height * 0.46f);
+
+    // Half the width of the ellipse at a row, in whole pixels. The extra half pixel gives the
+    // top and bottom rows some width.
+    const auto halfWidth = [&](int row) {
+        const float t = static_cast<float>(row) / (static_cast<float>(radiusY) + 0.5f);
+        const float inside = 1.0f - t * t;
+        return inside > 0.0f ? roundToInt(static_cast<float>(radiusX) * std::sqrt(inside)) : 0;
+    };
+    const Color edge = fade(theme::kCoopShieldEdge, look.outline);
+    const Color inside = fade(theme::kCoopShieldFill, look.fill);
+    const auto span = [](int left, int right, int row, Color color) {
+        if (right < left) return;
+        quad(Vec2{static_cast<float>(left), static_cast<float>(row)}, Vec2{static_cast<float>(left), static_cast<float>(row + 1)},
+             Vec2{static_cast<float>(right + 1), static_cast<float>(row + 1)}, Vec2{static_cast<float>(right + 1), static_cast<float>(row)}, color);
+    };
+    for (int row = -radiusY; row <= radiusY; ++row) {
+        const int y = centerY + row;
+        const int outer = halfWidth(row);
+        // The edge runs from this row's width in to the next row's, so it has no gaps. The top and
+        // bottom rows are one full span.
+        const int inner = std::min(outer - 1, halfWidth(row < 0 ? row - 1 : row + 1));
+        if (std::abs(row) == radiusY || inner <= 0) {
+            span(centerX - outer, centerX + outer, y, edge);
+        } else {
+            span(centerX - outer, centerX - inner, y, edge);
+            span(centerX + inner, centerX + outer, y, edge);
+            span(centerX - inner + 1, centerX + inner - 1, y, inside);
+        }
+    }
+    // Two bright pixel strokes on the upper left, like light on glass.
+    const Color glint = fade(theme::kCoopShieldGlint, look.outline);
+    const int glintX = centerX - roundToInt(static_cast<float>(radiusX) * 0.55f);
+    const int glintY = centerY - roundToInt(static_cast<float>(radiusY) * 0.55f);
+    span(glintX, glintX + 2, glintY, glint);
+    span(glintX - 1, glintX - 1, glintY + 1, glint);
+    span(glintX - 1, glintX - 1, glintY + 2, glint);
+    return true;
 }
 
 void drawSoldierShadow(const GameState& state, int slot, const ScreenPoint& feet, const DayLook& look) {

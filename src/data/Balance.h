@@ -633,6 +633,11 @@ inline constexpr float kCoopBossHp[kMaxPlayers] = {1.0f, 2.2f, 2.9f, 3.6f};
 // A level-up doesn't pause a co-op run. While a player picks a card their weapons hold fire,
 // and they can't be hurt for at most this long, so a slow choice can't become a hiding place.
 inline constexpr float kCoopCardShieldSeconds = 5.0f;
+// How the shield around a soldier with open cards is drawn. Looks only, the simulation never reads them.
+inline constexpr float kCoopShieldWarnSeconds = 1.0f;     // The last stretch, when the bubble blinks or fades so the end is clear.
+inline constexpr uint32_t kCoopShieldPulseTicks = 90;     // One slow swell of the bubble (steps of 1/60 s).
+inline constexpr uint32_t kCoopShieldBlinkTicks = 10;     // Half a blink, so 3 blinks a second: under the flash limit.
+inline constexpr float kCoopShieldPulseDepth = 0.2f;      // How much the swell dims the bubble, at full flash intensity.
 // A downed player gets back up after a teammate has stood this close for this long in total.
 inline constexpr float kReviveRadius = 70.0f;
 inline constexpr float kReviveSeconds = 3.0f;

@@ -654,5 +654,12 @@ inline constexpr Color kCoopSignalOff{70, 66, 72, 255};
 inline constexpr Color kCoopBannerBack{14, 12, 18, 220};       // Behind "Host is away" and the drop notices.
 inline constexpr Color kCoopBannerText{255, 196, 64, 255};
 inline constexpr Color kCoopDebugBack{8, 8, 12, 200};          // Behind the network debug overlay.
+// The shield bubble around a soldier whose level-up cards are open, and its countdown on the cards.
+// Cool, because it protects the player. The "gone" warning is warm, because the danger is back.
+inline constexpr Color kCoopShieldEdge{120, 220, 255, 255};    // The bubble's outline.
+inline constexpr Color kCoopShieldFill{96, 190, 255, 255};     // The bubble's faint body.
+inline constexpr Color kCoopShieldGlint{230, 250, 255, 255};   // The bright pixels on the bubble's shoulder.
+inline constexpr Color kCoopShieldLow{255, 196, 64, 255};      // The countdown bar in its last second.
+inline constexpr Color kCoopShieldGone{255, 120, 96, 255};     // Shield gone! Pick fast.
 
 }  // namespace ls::theme

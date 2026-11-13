@@ -28,6 +28,10 @@ constexpr int kWeaponTypes = static_cast<int>(WeaponId::Count);
 
 float g_openTime = 0.0f;
 Nav g_nav;
+char g_shieldText[40] = "";  // What the co-op shield line says right now. Empty when it isn't shown.
+
+// The co-op shield line under the heading: how long this player is still safe while choosing.
+constexpr float kShieldRowHeight = 20.0f;  // In design units: one line, with the bar beside the text.
 
 // ---- What a card says -----------------------------------------------------------
 
@@ -323,16 +327,23 @@ struct Metrics {
     float buildX = 0.0f;
     float buildY = 0.0f;
     float titleY = 0.0f;
+    float shieldY = 0.0f;  // Top of the co-op shield line. Only used in co-op.
 };
 
-Metrics computeMetrics(const Layout& l, int count) {
+// shieldRow is true in co-op, where the heading has one more line, so the cards start lower.
+Metrics computeMetrics(const Layout& l, int count, bool shieldRow) {
     Metrics m;
     const float u = l.u;
     m.columns = !l.portrait && l.width() >= 760.0f * u;
     m.titleY = l.top;
     const float gap = 16.0f * u;
+    // The heading is the title (42 or 36 high), the subtitle (18) and a little air. The shield
+    // line goes right under it, and the cards start under that.
+    const float headingEnd = (m.columns ? 42.0f : 36.0f) * u + 4.0f * u + 18.0f * u;
+    m.shieldY = l.top + headingEnd + 5.0f * u;
+    const float shieldPush = shieldRow ? m.shieldY + kShieldRowHeight * u + 4.0f * u - l.top : 0.0f;
     if (m.columns) {
-        const float top = l.top + 84.0f * u;
+        const float top = l.top + std::max(84.0f * u, shieldPush);
         const float rowH = tall(52.0f * u);
         const float rowY = l.bottom - rowH;
         const float availableH = rowY - 14.0f * u - top;
@@ -346,7 +357,7 @@ Metrics computeMetrics(const Layout& l, int count) {
         m.buildX = startX;
         m.buildY = rowY + (rowH - weaponSlotsHeight(kBuildWeaponSlot * u)) * 0.5f;
     } else {
-        const float top = l.top + 70.0f * u;
+        const float top = l.top + std::max(70.0f * u, shieldPush);
         const float rerollH = tall(46.0f * u);
         const float buildH = weaponSlotsHeight(kBuildWeaponSlot * u);
         // On a landscape window that is wide enough, the reroll button shares a row with the
@@ -525,7 +536,10 @@ void drawCard(const Card& card, const CardInfo& info, Rectangle r, bool columns,
 void resetLevelUpCards() {
     g_openTime = 0.0f;
     g_nav = Nav{};
+    g_shieldText[0] = '\0';
 }
+
+const char* levelUpShieldText() { return g_shieldText; }
 
 LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal) {
     LevelUpChoice choice;
@@ -539,7 +553,8 @@ LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal) {
 
     DrawRectangle(0, 0, static_cast<int>(l.w), static_cast<int>(l.h), tint(theme::kScreenScrim));
 
-    const Metrics m = computeMetrics(l, count);
+    const bool shieldRow = state.isCoop();
+    const Metrics m = computeMetrics(l, count, shieldRow);
 
     // Heading.
     const float titleSize = (m.columns ? 42.0f : 36.0f) * u;
@@ -550,11 +565,42 @@ LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal) {
     const float subSize = font::fitSize(subtitle, 18.0f * u, l.width());
     text(subtitle, l.centerX(), m.titleY + titleSize + 4.0f * u, subSize, theme::kUiTextDim, font::Align::Center);
     // A thin line fills while the input delay runs, so the wait looks deliberate.
-    if (!ready) {
+    if (!ready && !shieldRow) {
         const float lineWidth = 160.0f * u;
         const float lineY = m.titleY + titleSize + subSize + 12.0f * u;
         DrawRectangle(static_cast<int>(l.centerX() - lineWidth * 0.5f), static_cast<int>(lineY), static_cast<int>(lineWidth), std::max(2, static_cast<int>(2.0f * u)), tint(theme::kUiBarBack));
         DrawRectangle(static_cast<int>(l.centerX() - lineWidth * 0.5f), static_cast<int>(lineY), static_cast<int>(lineWidth * readiness), std::max(2, static_cast<int>(2.0f * u)), tint(theme::kUiAccent));
+    }
+
+    // Co-op: the run goes on while the cards are open. This line says for how much longer the
+    // player is safe, and then that they are not. It sits above the cards, so it covers nothing.
+    if (shieldRow) {
+        const float left = state.localPlayer().cardShield;
+        const float fraction = std::min(1.0f, left / balance::kCoopCardShieldSeconds);
+        const float size = font::fitSize("Shield gone! Pick fast", 18.0f * u, l.width());
+        Color barColor = theme::kCoopShieldEdge;
+        Color textColor = theme::kCoopShieldEdge;
+        if (left > 0.0f) {
+            std::snprintf(g_shieldText, sizeof(g_shieldText), "Shielded %ds", static_cast<int>(std::ceil(left - 1e-4f)));
+            if (left < balance::kCoopShieldWarnSeconds) barColor = textColor = theme::kCoopShieldLow;
+        } else {
+            std::snprintf(g_shieldText, sizeof(g_shieldText), "Shield gone! Pick fast");
+            barColor = textColor = theme::kCoopShieldGone;
+        }
+        // While the shield is up, the text and a shrinking bar share the line. Once it is gone
+        // there is nothing to shrink, so the warning has the line to itself.
+        // The width comes from a fixed sample, so the line doesn't shift when the number changes.
+        const float textWidth = font::measure(left > 0.0f ? "Shielded 8s" : g_shieldText, size);
+        const float barWidth = left > 0.0f ? std::min(120.0f * u, std::max(40.0f * u, l.width() - textWidth - 24.0f * u)) : 0.0f;
+        const float gap = left > 0.0f ? 10.0f * u : 0.0f;
+        const float total = textWidth + gap + barWidth;
+        const float startX = l.centerX() - total * 0.5f;
+        const float middle = m.shieldY + kShieldRowHeight * u * 0.5f;
+        textMiddle(g_shieldText, startX, middle, size, textColor, font::Align::Left);
+        if (left > 0.0f) bar(Rectangle{startX + textWidth + gap, middle - 3.0f * u, barWidth, 6.0f * u}, fraction, barColor, theme::kUiBarBack);
+        registerExtent("Shield line", Rectangle{startX, m.shieldY, total, kShieldRowHeight * u});
+    } else {
+        g_shieldText[0] = '\0';
     }
 
     // Navigation. Items 0..count-1 are the cards, and count is the reroll button. With no

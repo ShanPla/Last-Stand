@@ -274,6 +274,33 @@ TEST_CASE("net codec: a snapshot of a real run round trips within the rounding")
     for (int i = 0; i < back->gemCount; ++i) CHECK(std::abs(snap->gems[i].pos.y - back->gems[i].pos.y) <= kHalfStep);
 }
 
+TEST_CASE("net codec: a guest sees every player's open cards and shield time to the millisecond") {
+    auto state = coopState(3);
+    state->players[1].cardsOpen = true;
+    state->players[1].cardShield = 3.217f;
+    state->players[2].cardsOpen = true;
+    state->players[2].cardShield = 0.0f;  // Cards still open, shield used up.
+    auto snap = fullSnapshot(*state, state->players[0].pos);
+    std::vector<uint8_t> bytes(kMaxMessageBytes);
+    const int size = encodeSnapshot(*snap, bytes.data(), balance::kNetSnapshotBytes);
+    REQUIRE(size > 0);
+    auto back = std::make_unique<Snapshot>();
+    REQUIRE(decodeSnapshot(bytes.data(), size, *back));
+    CHECK_FALSE(back->players[0].cardsOpen);
+    CHECK(back->players[0].cardShield == 0.0f);
+    CHECK(back->players[1].cardsOpen);
+    CHECK(std::abs(back->players[1].cardShield - 3.217f) <= 0.0006f);
+    CHECK(back->players[2].cardsOpen);
+    CHECK(back->players[2].cardShield == 0.0f);
+    // The longest shield there is fits with room to spare.
+    state->players[1].cardShield = balance::kCoopCardShieldSeconds;
+    snap = fullSnapshot(*state, state->players[0].pos);
+    const int again = encodeSnapshot(*snap, bytes.data(), balance::kNetSnapshotBytes);
+    REQUIRE(again > 0);
+    REQUIRE(decodeSnapshot(bytes.data(), again, *back));
+    CHECK(std::abs(back->players[1].cardShield - balance::kCoopCardShieldSeconds) <= 0.0006f);
+}
+
 TEST_CASE("net codec: a crowded snapshot stops at the size cap, keeps the most important parts, and still reads") {
     auto state = coopState(4);
     sim::setStressTargets(*state, 2000, 3000);

@@ -18,4 +18,8 @@ LevelUpChoice drawLevelUpCards(const GameState& state, float dtReal);
 // Call when the level-up screen closes, so the next one starts with its delay.
 void resetLevelUpCards();
 
+// For the browser tests: what the co-op shield line on the cards says right now ("Shielded 4s"
+// or "Shield gone! Pick fast"), or an empty string when it isn't showing.
+const char* levelUpShieldText();
+
 }  // namespace ls::ui

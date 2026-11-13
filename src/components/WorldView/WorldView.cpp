@@ -96,6 +96,7 @@ bool g_carCover = true;       // Debug only: off, cars hide nothing, for compari
 
 // Only read by the browser tests, through ls_query_world.
 int g_telegraphsShown = 0;
+int g_shieldsShown = 0;  // Shield bubbles drawn in the last frame, for the browser tests.
 int g_silhouettesShown = 0;
 const GameState* g_lastDrawnState = nullptr;
 int g_lastPlayerFigures = 0;  // Soldiers drawn on the last frame, for the co-op browser tests.
@@ -595,6 +596,10 @@ void draw(const GameState& state, float alpha) {
     }
     drawBladeTrails(g_view, state, alpha);
     drawSoldierRingOverCrowd(g_view, ringCenter);
+    g_shieldsShown = 0;
+    for (int i = zombies; i < figures; ++i) {
+        if (drawShieldBubble(state, g_visible[i].enemyIndex - kPlayerSlot, g_visible[i].feet)) g_shieldsShown++;
+    }
     if (g_showCarBoxes) drawCarBoxes();
     endFlat();
 
@@ -643,7 +648,7 @@ extern "C" {
 // Test hook: what the renderer drew on its last frame, which the simulation can't report.
 EMSCRIPTEN_KEEPALIVE const char* ls_query_world() {
     using namespace ls::worldview;
-    static char json[1024];
+    static char json[1280];
     const SoldierDebug soldier = g_lastDrawnState ? soldierDebug(*g_lastDrawnState) : SoldierDebug{};
     // The car nearest the soldier, whose feet are at the anchor.
     CarOnScreen car{};
@@ -661,13 +666,13 @@ EMSCRIPTEN_KEEPALIVE const char* ls_query_world() {
     const ScreenPoint boxTopLeft = project(g_view, car.boxMin);
     const ScreenPoint boxBottomRight = project(g_view, car.boxMax);
     std::snprintf(json, sizeof(json),
-                  "{\"telegraphing\":%d,\"telegraphsShown\":%d,\"heldGun\":%d,\"muzzleFrames\":%d,\"chunkPaints\":%d,\"cars\":%d,\"crushed\":%d,\"flatSwap\":%d,\"silhouettes\":%d,\"covers\":%d,\"coversDropped\":%d,\"pixelScale\":%.3f,\"car\":[%.1f,%.1f,%.1f,%.1f],\"carBox\":[%.1f,%.1f,%.1f,%.1f],\"worldBox\":[%.1f,%.1f,%.1f,%.1f],\"prop\":[%.1f,%.1f,%.1f,%.1f],\"spot\":[%.1f,%.1f],\"soldiers\":%d}",
+                  "{\"telegraphing\":%d,\"telegraphsShown\":%d,\"heldGun\":%d,\"muzzleFrames\":%d,\"chunkPaints\":%d,\"cars\":%d,\"crushed\":%d,\"flatSwap\":%d,\"silhouettes\":%d,\"covers\":%d,\"coversDropped\":%d,\"pixelScale\":%.3f,\"car\":[%.1f,%.1f,%.1f,%.1f],\"carBox\":[%.1f,%.1f,%.1f,%.1f],\"worldBox\":[%.1f,%.1f,%.1f,%.1f],\"prop\":[%.1f,%.1f,%.1f,%.1f],\"spot\":[%.1f,%.1f],\"soldiers\":%d,\"shields\":%d}",
                   g_telegraphCount, g_telegraphsShown, soldier.heldGun, soldier.muzzleFrames, groundPaintCount(), g_carCount, g_lastDrawnState ? g_lastDrawnState->run.crushedCount : 0, groundLastSwapSize(), g_silhouettesShown, g_coverCount, coversDropped(),
                   static_cast<double>(g_view.pixelScale), static_cast<double>(car.left), static_cast<double>(car.top), static_cast<double>(car.right), static_cast<double>(car.bottom),
                   static_cast<double>(boxTopLeft.x), static_cast<double>(boxTopLeft.y), static_cast<double>(boxBottomRight.x), static_cast<double>(boxBottomRight.y),
                   static_cast<double>(car.boxMin.x), static_cast<double>(car.boxMin.y), static_cast<double>(car.boxMax.x), static_cast<double>(car.boxMax.y),
                   static_cast<double>(prop[0]), static_cast<double>(prop[1]), static_cast<double>(prop[2]), static_cast<double>(prop[3]),
-                  static_cast<double>(prop[4]), static_cast<double>(prop[5]), g_lastPlayerFigures);
+                  static_cast<double>(prop[4]), static_cast<double>(prop[5]), g_lastPlayerFigures, g_shieldsShown);
     return json;
 }
 }

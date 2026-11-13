@@ -1056,20 +1056,20 @@ const char* queryCoop() {
                           "{\"role\":\"%s\",\"screen\":\"%s\",\"demo\":%d,\"run\":%d,\"slot\":%d,\"count\":%d,\"phase\":%d,\"tick\":%u,\"enemies\":%d,"
                           "\"kills\":%d,\"hostAway\":%d,\"hostPaused\":%d,\"ended\":%d,\"reconnecting\":%d,\"overlay\":%d,\"notice\":\"%s\",\"transport\":\"%s\",\"ping\":%d,"
                           "\"snapOut\":%d,\"snapIn\":%d,\"msgOut\":%d,\"msgIn\":%d,\"bytesOut\":%d,\"bytesIn\":%d,\"snapBytes\":%d,\"snapAvg\":%d,\"snapMax\":%d,"
-                          "\"inputsIn\":%d,\"corrections\":%d,\"jumps\":%d,\"near\":[%d,%d,%d,%d],\"players\":[",
+                          "\"inputsIn\":%d,\"corrections\":%d,\"jumps\":%d,\"near\":[%d,%d,%d,%d],\"shieldText\":\"%s\",\"players\":[",
                           role, screenName(), g_inDemo ? 1 : 0, netgame::settings().runNumber, s.localSlot, s.playerCount(), static_cast<int>(s.run.phase), s.run.tick,
                           s.enemies.count, s.run.kills, coopGuest() && netgame::clientHostAway() ? 1 : 0, coopGuest() && netgame::clientHostPaused() ? 1 : 0,
                           coopGuest() && netgame::clientRunEnded() ? 1 : 0, net::lobby().phase == net::LobbyPhase::Reconnecting ? 1 : 0, g_netOverlay ? 1 : 0,
                           ui::coopHudLastNotice(), coopRun() ? coopTransport() : "none",
                           coopRun() ? coopPing() : -1, st.snapshotsOutPerSec, st.snapshotsInPerSec, st.messagesOutPerSec, st.messagesInPerSec, st.bytesOutPerSec,
                           st.bytesInPerSec, st.lastSnapshotBytes, st.avgSnapshotBytes, st.maxSnapshotBytes, st.inputsInPerSec, st.corrections, st.snaps,
-                          netgame::hostNearEnemies(0), netgame::hostNearEnemies(1), netgame::hostNearEnemies(2), netgame::hostNearEnemies(3));
+                          netgame::hostNearEnemies(0), netgame::hostNearEnemies(1), netgame::hostNearEnemies(2), netgame::hostNearEnemies(3), ui::levelUpShieldText());
     for (int slot = 0; slot < s.playerCount() && n > 0 && n < static_cast<int>(sizeof(json)) - 160; ++slot) {
         const Player& p = s.players[slot];
         n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n),
-                           "%s{\"x\":%.2f,\"y\":%.2f,\"hp\":%.1f,\"downed\":%d,\"cards\":%d,\"level\":%d,\"xp\":%d,\"weapons\":%d,\"connected\":%d}",
+                           "%s{\"x\":%.2f,\"y\":%.2f,\"hp\":%.1f,\"downed\":%d,\"cards\":%d,\"level\":%d,\"xp\":%d,\"weapons\":%d,\"connected\":%d,\"shield\":%.2f}",
                            slot > 0 ? "," : "", static_cast<double>(p.pos.x), static_cast<double>(p.pos.y), static_cast<double>(p.hp), p.downed ? 1 : 0,
-                           p.cardsOpen ? 1 : 0, p.level, p.xp, p.weaponCount, g_slotConnected[slot] ? 1 : 0);
+                           p.cardsOpen ? 1 : 0, p.level, p.xp, p.weaponCount, g_slotConnected[slot] ? 1 : 0, static_cast<double>(p.cardShield));
     }
     std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n), "]}");
     return json;
