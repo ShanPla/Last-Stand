@@ -10,7 +10,7 @@
 // HOW THE GAME USES THIS
 //
 // The C++ side is src/components/Net/WebBackend.cpp. It calls the shared client through small
-// EM_JS functions: wake(), create(name), join(code, name), setReady(on), start(), leave(), and
+// EM_JS functions: wake(), create(name), join(code, name), setReady(on), setSettings(obj), start(), leave(), and
 // every frame takeEventsJson() (to learn that something changed), then snapshotJson() and
 // statsJson() (to copy the lobby and the numbers for the debug overlay). Browser events never
 // run inside a C++ frame, so the game polls and needs no locking.
@@ -971,6 +971,28 @@
 
     function setReady(on) { return s.room ? sendJson({ t: 'ready', ready: !!on }) : false; }
 
+    // Host only: tells the room which map, difficulty and mode the run will use, so the guests'
+    // lobby can show them. The server keeps the object as it is and passes it on in the next room
+    // message. An older server that does not know this message answers with an error, which is
+    // reported like any other error inside a room and changes nothing: guests see no settings.
+    function setSettings(settings) {
+      if (!s.room || s.myId !== s.hostId || !settings || typeof settings !== 'object') return false;
+      return sendJson({ t: 'settings', settings: settings });
+    }
+
+    // The settings in a room message, as the three whole numbers the game reads. A value that is
+    // missing or not a small whole number is left out.
+    function roomSettings() {
+      var out = {};
+      var given = s.room && s.room.settings;
+      if (!given || typeof given !== 'object') return out;
+      [['setMap', 'map'], ['setDifficulty', 'difficulty'], ['setMode', 'mode']].forEach(function (pair) {
+        var v = given[pair[1]];
+        if (typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= 0 && v <= 99) out[pair[0]] = v;
+      });
+      return out;
+    }
+
     function start() {
       if (!s.room || s.started || s.myId !== s.hostId) return false;
       return sendJson({ t: 'start' });
@@ -1025,7 +1047,8 @@
 
     function snapshot() {
       var e = s.error;
-      return {
+      var picked = roomSettings();
+      var snap = {
         phase: s.phase, phaseIndex: PHASES.indexOf(s.phase),
         wake: { state: s.wakeState, ms: s.wakeState === 'waking' ? Math.round(now() - s.wakeStart) : s.wakeMs, attempts: s.wakeAttempts },
         error: e ? e.error : '', errorIndex: e ? ERRORS.indexOf(e.error) : -1, errorCode: e ? e.code : '',
@@ -1033,6 +1056,9 @@
         started: s.started, players: players(), serverRttMs: s.serverRtt, forceRelay: forceRelay,
         rejoin: rejoinCode(), reconnecting: s.reconnecting,
       };
+      // The host's choice goes first in the object, before the player list, because the game's reader
+      // looks for these names only in the room part of the text.
+      return Object.assign(picked, snap);
     }
 
     function rejoinCode() {
@@ -1060,6 +1086,7 @@
     client.create = createRoom;
     client.join = joinRoom;
     client.setReady = safe(setReady, false);
+    client.setSettings = safe(setSettings, false);
     client.start = safe(start, false);
     client.leave = leave;
     client.rejoin = rejoinRoom;

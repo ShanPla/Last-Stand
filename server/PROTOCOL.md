@@ -54,6 +54,7 @@ Version: 1. Every connection starts with a `hello` that names this version.
 | `{"t":"create","name":"Ana"}` | Make a room and become its host. The answer is a `room` message. |
 | `{"t":"join","code":"K7QXM","name":"Ben"}` | Join a room. Everyone in it gets a `room` message. A joiner gets one too. |
 | `{"t":"ready","ready":true}` | Mark yourself ready or not. `ready` must be a boolean. |
+| `{"t":"settings","settings":{"map":0,"difficulty":1,"mode":0}}` | Host only (`not-host` otherwise, `not-in-room` outside a room). The host's choice of map, difficulty and mode, so guests can see it in the lobby. The server reads nothing inside it: `settings` must be a plain JSON object (not an array or null) whose `JSON.stringify` is at most 200 characters, else `bad-request`. It is stored on the room and sent to everyone in the next `room` message; the sender gets no other answer. Allowed before and after `start`: it only changes what the lobby shows, and a Play Again in the same room uses the host's current choice. The browser uses small integers, and a reader must ignore missing or out-of-range values. |
 | `{"t":"start"}` | Host only (`not-host` otherwise). Marks the room started. A second `start` gets `started`. A room can start with any number of players, ready or not. |
 | `{"t":"leave"}` | Leave the room. The socket stays open. The leaver gets no answer; the others get a `room` message. |
 | `{"t":"signal","to":2,"data":{...}}` | WebRTC signaling (offer, answer or ICE candidate) for one player. `data` must be a JSON object and is passed on unread. A signal to an empty slot or to yourself is silently dropped. Works before and after `start`. |
@@ -62,7 +63,7 @@ Version: 1. Every connection starts with a `hello` that names this version.
 
 | `{"t":"rejoin","code":"K7QXM","token":"..."}` | Take back a kept slot in a started room. Only from a socket in no room (`bad-request` otherwise, and when `code` or `token` is not a string). The code is case-insensitive. No such room: `not-found`. A room that has not started, a token that matches no slot, or the host's token: `bad-token`. On success everyone gets a `room` message, and the rejoiner then gets `started` (with its token) like at the start. |
 
-`ready`, `start`, `leave`, `signal` and `relay` need the sender to be in a room, or they get
+`ready`, `settings`, `start`, `leave`, `signal` and `relay` need the sender to be in a room, or they get
 `not-in-room`. Unknown message types, text that is not JSON, and JSON that is not an
 object with a string `t` all get `bad-request`.
 
@@ -71,7 +72,7 @@ object with a string `t` all get `bad-request`.
 | Message | Meaning |
 |---|---|
 | `{"t":"welcome","v":1}` | Answer to a good `hello`. |
-| `{"t":"room","code":"K7QXM","you":1,"host":0,"started":false,"players":[{"id":0,"name":"Ana","ready":true},...]}` | The whole lobby, sent to everyone in the room after any change. A player who is away has `"away":true`; the field is left out for everyone else. |
+| `{"t":"room","code":"K7QXM","you":1,"host":0,"started":false,"players":[{"id":0,"name":"Ana","ready":true},...]}` | The whole lobby, sent to everyone in the room after any change. A player who is away has `"away":true`; the field is left out for everyone else. Once the host has sent `settings`, the message also carries `"settings":{...}` exactly as the host sent it (for example `"settings":{"map":0,"difficulty":1,"mode":0}`), and a player who joins later gets it too. Before that the field is left out. |
 | `{"t":"started","token":"..."}` | The host started the run. Sent to everyone, right after a final `room` message with `started` true. Each player's copy carries that player's own rejoin token, and no other message ever contains a token. Also sent to a player after a successful `rejoin`. |
 | `{"t":"signal","from":0,"data":{...}}` | Signaling from another player. |
 | `{"t":"closed","reason":"host-left"}` | The room is gone. Reasons: `host-left`, `expired`, and `replaced`: this socket's slot was taken back with its token on another connection (see Rejoin), and the room itself goes on. |

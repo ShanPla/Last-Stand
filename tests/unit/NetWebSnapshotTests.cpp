@@ -61,6 +61,62 @@ TEST_CASE("web snapshot: a joined room, with a gap in the server's slots") {
     CHECK(lobby.players[1].msgsInPerSec == 0);  // This player has no pair with itself.
 }
 
+namespace {
+
+// A guest's lobby text, with the host's settings written as the browser script writes them: three
+// flat keys in the room part, before the player list. `settings` is pasted in as it is.
+net::Lobby parseWithSettings(const char* settings) {
+    char json[1024];
+    std::snprintf(json, sizeof(json),
+                  "{%s\"phase\":\"InLobby\",\"phaseIndex\":3,\"wake\":{\"state\":\"awake\",\"ms\":0,\"attempts\":1},\"error\":\"\","
+                  "\"errorIndex\":-1,\"errorCode\":\"\",\"code\":\"K7QXM\",\"myId\":1,\"hostId\":0,\"isHost\":false,\"started\":false,"
+                  "\"players\":[{\"id\":0,\"name\":\"Ana\",\"ready\":false,\"map\":7,\"transport\":\"webrtc\",\"rttMs\":20},"
+                  "{\"id\":1,\"name\":\"Ben\",\"ready\":false,\"transport\":\"local\",\"rttMs\":-1}],\"serverRttMs\":10,\"forceRelay\":false}",
+                  settings);
+    return parse(json);
+}
+
+}  // namespace
+
+TEST_CASE("web snapshot: the host's settings are read, and anything out of range or missing is ignored") {
+    // All three present.
+    net::Lobby lobby = parseWithSettings("\"setMap\":1,\"setDifficulty\":3,\"setMode\":1,");
+    CHECK(lobby.settings.known);
+    CHECK(lobby.settings.map == 1);
+    CHECK(lobby.settings.difficulty == 3);
+    CHECK(lobby.settings.mode == 1);
+    CHECK(lobby.count == 2);                 // The rest of the lobby is read as before.
+
+    // None sent yet (an older server, or a host that has not said anything): unknown, not zero.
+    lobby = parseWithSettings("");
+    CHECK_FALSE(lobby.settings.known);
+    CHECK(lobby.settings.map == -1);
+    CHECK(lobby.settings.difficulty == -1);
+    CHECK(lobby.settings.mode == -1);
+
+    // A key inside a player's own object (here "map") is not the room's setting.
+    CHECK(parseWithSettings("").settings.map == -1);
+
+    // Each number is judged on its own: negative, too large and not a number are ignored.
+    lobby = parseWithSettings("\"setMap\":-1,\"setDifficulty\":100,\"setMode\":\"x\",");
+    CHECK_FALSE(lobby.settings.known);
+    CHECK(lobby.settings.map == -1);
+    CHECK(lobby.settings.difficulty == -1);
+    CHECK(lobby.settings.mode == -1);
+
+    // One good value among bad ones still counts as received, and the bad ones stay unknown.
+    lobby = parseWithSettings("\"setMap\":0,\"setDifficulty\":99999999999,\"setMode\":2,");
+    CHECK(lobby.settings.known);
+    CHECK(lobby.settings.map == 0);
+    CHECK(lobby.settings.difficulty == -1);
+    CHECK(lobby.settings.mode == 2);
+
+    // The largest allowed value is kept, the next one is not.
+    lobby = parseWithSettings("\"setMap\":99,\"setDifficulty\":100,\"setMode\":0,");
+    CHECK(lobby.settings.map == net::kSettingMax);
+    CHECK(lobby.settings.difficulty == -1);
+}
+
 TEST_CASE("web snapshot: phases and errors use the names both sides agreed on") {
     const char* phases[] = {"Offline", "Waking", "Connecting", "InLobby", "Starting", "Error"};
     const net::LobbyPhase expected[] = {net::LobbyPhase::Offline,  net::LobbyPhase::Waking,   net::LobbyPhase::Connecting,

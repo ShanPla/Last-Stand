@@ -16,7 +16,7 @@ import { startServer, launchChrome, openGame, readUi, debug, waitScreen, tapButt
 // Debug commands for the fake lobby. They match DebugOp in src/components/Net/Net.h.
 export const NET = {
   reset: 100, wakeMs: 101, latencyMs: 102, nextError: 103, room: 104, guestRoom: 105, readyMask: 106,
-  hostLeft: 107, loseServer: 108, wakeSeconds: 109, phase: 110, rejoinSeat: 111, awayMask: 112,
+  hostLeft: 107, loseServer: 108, wakeSeconds: 109, phase: 110, rejoinSeat: 111, awayMask: 112, roomSettings: 113,
 };
 export const PHASE = { offline: 0, waking: 1, connecting: 2, inLobby: 3, starting: 4, error: 5, reconnecting: 6 };
 export const ERR = {

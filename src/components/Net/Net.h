@@ -70,6 +70,19 @@ struct LobbyPlayer {
     int msgsOutPerSec = 0;
 };
 
+// The run settings the host chose for the room: which map, difficulty and mode. The lobby shows
+// them to everyone, and only the host can change them. The numbers are the same indexes the
+// title screen saves (maps::MapId, Difficulty, RunMode), but this file does not know those
+// enums, so a value is only a small whole number here. The screens decide what a number means
+// and ignore one they have no name for.
+inline constexpr int kSettingMax = 99;  // Larger or negative numbers from the server are ignored.
+struct LobbySettings {
+    bool known = false;    // The host has sent at least one valid value.
+    int map = -1;          // -1: not received, or not valid.
+    int difficulty = -1;
+    int mode = -1;
+};
+
 struct Lobby {
     LobbyPhase phase = LobbyPhase::Offline;
     LobbyError error = LobbyError::None;
@@ -84,6 +97,7 @@ struct Lobby {
     LobbyPlayer players[kMaxPlayers];
     float wakeSeconds = 0.0f;         // How long the server has been waking, for the Retry timeout.
     int serverRttMs = -1;             // Round trip to the server in milliseconds, or -1.
+    LobbySettings settings;           // What the host chose. Everyone reads it; see setRoomSettings.
 };
 
 // ---- Reading ---------------------------------------------------------------------
@@ -140,6 +154,13 @@ void forgetRejoin();
 void abandonRun(LobbyError error);
 
 void setReady(bool ready);
+
+// Host only: the choice of map, difficulty and mode that the room should show. The screen calls
+// this every frame while the room is up. Net remembers what it already sent, so the server hears
+// about it once when the room starts and again only when a value changes (and again if the
+// room changes). Guests and players outside a room send nothing. Out-of-range numbers are not
+// sent. The room's settings come back to everyone in Lobby::settings.
+void setRoomSettings(int map, int difficulty, int mode);
 void startRun();   // Host only, and only when canStart() says so. Otherwise nothing happens.
 void leaveRoom();  // Back to Offline. Also clears an error.
 void retry();      // Repeats the last host, join, rejoin or wake that failed or timed out.
@@ -176,6 +197,7 @@ enum DebugOp {
     kDebugPhase = 110,        // Forces a phase (as a number), keeping the rest of the lobby.
     kDebugRejoinSeat = 111,   // 1: the fake keeps a seat to rejoin in room K7QXM. 0: none.
     kDebugAwayMask = 112,     // Bit n set: player n of the fake room is away.
+    kDebugRoomSettings = 113, // The room's settings as map + difficulty * 16 + mode * 256, as if the host sent them. Negative: none.
 };
 void debugCommand(int op, int value);
 

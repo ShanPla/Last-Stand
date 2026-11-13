@@ -47,6 +47,11 @@ public:
         if (lobby.you >= 0 && lobby.you < lobby.count) lobby.players[lobby.you].ready = ready;
     }
 
+    // The fake room is its own server: the host's settings are simply what the lobby shows.
+    void setSettings(Lobby& lobby, int map, int difficulty, int mode) override {
+        lobby.settings = LobbySettings{true, map, difficulty, mode};
+    }
+
     void start(Lobby& lobby) override {
         lobby.started = true;
         lobby.phase = LobbyPhase::Starting;
@@ -105,6 +110,10 @@ public:
             case kDebugGuestRoom: makeRoom(lobby, value, 1); break;
             case kDebugReadyMask:
                 for (int i = 0; i < lobby.count; ++i) lobby.players[i].ready = ((value >> i) & 1) != 0;
+                break;
+            case kDebugRoomSettings:
+                lobby.settings = value < 0 ? LobbySettings{}
+                                           : LobbySettings{true, value & 15, (value >> 4) & 15, (value >> 8) & 15};
                 break;
             case kDebugRejoinSeat: seat_ = value != 0; break;
             case kDebugAwayMask:

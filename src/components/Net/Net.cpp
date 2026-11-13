@@ -17,7 +17,36 @@ Request g_lastRequest = Request::None;
 char g_lastName[kNameMax + 1] = {};
 char g_lastCode[kCodeLength + 1] = {};
 
+// The settings the screen wants the room to have, and the last ones sent to the backend, so they
+// go out once and then only when something changes.
+struct SettingsWish {
+    bool valid = false;
+    int map = 0, difficulty = 0, mode = 0;
+};
+SettingsWish g_settingsWanted;
+SettingsWish g_settingsSent;
+char g_settingsSentCode[kCodeLength + 1] = {};
+
 Backend& backend() { return g_backend ? *g_backend : defaultBackend(); }
+
+// Sends the wanted settings if this player hosts a room and the server has not heard them yet.
+void sendSettingsIfNeeded() {
+    const bool hosting = (g_lobby.phase == LobbyPhase::InLobby || g_lobby.phase == LobbyPhase::Starting) && g_lobby.you >= 0 &&
+                         g_lobby.you == g_lobby.host;
+    if (!hosting) {
+        g_settingsSent = SettingsWish{};  // The room is gone, so the next room hears them again.
+        g_settingsSentCode[0] = '\0';
+        return;
+    }
+    if (!g_settingsWanted.valid) return;
+    const bool same = g_settingsSent.valid && g_settingsSent.map == g_settingsWanted.map &&
+                      g_settingsSent.difficulty == g_settingsWanted.difficulty && g_settingsSent.mode == g_settingsWanted.mode &&
+                      std::strcmp(g_settingsSentCode, g_lobby.code) == 0;
+    if (same) return;
+    g_settingsSent = g_settingsWanted;
+    std::memcpy(g_settingsSentCode, g_lobby.code, sizeof(g_settingsSentCode));
+    backend().setSettings(g_lobby, g_settingsWanted.map, g_settingsWanted.difficulty, g_settingsWanted.mode);
+}
 
 bool isLetter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
@@ -59,6 +88,8 @@ void failNow(LobbyError error) {
 
 void forget() {
     g_lobby = Lobby{};
+    g_settingsSent = SettingsWish{};  // Whatever room comes next has not heard them yet.
+    g_settingsSentCode[0] = '\0';
 }
 
 }  // namespace
@@ -182,6 +213,13 @@ void setReady(bool ready) {
     backend().setReady(g_lobby, ready);
 }
 
+void setRoomSettings(int map, int difficulty, int mode) {
+    const auto ok = [](int v) { return v >= 0 && v <= kSettingMax; };
+    if (!ok(map) || !ok(difficulty) || !ok(mode)) return;
+    g_settingsWanted = SettingsWish{true, map, difficulty, mode};
+    sendSettingsIfNeeded();
+}
+
 void startRun() {
     if (!canStart()) return;
     backend().start(g_lobby);
@@ -218,7 +256,11 @@ void retry() {
     }
 }
 
-void update(float dt) { backend().update(g_lobby, dt); }
+void update(float dt) {
+    backend().update(g_lobby, dt);
+    // The room may have just come up, so the host's settings go out now, not only on the next change.
+    sendSettingsIfNeeded();
+}
 
 bool sendGame(int toId, const unsigned char* bytes, int length, bool reliable) {
     if (!bytes || length <= 0) return false;

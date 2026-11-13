@@ -23,6 +23,11 @@ public:
     virtual void host(Lobby& lobby, const char* name) = 0;
     virtual void join(Lobby& lobby, const char* code, const char* name) = 0;
     virtual void setReady(Lobby& lobby, bool ready) = 0;
+    // The host's settings, already checked to be small whole numbers. Only called for the host
+    // of a room. A backend with no server may ignore it.
+    virtual void setSettings(Lobby& lobby, int map, int difficulty, int mode) {
+        (void)lobby; (void)map; (void)difficulty; (void)mode;
+    }
     virtual void start(Lobby& lobby) = 0;
     virtual void leave(Lobby& lobby) = 0;
     // Takes back the saved seat of a started run. Answers come like a join's.

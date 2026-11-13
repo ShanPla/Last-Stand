@@ -754,8 +754,11 @@ static void drawUiPass(float dtReal, bool playing) {
         }
         case Screen::Coop: {
             ui::setFade(screenFade);
+            const int mapBefore = save::current().map;
             const ui::CoopResult result = ui::drawCoopScreens(save::current());
             if (result.saveChanged) persist();
+            // The host picked another map in the lobby, so the demo behind the screen changes too, as on the title.
+            if (save::current().map != mapBefore) sim::setMap(*g_state, selectedMap());
             if (result.back) {
                 audio::playUi(audio::UiSound::Back);
                 setScreen(Screen::Title);
@@ -1056,14 +1059,15 @@ const char* queryCoop() {
                           "{\"role\":\"%s\",\"screen\":\"%s\",\"demo\":%d,\"run\":%d,\"slot\":%d,\"count\":%d,\"phase\":%d,\"tick\":%u,\"enemies\":%d,"
                           "\"kills\":%d,\"hostAway\":%d,\"hostPaused\":%d,\"ended\":%d,\"reconnecting\":%d,\"overlay\":%d,\"notice\":\"%s\",\"transport\":\"%s\",\"ping\":%d,"
                           "\"snapOut\":%d,\"snapIn\":%d,\"msgOut\":%d,\"msgIn\":%d,\"bytesOut\":%d,\"bytesIn\":%d,\"snapBytes\":%d,\"snapAvg\":%d,\"snapMax\":%d,"
-                          "\"inputsIn\":%d,\"corrections\":%d,\"jumps\":%d,\"near\":[%d,%d,%d,%d],\"shieldText\":\"%s\",\"players\":[",
+                          "\"inputsIn\":%d,\"corrections\":%d,\"jumps\":%d,\"near\":[%d,%d,%d,%d],\"shieldText\":\"%s\",\"runMap\":%d,\"runDifficulty\":%d,\"runMode\":%d,\"players\":[",
                           role, screenName(), g_inDemo ? 1 : 0, netgame::settings().runNumber, s.localSlot, s.playerCount(), static_cast<int>(s.run.phase), s.run.tick,
                           s.enemies.count, s.run.kills, coopGuest() && netgame::clientHostAway() ? 1 : 0, coopGuest() && netgame::clientHostPaused() ? 1 : 0,
                           coopGuest() && netgame::clientRunEnded() ? 1 : 0, net::lobby().phase == net::LobbyPhase::Reconnecting ? 1 : 0, g_netOverlay ? 1 : 0,
                           ui::coopHudLastNotice(), coopRun() ? coopTransport() : "none",
                           coopRun() ? coopPing() : -1, st.snapshotsOutPerSec, st.snapshotsInPerSec, st.messagesOutPerSec, st.messagesInPerSec, st.bytesOutPerSec,
                           st.bytesInPerSec, st.lastSnapshotBytes, st.avgSnapshotBytes, st.maxSnapshotBytes, st.inputsInPerSec, st.corrections, st.snaps,
-                          netgame::hostNearEnemies(0), netgame::hostNearEnemies(1), netgame::hostNearEnemies(2), netgame::hostNearEnemies(3), ui::levelUpShieldText());
+                          netgame::hostNearEnemies(0), netgame::hostNearEnemies(1), netgame::hostNearEnemies(2), netgame::hostNearEnemies(3), ui::levelUpShieldText(),
+                          static_cast<int>(s.run.map), static_cast<int>(s.run.difficulty), static_cast<int>(s.run.mode));
     for (int slot = 0; slot < s.playerCount() && n > 0 && n < static_cast<int>(sizeof(json)) - 160; ++slot) {
         const Player& p = s.players[slot];
         n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n),

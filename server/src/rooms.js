@@ -45,6 +45,9 @@ export class Room {
     this.code = code;
     this.createdAt = now;
     this.started = false;
+    /** The run settings the host last sent (map, difficulty, mode). The server never reads them:
+     *  it only stores the object and hands it to everyone in the room. Null until the host sends. */
+    this.settings = null;
     /** @type {(Player | null)[]} index is the slot, which is also the player id */
     this.players = new Array(MAX_PLAYERS).fill(null);
   }
@@ -105,7 +108,7 @@ export class Room {
 
   /** The `room` message for one member. `you` differs for each of them. */
   snapshotFor(slot) {
-    return {
+    const snapshot = {
       t: 'room',
       code: this.code,
       you: slot,
@@ -115,6 +118,9 @@ export class Room {
       // written when it is true, so a room with nobody away looks exactly as it always did.
       players: this.players.filter(Boolean).map((p) => (p.away ? { id: p.id, name: p.name, ready: p.ready, away: true } : { id: p.id, name: p.name, ready: p.ready })),
     };
+    // Only written once the host has sent settings, so an older client sees the same message as before.
+    if (this.settings !== null) snapshot.settings = this.settings;
+    return snapshot;
   }
 
   /** Sends every member their own copy of the lobby. */

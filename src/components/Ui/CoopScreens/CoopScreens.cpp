@@ -1,6 +1,8 @@
 #include "components/Ui/CoopScreens/CoopScreens.h"
 
+#include "components/Maps/Maps.h"
 #include "components/Net/Net.h"
+#include "components/Ui/Names/Names.h"
 #include "components/Ui/Widgets/Widgets.h"
 #include "core/Platform.h"
 #include "data/Theme.h"
@@ -21,11 +23,38 @@ enum class Sub { Menu, Host, Join };
 // is a run to go back to (it is only shown then), and Host otherwise. The menu's own order is
 // worked out each frame in MenuOrder, because Rejoin comes and goes.
 enum MenuFocus { kMenuName = 0, kMenuFirst = 1 };
-enum HostFocus { kRoomCopy = 0, kRoomReady, kRoomStart, kRoomLeave };
 enum JoinFocus { kJoinCode = 0, kJoinJoin, kJoinRetry, kJoinBack };
 
 constexpr float kCopiedSeconds = 1.6f;
 constexpr float kPanelMax = 480.0f;  // Widest a single-column screen gets, in design units.
+
+// The room's focus order, top to bottom: Copy, then (for the host) Difficulty, Map and Mode, then
+// Ready, Start (host only) and Leave. A guest has no settings controls, so its order is shorter.
+struct RoomOrder {
+    int copy = 0;
+    int difficulty = -1;
+    int map = -1;
+    int mode = -1;
+    int ready = 1;
+    int start = -1;
+    int leave = 2;
+    int count = 3;
+};
+
+RoomOrder roomOrder(bool settings, bool host) {
+    RoomOrder order;
+    int next = 1;
+    if (settings) {
+        order.difficulty = next++;
+        order.map = next++;
+        order.mode = next++;
+    }
+    order.ready = next++;
+    if (host) order.start = next++;
+    order.leave = next++;
+    order.count = next;
+    return order;
+}
 
 Sub g_sub = Sub::Menu;
 Nav g_menuNav;
@@ -37,6 +66,7 @@ char g_notice[80] = "";
 bool g_wasInRoom = false;  // The lobby was live, so an error afterwards means a connection was lost.
 bool g_rejoining = false;  // The waiting view is for Rejoin, not Host, so it says so.
 float g_copiedAt = -100.0f;
+bool g_roomPicksReady = false;  // The next time the room is drawn, select Ready, so one Enter readies up.
 
 // ---- Small drawing helpers ------------------------------------------------------
 
@@ -105,7 +135,10 @@ void goTo(Sub sub) {
     g_sub = sub;
     g_hostNav = Nav{};
     g_joinNav = Nav{};
-    if (sub == Sub::Host) g_hostNav.selected = kRoomReady;
+    if (sub == Sub::Host) {
+        g_hostNav.selected = 1;  // (The waiting view's own order; the room picks Ready itself.)
+        g_roomPicksReady = true;
+    }
     if (sub == Sub::Join) g_joinNav.selected = kJoinCode;
     if (sub == Sub::Menu) {
         g_menuNav = Nav{};
@@ -447,12 +480,98 @@ void drawWaitingView(Nav& nav, bool hosting, const char* cancelLabel, bool* retr
     if (input().back) *cancel = true;
 }
 
-// The room: code, players, and the buttons. A host sees Start, a joined player does not.
-void drawRoomView(Nav& nav, const net::Lobby& lobby, bool* leave) {
+// ---- The run settings in the lobby ---------------------------------------------------
+
+constexpr int kSettingRows = 3;
+
+// One of the three settings: its name and the choices, exactly as the title screen shows them.
+struct SettingRow {
+    const char* label;
+    const char* const* options;
+    int count;
+    const Color* colors;
+};
+
+SettingRow settingRow(int row) {
+    static const char* const kMapNames[maps::kMapCount] = {maps::name(maps::MapId::City), maps::name(maps::MapId::Wasteland)};
+    switch (row) {
+        case 0: return SettingRow{"Difficulty", difficultyNames(), static_cast<int>(Difficulty::Count), theme::kDifficultyColors};
+        case 1: return SettingRow{"Map", kMapNames, maps::kMapCount, theme::kMapColors};
+        default: return SettingRow{"Mode", modeNames(), static_cast<int>(RunMode::Count), theme::kModeColors};
+    }
+}
+
+// What a guest sees: the setting and the host's choice, as a plain read-only row. It is not a
+// button, so it cannot be focused or pressed. A value this game has no name for (a newer host)
+// shows as "Host picks", the same as before the host has said anything.
+void drawSettingChip(Rectangle rect, const SettingRow& row, int value) {
+    const float u = layout().u;
+    const float p = layout().px;
+    char name[40];
+    std::snprintf(name, sizeof(name), "coop setting %s", row.label);
+    registerExtent(name, rect);
+    panel(rect, theme::kUiPanel, theme::kUiBorder, 0.0f);
+    const bool known = value >= 0 && value < row.count;
+    const char* shown = known ? row.options[value] : "Host picks";
+    const Color color = known ? row.colors[value] : theme::kUiTextDim;
+    const float cy = rect.y + rect.height * 0.5f;
+    const float pad = 8.0f * p;
+    const float labelSize = std::min(rect.height * 0.36f, 16.0f * u);
+    const float labelWidth = font::measure(row.label, labelSize, p);
+    textMiddle(row.label, rect.x + pad, cy, labelSize, theme::kUiTextDim, font::Align::Left, p);
+    const float valueRoom = rect.width - pad * 3.0f - labelWidth;
+    const float valueSize = font::fitSize(shown, std::min(rect.height * 0.5f, 24.0f * u), valueRoom);
+    textMiddle(shown, rect.x + rect.width - pad, cy, valueSize, color, font::Align::Right);
+}
+
+// The map, difficulty and mode of the run. The host gets the same selectors as the title screen
+// and a change goes straight into the host's saved choice, which is also what the title shows
+// and what the run is made from. A guest gets read-only rows that follow what the host sent.
+void drawSettings(Rectangle area, float rowHeight, float rowGap, bool editable, const net::Lobby& lobby, SaveData& data,
+                  const RoomOrder& order, Nav& nav, CoopResult& result) {
+    const auto rowRect = [&](int row) { return Rectangle{area.x, area.y + static_cast<float>(row) * (rowHeight + rowGap), area.width, rowHeight}; };
+    if (!editable) {
+        // The host's own rows (once the run is starting) show the host's choice directly; a guest's follow the room.
+        const bool mine = lobby.you >= 0 && lobby.you == lobby.host;
+        const int values[kSettingRows] = {
+            mine ? static_cast<int>(data.difficulty) : lobby.settings.difficulty,
+            mine ? static_cast<int>(maps::mapFromIndex(data.map)) : lobby.settings.map,
+            mine ? static_cast<int>(data.mode) : lobby.settings.mode,
+        };
+        for (int row = 0; row < kSettingRows; ++row) drawSettingChip(rowRect(row), settingRow(row), values[row]);
+        return;
+    }
+    int level = static_cast<int>(data.difficulty);
+    int map = static_cast<int>(maps::mapFromIndex(data.map));
+    int mode = static_cast<int>(data.mode);
+    const SettingRow difficultyRow = settingRow(0);
+    const SettingRow mapRow = settingRow(1);
+    const SettingRow modeRow = settingRow(2);
+    if (selector(nav, order.difficulty, rowRect(0), difficultyRow.label, difficultyRow.options, difficultyRow.count, &level, difficultyRow.colors)) {
+        data.difficulty = static_cast<Difficulty>(level);
+        result.saveChanged = true;
+    }
+    if (selector(nav, order.map, rowRect(1), mapRow.label, mapRow.options, mapRow.count, &map, mapRow.colors)) {
+        data.map = map;
+        result.saveChanged = true;
+    }
+    if (selector(nav, order.mode, rowRect(2), modeRow.label, modeRow.options, modeRow.count, &mode, modeRow.colors)) {
+        data.mode = static_cast<RunMode>(mode);
+        result.saveChanged = true;
+    }
+    // Told to the room now and on every change; Net sends it only when it differs from last time.
+    net::setRoomSettings(map, level, mode);
+}
+
+// The room: code, players, the run settings and the buttons. A host sees Start and can change the
+// settings, a joined player sees neither.
+void drawRoomView(Nav& nav, const net::Lobby& lobby, SaveData& data, CoopResult& result, bool* leave) {
     const Layout& l = layout();
     const float u = l.u;
     const bool isHost = lobby.you == lobby.host;
     const bool starting = lobby.phase == net::LobbyPhase::Starting;
+    // Once the run is starting nothing can be changed, so the host's rows turn read-only too.
+    const bool editable = isHost && !starting;
     const bool wide = !l.portrait && l.width() >= 700.0f * u;
     const float gap = 9.0f * u;
     const float buttonHeight = tall(50.0f * u);
@@ -461,6 +580,10 @@ void drawRoomView(Nav& nav, const net::Lobby& lobby, bool* leave) {
     const float rowGap = std::max(l.px * 2.0f, 4.0f * u);
     const float minRow = std::max(0.62f * l.touch, 30.0f * u);
     const float maxRow = std::max(minRow, 40.0f * u);
+    // The three settings: touch-sized selectors for the host, slimmer read-only rows for a guest.
+    const float setHeight = editable ? tall(46.0f * u) : minRow;
+    const float setGap = editable ? gap : std::max(rowGap, 5.0f * u);
+    const float settingsHeight = setHeight * static_cast<float>(kSettingRows) + setGap * static_cast<float>(kSettingRows - 1);
 
     const float panelWidth = wide ? std::min(l.width(), 960.0f * u) : std::min(l.width(), kPanelMax * u);
     const float x = l.centerX() - panelWidth * 0.5f;
@@ -470,7 +593,8 @@ void drawRoomView(Nav& nav, const net::Lobby& lobby, bool* leave) {
 
     // The list takes the height that is left, between a minimum and a maximum.
     const int slots = net::kMaxPlayers;
-    const float buttonsTall = wide ? 0.0f : (buttonHeight + gap) * (isHost ? 3.0f : 2.0f) + 28.0f * u;
+    // Under the list on a narrow screen: the settings, then the buttons.
+    const float buttonsTall = wide ? 0.0f : (buttonHeight + gap) * (isHost ? 3.0f : 2.0f) + 28.0f * u + settingsHeight + gap;
     const float fixed = titleHeight + plateHeight + gap + buttonsTall;
     float rowHeight = (l.height() - fixed - rowGap * static_cast<float>(slots - 1)) / static_cast<float>(slots);
     rowHeight = std::min(maxRow, std::max(minRow, rowHeight));
@@ -483,13 +607,17 @@ void drawRoomView(Nav& nav, const net::Lobby& lobby, bool* leave) {
     y += titleHeight;
 
     const bool startEnabled = net::canStart();
+    const RoomOrder order = roomOrder(editable, isHost);
+    if (g_roomPicksReady) {
+        nav.selected = order.ready;
+        g_roomPicksReady = false;
+    }
+    navigate(nav, order.count);
     // Selection never rests on a disabled Start.
-    const int leaveFocus = isHost ? kRoomLeave : kRoomLeave - 1;
-    navigate(nav, leaveFocus + 1);
-    if (isHost && !startEnabled && nav.selected == kRoomStart) nav.selected = input().stepY < 0 ? kRoomReady : kRoomLeave;
-    if (nav.selected > leaveFocus) nav.selected = leaveFocus;
+    if (isHost && !startEnabled && nav.selected == order.start) nav.selected = input().stepY < 0 ? order.ready : order.leave;
+    if (nav.selected > order.leave) nav.selected = order.leave;
 
-    drawCodePlate(Rectangle{x, y, leftWidth, plateHeight}, lobby, kRoomCopy, nav);
+    drawCodePlate(Rectangle{x, y, leftWidth, plateHeight}, lobby, order.copy, nav);
     y += plateHeight + gap;
 
     const float listTop = y;
@@ -498,16 +626,24 @@ void drawRoomView(Nav& nav, const net::Lobby& lobby, bool* leave) {
     }
     y = listTop + listHeight;
 
+    const float bx = wide ? rightX : x;
+    const float bw = wide ? rightWidth : panelWidth;
     // One line that says what the lobby is waiting for. It is dropped when a short window has no room.
     const char* hint = isHost ? (startEnabled ? "Everyone is ready. Press Start." : (lobby.count < 2 ? "Waiting for another player to join." : "Waiting for everyone to be ready."))
                               : "Waiting for the host to start.";
-    const float bx = wide ? rightX : x;
-    const float bw = wide ? rightWidth : panelWidth;
     const float hintHeight = paragraph(hint, bx, 0.0f, bw, 16.0f * u, theme::kUiTextDim, font::Align::Center, 2, false);
     const float buttonsHeight = (buttonHeight + gap) * (isHost ? 3.0f : 2.0f);
 
-    // Buttons: under the list on a narrow screen, in a column beside it on a wide one.
-    float by = wide ? std::max(l.top + titleHeight, l.top + (l.height() - buttonsHeight - hintHeight) * 0.5f) : y + gap;
+    // Settings and buttons: under the list on a narrow screen, in a column beside it on a wide
+    // one. On a short wide window the column starts at the top edge, so nothing runs off the bottom.
+    const float columnHeight = settingsHeight + gap + buttonsHeight;
+    float settingsTop = y + gap;
+    if (wide) {
+        settingsTop = std::max(l.top + titleHeight, l.top + (l.height() - columnHeight - hintHeight) * 0.5f);
+        if (settingsTop + columnHeight > l.bottom) settingsTop = std::max(l.top, l.bottom - columnHeight);
+    }
+    drawSettings(Rectangle{bx, settingsTop, bw, settingsHeight}, setHeight, setGap, editable, lobby, data, order, nav, result);
+    float by = settingsTop + settingsHeight + gap;
 
     bool ready = lobby.you >= 0 && lobby.you < lobby.count && lobby.players[lobby.you].ready;
     if (starting) {
@@ -516,13 +652,13 @@ void drawRoomView(Nav& nav, const net::Lobby& lobby, bool* leave) {
         registerExtent("coop status", Rectangle{bx, by, bw, 26.0f * u});
         return;
     }
-    if (checkBox(nav, kRoomReady, Rectangle{bx, by, bw, buttonHeight}, "Ready", &ready)) net::setReady(ready);
+    if (checkBox(nav, order.ready, Rectangle{bx, by, bw, buttonHeight}, "Ready", &ready)) net::setReady(ready);
     by += buttonHeight + gap;
     if (isHost) {
-        if (button(nav, kRoomStart, Rectangle{bx, by, bw, buttonHeight}, "Start", ButtonLook::Primary, nullptr, startEnabled)) net::startRun();
+        if (button(nav, order.start, Rectangle{bx, by, bw, buttonHeight}, "Start", ButtonLook::Primary, nullptr, startEnabled)) net::startRun();
         by += buttonHeight + gap;
     }
-    if (button(nav, leaveFocus, Rectangle{bx, by, bw, buttonHeight}, "Leave", ButtonLook::Normal, promptBack())) *leave = true;
+    if (button(nav, order.leave, Rectangle{bx, by, bw, buttonHeight}, "Leave", ButtonLook::Normal, promptBack())) *leave = true;
     by += buttonHeight + gap * 0.5f;
 
     if (by + hintHeight <= l.bottom) {
@@ -555,18 +691,19 @@ bool checkRoomLost() {
     return true;
 }
 
-CoopResult drawHost() {
+CoopResult drawHost(SaveData& data) {
     drawBackdrop();
     if (checkRoomLost()) return CoopResult{};
     const net::Lobby& lobby = net::lobby();
     bool leave = false;
     if (lobby.phase == net::LobbyPhase::InLobby || lobby.phase == net::LobbyPhase::Starting) {
-        drawRoomView(g_hostNav, lobby, &leave);
+        CoopResult result;
+        drawRoomView(g_hostNav, lobby, data, result, &leave);
         if (leave) {
             net::leaveRoom();
             goTo(Sub::Menu);
         }
-        return CoopResult{};
+        return result;
     }
     bool retry = false;
     bool cancel = false;
@@ -687,7 +824,7 @@ void openCoopScreens(const SaveData& data) {
 CoopResult drawCoopScreens(SaveData& data) {
     switch (g_sub) {
         case Sub::Menu: return drawMenu(data);
-        case Sub::Host: return drawHost();
+        case Sub::Host: return drawHost(data);
         case Sub::Join: return drawJoin(data);
     }
     return CoopResult{};
@@ -708,10 +845,11 @@ const char* coopDebugJson() {
     int n = std::snprintf(json, sizeof(json),
                           "{\"sub\":\"%s\",\"phase\":%d,\"error\":%d,\"code\":\"%s\",\"you\":%d,\"host\":%d,\"started\":%d,\"count\":%d,"
                           "\"canStart\":%d,\"wake\":%.1f,\"name\":\"%s\",\"codeText\":\"%s\",\"editing\":%d,\"keys\":%d,\"notice\":\"%s\","
-                          "\"serverRtt\":%d,\"rejoin\":\"%s\",\"rejoining\":%d,\"players\":[",
+                          "\"serverRtt\":%d,\"rejoin\":\"%s\",\"rejoining\":%d,\"settingsKnown\":%d,\"setMap\":%d,\"setDifficulty\":%d,\"setMode\":%d,\"players\":[",
                           coopScreenName(), static_cast<int>(lobby.phase), static_cast<int>(lobby.error), lobby.code, lobby.you, lobby.host,
                           lobby.started ? 1 : 0, lobby.count, net::canStart() ? 1 : 0, static_cast<double>(lobby.wakeSeconds), g_name.text,
-                          g_code.text, textEditing() ? 1 : 0, textKeyboardOpen() ? 1 : 0, g_notice, lobby.serverRttMs, net::rejoinCode(), g_rejoining ? 1 : 0);
+                          g_code.text, textEditing() ? 1 : 0, textKeyboardOpen() ? 1 : 0, g_notice, lobby.serverRttMs, net::rejoinCode(), g_rejoining ? 1 : 0,
+                          lobby.settings.known ? 1 : 0, lobby.settings.map, lobby.settings.difficulty, lobby.settings.mode);
     for (int i = 0; i < lobby.count && n > 0 && n < static_cast<int>(sizeof(json)) - 220; ++i) {
         const net::LobbyPlayer& player = lobby.players[i];
         n += std::snprintf(json + n, sizeof(json) - static_cast<size_t>(n),

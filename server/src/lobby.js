@@ -4,6 +4,8 @@
 import { HOST_SLOT, MAX_PLAYERS } from './rooms.js';
 
 const NAME_PATTERN = /^[A-Za-z0-9 ]{1,12}$/;
+// The run settings are a few small numbers. This cap keeps the room message small whatever a client sends.
+export const MAX_SETTINGS_JSON = 200;
 export const BROADCAST = 255;
 // If a receiver is this far behind, drop frames for it instead of piling up memory.
 const MAX_BUFFERED_BYTES = 1024 * 1024;
@@ -31,6 +33,7 @@ export class Lobby {
       case 'join': return this.#join(conn, msg);
       case 'rejoin': return this.#rejoin(conn, msg);
       case 'ready': return this.#ready(conn, msg);
+      case 'settings': return this.#settings(conn, msg);
       case 'start': return this.#start(conn);
       case 'leave': return this.#leave(conn);
       case 'signal': return this.#signal(conn, msg);
@@ -135,6 +138,24 @@ export class Lobby {
     if (typeof msg.ready !== 'boolean') return conn.sendError('bad-request');
     conn.room.players[conn.slot].ready = msg.ready;
     conn.room.broadcastRoom();
+  }
+
+  /**
+   * The host tells the room which map, difficulty and mode the run will use, so guests can see
+   * them in the lobby. The server does not look inside: it checks the shape and the size, stores
+   * the object and broadcasts it in the next `room` message. It is allowed after the start too,
+   * because it only changes what the lobby shows; the run itself gets its settings from the host.
+   */
+  #settings(conn, msg) {
+    const room = conn.room;
+    if (!room) return conn.sendError('not-in-room');
+    if (conn.slot !== HOST_SLOT) return conn.sendError('not-host');
+    const s = msg.settings;
+    if (typeof s !== 'object' || s === null || Array.isArray(s)) return conn.sendError('bad-request');
+    // stringify can throw for odd values, but a parsed JSON message never contains them.
+    if (JSON.stringify(s).length > MAX_SETTINGS_JSON) return conn.sendError('bad-request');
+    room.settings = s;
+    room.broadcastRoom();
   }
 
   #start(conn) {

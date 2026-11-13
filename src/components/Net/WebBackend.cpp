@@ -165,6 +165,13 @@ Transport transportFrom(const char* value) {
     return Transport::None;
 }
 
+// A setting from the host: a whole number from 0 to kSettingMax, or -1. Anything else (missing, negative, too
+// big, not a number) is ignored, so a newer or broken host can never push a bad index into the screens.
+int readSetting(const char* value) {
+    const int number = readInt(value, -1);
+    return number >= 0 && number <= kSettingMax ? number : -1;
+}
+
 void readName(const char* value, char (&out)[kNameMax + 1]) {
     readString(value, out, sizeof(out));
     for (char* c = out; *c; ++c) {
@@ -195,6 +202,11 @@ bool applyWebSnapshot(const char* json, Lobby& lobby) {
     if (next.phase == LobbyPhase::Error) next.error = errorFrom(readInt(findKey(room, "errorIndex"), 7));
     readString(findKey(room, "code"), next.code, sizeof(next.code));
     next.started = readBool(findKey(room, "started"));
+    // The host's choice, when the server has passed one on. Each number is checked on its own.
+    next.settings.map = readSetting(findKey(room, "setMap"));
+    next.settings.difficulty = readSetting(findKey(room, "setDifficulty"));
+    next.settings.mode = readSetting(findKey(room, "setMode"));
+    next.settings.known = next.settings.map >= 0 || next.settings.difficulty >= 0 || next.settings.mode >= 0;
     next.serverRttMs = readInt(findKey(after, "serverRttMs"), -1);
 
     const int myId = readInt(findKey(room, "myId"), -1);
@@ -346,6 +358,10 @@ EM_JS(int, ls_js_net_ready, (int on), {
     try { return LastStandNet.shared().setReady(on !== 0) ? 1 : 0; } catch (error) { return -1; }
 });
 
+EM_JS(int, ls_js_net_settings, (int map, int difficulty, int mode), {
+    try { return LastStandNet.shared().setSettings({ map: map, difficulty: difficulty, mode: mode }) ? 1 : 0; } catch (error) { return -1; }
+});
+
 EM_JS(int, ls_js_net_start, (), {
     try { return LastStandNet.shared().start() ? 1 : 0; } catch (error) { return -1; }
 });
@@ -478,6 +494,13 @@ public:
         readyWanted_ = ready ? 1 : 0;
         readyAge_ = 0.0f;
         applyWantedReady(lobby);
+    }
+
+    void setSettings(Lobby&, int map, int difficulty, int mode) override {
+        // An older server that does not know this message answers with an error the script treats as
+        // harmless, and guests then simply see no settings.
+        ls_js_net_settings(map, difficulty, mode);
+        dirty_ = true;
     }
 
     void start(Lobby&) override {

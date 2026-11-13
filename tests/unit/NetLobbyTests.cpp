@@ -358,6 +358,24 @@ public:
     void start(net::Lobby&) override { starts++; }
     void leave(net::Lobby&) override { leaves++; }
     void update(net::Lobby&, float) override { updates++; }
+    void setSettings(net::Lobby&, int map, int difficulty, int mode) override {
+        settingsSent++;
+        lastMap = map;
+        lastDifficulty = difficulty;
+        lastMode = mode;
+    }
+    // Puts the lobby in a room by hand: kDebugRoom as the host, kDebugGuestRoom as the second player.
+    void debug(net::Lobby& lobby, int op, int) override {
+        if (op != net::kDebugRoom && op != net::kDebugGuestRoom) return;
+        lobby = net::Lobby{};
+        lobby.phase = net::LobbyPhase::InLobby;
+        std::snprintf(lobby.code, sizeof(lobby.code), "%s", roomCode);
+        lobby.count = 2;
+        lobby.host = 0;
+        lobby.you = op == net::kDebugRoom ? 0 : 1;
+        lobby.players[0].id = 0;
+        lobby.players[1].id = 1;
+    }
     void rejoin(net::Lobby&) override { rejoins++; }
     const char* rejoinCode() const override { return seat ? "K7QXM" : ""; }
     void forgetRejoin() override { seat = false; }
@@ -367,6 +385,8 @@ public:
         lobby.error = error;
     }
     int wakes = 0, hosts = 0, joins = 0, starts = 0, leaves = 0, updates = 0, rejoins = 0;
+    int settingsSent = 0, lastMap = -1, lastDifficulty = -1, lastMode = -1;
+    const char* roomCode = "K7QXM";
     bool seat = false;
     std::string hostName, joinCode, joinName;
 };
@@ -404,6 +424,112 @@ TEST_CASE("the backend seam: a replacement backend only receives checked request
     net::rejoinRoom();
     CHECK(recorder.rejoins == 1);
     net::setBackend(nullptr);
+    freshLobby();
+}
+
+TEST_CASE("room settings: the host sends them once, and again only when they change") {
+    freshLobby();
+    RecordingBackend recorder;
+    net::setBackend(&recorder);
+    net::setRoomSettings(1, 2, 0);          // Not in a room yet: nothing is sent.
+    net::update(0.016f);
+    CHECK(recorder.settingsSent == 0);
+
+    net::debugCommand(net::kDebugRoom, 2);   // The host of a room.
+    net::update(0.016f);                     // The room is up, so what was wanted goes out at once.
+    CHECK(recorder.settingsSent == 1);
+    CHECK(recorder.lastMap == 1);
+    CHECK(recorder.lastDifficulty == 2);
+    CHECK(recorder.lastMode == 0);
+
+    // Called every frame, as the screen does: still one send.
+    for (int i = 0; i < 100; ++i) {
+        net::setRoomSettings(1, 2, 0);
+        net::update(0.016f);
+    }
+    CHECK(recorder.settingsSent == 1);
+
+    net::setRoomSettings(1, 3, 0);           // One value changes: one more send, with all three.
+    CHECK(recorder.settingsSent == 2);
+    CHECK(recorder.lastDifficulty == 3);
+    net::setRoomSettings(0, 3, 1);
+    CHECK(recorder.settingsSent == 3);
+    CHECK(recorder.lastMap == 0);
+    CHECK(recorder.lastMode == 1);
+
+    // Another room (a new code) hears them again, even when nothing changed.
+    net::leaveRoom();
+    recorder.roomCode = "AB234";
+    net::debugCommand(net::kDebugRoom, 2);
+    net::update(0.016f);
+    CHECK(recorder.settingsSent == 4);
+    net::update(0.016f);
+    CHECK(recorder.settingsSent == 4);
+    net::setBackend(nullptr);
+    freshLobby();
+}
+
+TEST_CASE("room settings: only the host sends, and bad values are not sent") {
+    freshLobby();
+    RecordingBackend recorder;
+    net::setBackend(&recorder);
+
+    // A guest (slot 1 of a room whose host is slot 0) sends nothing.
+    net::debugCommand(net::kDebugGuestRoom, 2);
+    net::setRoomSettings(1, 1, 1);
+    net::update(0.016f);
+    CHECK(recorder.settingsSent == 0);
+
+    // Out of range numbers never leave this machine. The previous good choice stays wanted.
+    net::debugCommand(net::kDebugRoom, 2);
+    net::update(0.016f);                     // The room is ours now, so the last good choice (1, 1, 1) goes out.
+    net::setRoomSettings(-1, 1, 1);
+    net::setRoomSettings(1, net::kSettingMax + 1, 1);
+    net::setRoomSettings(1, 1, -5);
+    CHECK(recorder.settingsSent == 1);       // Just that one: the three bad calls sent nothing.
+    CHECK(recorder.lastMap == 1);
+    CHECK(recorder.lastDifficulty == 1);
+    CHECK(recorder.lastMode == 1);
+    net::setRoomSettings(net::kSettingMax, 0, 0);   // The largest allowed value is fine.
+    CHECK(recorder.settingsSent == 2);
+    CHECK(recorder.lastMap == net::kSettingMax);
+
+    // Outside a room nothing happens, and nothing is left over for the next one.
+    net::leaveRoom();
+    net::update(0.016f);
+    net::setRoomSettings(0, 0, 0);
+    CHECK(recorder.settingsSent == 2);
+    net::setBackend(nullptr);
+    freshLobby();
+}
+
+TEST_CASE("room settings on the fake: the host's choice is what the lobby shows, a guest's room starts empty") {
+    freshLobby();
+    net::debugCommand(net::kDebugRoom, 2);
+    CHECK_FALSE(net::lobby().settings.known);
+    CHECK(net::lobby().settings.map == -1);
+    net::setRoomSettings(1, 3, 1);
+    CHECK(net::lobby().settings.known);
+    CHECK(net::lobby().settings.map == 1);
+    CHECK(net::lobby().settings.difficulty == 3);
+    CHECK(net::lobby().settings.mode == 1);
+    net::setRoomSettings(0, 3, 1);
+    CHECK(net::lobby().settings.map == 0);
+
+    // A guest never sets them. They only change when the (fake) host says so.
+    net::debugCommand(net::kDebugGuestRoom, 3);
+    net::setRoomSettings(1, 1, 1);
+    net::update(0.016f);
+    CHECK_FALSE(net::lobby().settings.known);
+    net::debugCommand(net::kDebugRoomSettings, 1 + 16 * 2 + 256 * 1);
+    CHECK(net::lobby().settings.known);
+    CHECK(net::lobby().settings.map == 1);
+    CHECK(net::lobby().settings.difficulty == 2);
+    CHECK(net::lobby().settings.mode == 1);
+    net::debugCommand(net::kDebugRoomSettings, -1);
+    CHECK_FALSE(net::lobby().settings.known);
+    net::leaveRoom();
+    CHECK_FALSE(net::lobby().settings.known);
     freshLobby();
 }
 
