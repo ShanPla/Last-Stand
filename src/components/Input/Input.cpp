@@ -295,7 +295,13 @@ float joystickRadius() {
 
 void setJoystickEnabled(bool enabled) { g_joystickEnabled = enabled; }
 
-void setTextInputActive(bool active) { g_textInput = active; }
+void setTextInputActive(bool active) {
+    g_textInput = active;
+    // A field that opens tells the page at once, so it lets Space through as a typed space even
+    // when the very next key is Space. Waiting for the next frame lost that space. Closing can wait
+    // for update(), because letting Space through for one more frame is harmless.
+    if (active) platform::setTextEditing(true);
+}
 
 void setJoystickHome(Vec2 home) { g_stickHome = home; }
 
