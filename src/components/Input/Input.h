@@ -38,6 +38,10 @@ struct Snapshot {
     char typed[8] = {};
     int typedCount = 0;
     int backspaces = 0;  // How many characters to delete: two quick presses in one frame count twice.
+    // Text the player pasted this frame (Ctrl+V, Shift+Insert), as printable ASCII, or empty. It is
+    // filled whether or not a field is being edited, and the first field that takes it clears it.
+    char pasted[64] = {};
+    int pastedLength = 0;
 
     // Mouse click or touch start, in drawing buffer pixels.
     bool pointerPressed = false;

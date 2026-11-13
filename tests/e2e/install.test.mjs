@@ -438,3 +438,54 @@ for (const [name, options] of [['desktop', desktop], ['phone-portrait', phone], 
     await context.close();
   });
 }
+
+// The install button sits in the top-right corner. It must never cover the best-run record, the logo
+// or a title button, on any size. Narrow portrait windows use two small stacked squares so that
+// the corner stays clear of the logo's zombie head.
+const installSizes = [
+  ['desktop 1280x720', desktop],
+  ['desktop 1024x768', { viewport: { width: 1024, height: 768 } }],
+  ['tablet 768x1024', { viewport: { width: 768, height: 1024 } }],
+  ['phone portrait 390x844', phone],
+  ['small phone 320x568', { viewport: { width: 320, height: 568 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true }],
+  ['phone landscape 844x390', landscapePhone],
+];
+
+for (const [name, options] of installSizes) {
+  test(`the install button sits in the top-right corner and covers nothing (${name})`, async () => {
+    const { context, page, problems } = await openGame(browser, site.url, options);
+    await waitScreen(page, 'title');
+    await offerInstall(page);
+    await waitInstallBox(page, false);
+    await page.waitForTimeout(400);
+    const view = options.viewport;
+    const box = await page.evaluate(() => {
+      const r = document.getElementById('install-app').getBoundingClientRect();
+      return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    });
+    // In the corner, with a small margin, and fully on screen.
+    assert.ok(box.right <= view.width && box.right >= view.width - 20, `right edge ${box.right} of ${view.width}`);
+    assert.ok(box.top >= 0 && box.top <= 20, `top edge ${box.top}`);
+    assert.ok(box.left >= 0 && box.bottom <= view.height);
+    // Both buttons stay a comfortable touch target.
+    for (const id of ['install-app-button', 'install-app-dismiss']) {
+      const b = await page.locator(`#${id}`).boundingBox();
+      assert.ok(b.width >= 44 && b.height >= 44, `${id} is ${b.width} by ${b.height}`);
+    }
+    const ui = await readUi(page);
+    const scale = view.width / ui.width;
+    const rects = ui.buttons.map((b) => ({ name: b.n, left: b.cx - b.cw / 2, top: b.cy - b.ch / 2, right: b.cx + b.cw / 2, bottom: b.cy + b.ch / 2 }));
+    for (const extent of ui.extents.filter((e) => ['best run', 'logo'].includes(e.n))) {
+      rects.push({ name: extent.n, left: extent.x * scale, top: extent.y * scale, right: (extent.x + extent.w) * scale, bottom: (extent.y + extent.h) * scale });
+    }
+    assert.ok(rects.some((r) => r.name === 'logo'), 'the title reports its logo');
+    assert.ok(rects.some((r) => r.name === 'best run') || options.viewport.height < 400, 'the title reports its best run');
+    for (const r of rects) {
+      const overlaps = r.left < box.right && r.right > box.left && r.top < box.bottom && r.bottom > box.top;
+      assert.ok(!overlaps, `the install button (${JSON.stringify(box)}) covers "${r.name}" (${JSON.stringify(r)})`);
+    }
+    await page.screenshot({ path: `tests/e2e/screenshots/install-corner-${name.replace(/ .*$/, '')}-${view.width}x${view.height}.png` });
+    assert.deepEqual(problems, []);
+    await context.close();
+  });
+}

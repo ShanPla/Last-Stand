@@ -154,6 +154,13 @@ TitleAction drawTitleScreen(SaveData& data) {
     const float zombieSize = logoSize * 0.78f;
     const float zombieX = wide ? textX + lastWidth + 14.0f * u + zombieSize * 0.5f : textX + lastWidth * 0.5f + 14.0f * u + zombieSize * 0.5f;
     drawZombieIcon(zombieX, logoTop + logoSize * 0.46f, zombieSize, fade());
+    {
+        // Where the logo is. The tests use it to check that the page's install button stays clear of it.
+        const float standWidth = font::measure("STAND", logoSize, l.px);
+        const float left = wide ? textX : textX - standWidth * 0.5f;
+        const float right = std::max(left + standWidth, zombieX + zombieIconRightEdge(zombieSize));
+        registerExtent("logo", Rectangle{left, logoTop, right - left, logoSize * 1.64f});
+    }
 
     const char* tagline = data.mode == RunMode::Endless ? "It returns every ten minutes. Outlast it."
                                                         : "Survive ten minutes. Then face what is waiting.";

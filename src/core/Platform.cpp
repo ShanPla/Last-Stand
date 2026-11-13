@@ -63,6 +63,40 @@ EM_JS(void, ls_js_install, (), {
 
     document.addEventListener('visibilitychange', function () { if (document.hidden) state.focusLost = true; });
     window.addEventListener('blur', function () { state.focusLost = true; });
+
+    // Ctrl+V, Shift+Insert and the browser's own Paste item all send a paste event that carries the
+    // text. Reading it here needs no permission prompt. Only the latest paste is kept until the
+    // game takes it on its next frame.
+    state.paste = String();
+    document.addEventListener('paste', function (event) {
+        try {
+            var data = event.clipboardData || window.clipboardData;
+            var text = data ? data.getData('text') : String();
+            if (text) {
+                state.paste = String(text);
+                event.preventDefault();
+            }
+        } catch (error) {}
+    }, true);
+});
+
+// Copies the latest pasted text into the buffer as plain printable ASCII (letters, digits, spaces
+// and punctuation). Tabs, new lines and other characters are dropped.
+// Returns how many characters were written, or 0 when nothing was pasted since the last call.
+EM_JS(int, ls_js_take_paste, (char* out, int capacity), {
+    var state = Module.lsInput;
+    if (!state || !state.paste) return 0;
+    var raw = state.paste;
+    state.paste = String();
+    var text = String();
+    for (var i = 0; i < raw.length; i++) {
+        var code = raw.charCodeAt(i);
+        if (code >= 32 && code < 127) text += raw.charAt(i);
+    }
+    var length = Math.min(text.length, capacity - 1);
+    for (var j = 0; j < length; j++) HEAPU8[out + j] = text.charCodeAt(j);
+    HEAPU8[out + length] = 0;
+    return length;
 });
 
 EM_JS(int, ls_js_take_touch, (float* out), {
@@ -407,6 +441,27 @@ void setTextEditing(bool editing) {
     }
 #else
     (void)editing;
+#endif
+}
+
+int takePastedText(char* out, int capacity) {
+    if (!out || capacity < 2) return 0;
+    out[0] = '\0';
+#ifdef __EMSCRIPTEN__
+    ensureInstalled();
+    return ls_js_take_paste(out, capacity);
+#else
+    // Native: Ctrl+V or Shift+Insert reads the system clipboard through raylib.
+    const bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+    const bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+    if (!((ctrl && IsKeyPressed(KEY_V)) || (shift && IsKeyPressed(KEY_INSERT)))) return 0;
+    const char* clip = GetClipboardText();
+    int length = 0;
+    for (; clip && *clip && length < capacity - 1; ++clip) {
+        if (*clip >= 32 && *clip < 127) out[length++] = *clip;
+    }
+    out[length] = '\0';
+    return length;
 #endif
 }
 

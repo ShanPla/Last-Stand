@@ -114,6 +114,14 @@ bool slider(Nav& nav, int index, Rectangle rect, const char* label, float* value
 // An on or off row. Returns true when it changes.
 bool toggle(Nav& nav, int index, Rectangle rect, const char* label, bool* value);
 
+// A check box with its label, as one large button: "Label [box]". The box is empty when off and a
+// green check when on. A click, a tap, Enter or gamepad A flips it. Returns true when it changes.
+bool checkBox(Nav& nav, int index, Rectangle rect, const char* label, bool* value);
+
+// Just the box of a check box, centered on (cx, cy). unit is the size of one UI pixel, and the box is
+// nine of them wide. The player list in the co-op lobby uses it for the ready mark.
+void drawCheckBox(float cx, float cy, float unit, bool checked);
+
 // A row of named choices with an arrow on each side, such as the difficulty or the
 // map. Left and right (keys, D-pad, stick) change it while it has focus. A click or
 // tap on an arrow steps that way, and on the middle steps forward. Enter and A step

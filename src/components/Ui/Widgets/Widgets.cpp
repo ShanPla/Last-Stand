@@ -548,6 +548,54 @@ bool toggle(Nav& nav, int index, Rectangle rect, const char* label, bool* value)
 }
 
 
+void drawCheckBox(float cx, float cy, float unit, bool checked) {
+    const float box = unit * 9.0f;
+    const Rectangle rect{cx - box * 0.5f, cy - box * 0.5f, box, box};
+    if (!checked) {
+        // An empty square: a border and a dark inside.
+        pixelRect(rect, theme::kCoopWaiting);
+        pixelRect(Rectangle{rect.x + unit, rect.y + unit, box - unit * 2.0f, box - unit * 2.0f}, theme::kCoopCodePlate);
+        return;
+    }
+    pixelRect(rect, theme::kCoopReady);
+    // The check, bold, on a 7 by 7 grid of pixels inside the box.
+    static const int kCheck[][2] = {{0, 3}, {1, 4}, {2, 5}, {3, 4}, {4, 3}, {5, 2}, {6, 1}, {0, 4}, {1, 5}, {2, 6}, {3, 5}, {4, 4}, {5, 3}, {6, 2}};
+    for (const auto& cell : kCheck) {
+        pixelRect(Rectangle{rect.x + static_cast<float>(cell[0] + 1) * unit, rect.y + static_cast<float>(cell[1]) * unit, unit, unit}, theme::kTextOnPrimary);
+    }
+}
+
+bool checkBox(Nav& nav, int index, Rectangle rect, const char* label, bool* value) {
+    const float u = g_layout.u;
+    registerRect(label, rect);
+    hoverSelect(nav, index, rect);
+    if (nav.selected == index) markSelected(label);
+    const bool selected = nav.selected == index && showsSelection();
+    controlBox(rect, selected ? theme::kButtonHover : theme::kButtonFill, selected, false);
+    if (selected) pixelArrow(rect.x + g_layout.px * 5.0f, rect.y + rect.height * 0.5f, rect.height * 0.3f, theme::kUiAccent);
+
+    // The label and the box sit together in the middle, like a button's label. The box is about half
+    // the button tall, so it stays easy to see on a phone, and it is a whole number of UI pixels.
+    const float unit = std::max(g_layout.px, snapPx(rect.height * 0.52f / 9.0f));
+    const float boxSize = unit * 9.0f;
+    const float gap = rect.height * 0.3f;
+    const float size = font::fitSize(label, std::min(rect.height * 0.44f, 34.0f * u), std::max(8.0f, rect.width - rect.height * 2.2f - boxSize - gap));
+    const float labelWidth = font::measure(label, size);
+    const float left = rect.x + (rect.width - (labelWidth + gap + boxSize)) * 0.5f;
+    textMiddle(label, left, rect.y + rect.height * 0.5f, size, theme::kUiText, font::Align::Left);
+    const float boxCx = left + labelWidth + gap + boxSize * 0.5f;
+    drawCheckBox(boxCx, rect.y + rect.height * 0.5f, unit, *value);
+    // For the tests: where the box is and whether it is checked.
+    registerExtent(*value ? "check box on" : "check box off", Rectangle{boxCx - boxSize * 0.5f, rect.y + (rect.height - boxSize) * 0.5f, boxSize, boxSize});
+
+    const bool changed = activated(nav, index, rect);
+    if (changed) {
+        *value = !*value;
+        audio::playUi(audio::UiSound::Confirm);
+    }
+    return changed;
+}
+
 // ---- Text entry -----------------------------------------------------------------
 
 namespace {
@@ -760,6 +808,21 @@ void textField(Nav& nav, int index, Rectangle rect, const char* label, TextEntry
         g_input.pointerPressed = false;
         g_input.confirm = false;
         justStarted = true;
+    }
+
+    // Pasted text (Ctrl+V, Shift+Insert). A field that is being edited takes it, and so does the
+    // selected field when none is being edited. It is used up here, so only one field gets it.
+    if (g_input.pastedLength > 0 && ((entry.editing && g_activeEntry == &entry) || (!g_activeEntry && g_inputEnabled && nav.selected == index))) {
+        // A code is one piece, so a paste replaces it. A name being edited gets the text added to its
+        // end. A name field that is not open takes the paste as the whole name.
+        if (kind == TextKind::Name && entry.editing) {
+            for (int i = 0; i < g_input.pastedLength; ++i) appendChar(entry, g_input.pasted[i]);
+        } else {
+            textSet(entry, kind, g_input.pasted);
+            while (entry.length > 0 && entry.text[entry.length - 1] == ' ') entry.text[--entry.length] = '\0';  // No trailing spaces.
+        }
+        g_input.pastedLength = 0;
+        audio::playUi(audio::UiSound::Confirm);
     }
 
     if (entry.editing && g_activeEntry == &entry) {

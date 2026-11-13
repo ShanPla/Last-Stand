@@ -64,25 +64,6 @@ void drawSpinner(float cx, float cy, float size) {
     }
 }
 
-// A ready mark: a filled box with a check, or an empty box. The shapes differ, so ready never
-// relies on color alone.
-void drawReadyMark(float cx, float cy, bool ready) {
-    const float p = layout().px;
-    const float box = p * 9.0f;
-    const Rectangle rect{cx - box * 0.5f, cy - box * 0.5f, box, box};
-    if (!ready) {
-        pixelRect(rect, theme::kCoopWaiting);
-        pixelRect(Rectangle{rect.x + p, rect.y + p, box - p * 2.0f, box - p * 2.0f}, theme::kCoopCodePlate);
-        return;
-    }
-    pixelRect(rect, theme::kCoopReady);
-    // The check, bold, on a 7 by 7 grid of UI pixels inside the box.
-    static const int kCheck[][2] = {{0, 3}, {1, 4}, {2, 5}, {3, 4}, {4, 3}, {5, 2}, {6, 1}, {0, 4}, {1, 5}, {2, 6}, {3, 5}, {4, 4}, {5, 3}, {6, 2}};
-    for (const auto& cell : kCheck) {
-        pixelRect(Rectangle{rect.x + static_cast<float>(cell[0] + 1) * p, rect.y + static_cast<float>(cell[1]) * p, p, p}, theme::kTextOnPrimary);
-    }
-}
-
 // A small tag such as HOST or YOU. Returns its left edge, so the next one can sit beside it.
 float drawTag(const char* label, Color color, float rightX, float cy, float height) {
     const float size = height * 0.55f;
@@ -266,6 +247,8 @@ CoopResult drawMenu(SaveData& data) {
     if (!keys) navigate(g_menuNav, order.count);
     if (g_menuNav.selected >= order.count) g_menuNav.selected = order.count - 1;
 
+    // Pasted text goes to the name field, the only field on this screen.
+    if (input().pastedLength > 0 && !textEditing()) g_menuNav.selected = kMenuName;
     textField(g_menuNav, kMenuName, Rectangle{x, y, panelWidth, fieldHeight}, "Your name", g_name, TextKind::Name, "Optional. Empty means Player N.");
     y += fieldHeight + gap;
 
@@ -274,7 +257,7 @@ CoopResult drawMenu(SaveData& data) {
         // main button, because it is almost always what someone back on this menu wants.
         char label[32];
         std::snprintf(label, sizeof(label), "Rejoin %s", net::rejoinCode());
-        if (button(g_menuNav, order.rejoinFocus, Rectangle{x, y, panelWidth, buttonHeight}, label, ButtonLook::Primary, promptConfirm())) {
+        if (button(g_menuNav, order.rejoinFocus, Rectangle{x, y, panelWidth, buttonHeight}, label, ButtonLook::Primary)) {
             if (commitName(data)) result.saveChanged = true;
             g_notice[0] = '\0';
             g_wasInRoom = false;
@@ -286,7 +269,7 @@ CoopResult drawMenu(SaveData& data) {
         y += buttonHeight + gap;
     }
     if (button(g_menuNav, order.host, Rectangle{x, y, pairRow ? pairWidth : panelWidth, buttonHeight}, "Host Co-op",
-               order.rejoin ? ButtonLook::Normal : ButtonLook::Primary, order.rejoin ? nullptr : promptConfirm())) {
+               order.rejoin ? ButtonLook::Normal : ButtonLook::Primary)) {
         if (commitName(data)) result.saveChanged = true;
         char name[net::kNameMax + 1];
         effectiveName(true, name, sizeof(name));
@@ -360,7 +343,7 @@ void drawPlayerRow(Rectangle row, int slot, const net::Lobby& lobby) {
 
     // From the right edge inward: ready mark, its word when there is room, then the tags.
     float right = row.x + row.width - 6.0f * p;
-    drawReadyMark(right - p * 4.5f, cy, player.ready);
+    drawCheckBox(right - p * 4.5f, cy, p, player.ready);
     right -= p * 9.0f + 6.0f * p;
     const float tagHeight = std::min(row.height * 0.6f, 22.0f * u);
     // The word beside the mark only shows when the name, the tags and the word all fit. The mark
@@ -457,7 +440,7 @@ void drawWaitingView(Nav& nav, bool hosting, const char* cancelLabel, bool* retr
 
     navigate(nav, buttons);
     if (status.canRetry) {
-        if (button(nav, 0, Rectangle{x, y, panelWidth, buttonHeight}, "Retry", ButtonLook::Primary, promptConfirm())) *retry = true;
+        if (button(nav, 0, Rectangle{x, y, panelWidth, buttonHeight}, "Retry", ButtonLook::Primary)) *retry = true;
         y += buttonHeight + gap;
     }
     if (button(nav, buttons - 1, Rectangle{x, y, panelWidth, buttonHeight}, cancelLabel, ButtonLook::Normal, promptBack())) *cancel = true;
@@ -533,10 +516,10 @@ void drawRoomView(Nav& nav, const net::Lobby& lobby, bool* leave) {
         registerExtent("coop status", Rectangle{bx, by, bw, 26.0f * u});
         return;
     }
-    if (toggle(nav, kRoomReady, Rectangle{bx, by, bw, buttonHeight}, "Ready", &ready)) net::setReady(ready);
+    if (checkBox(nav, kRoomReady, Rectangle{bx, by, bw, buttonHeight}, "Ready", &ready)) net::setReady(ready);
     by += buttonHeight + gap;
     if (isHost) {
-        if (button(nav, kRoomStart, Rectangle{bx, by, bw, buttonHeight}, "Start", ButtonLook::Primary, promptConfirm(), startEnabled)) net::startRun();
+        if (button(nav, kRoomStart, Rectangle{bx, by, bw, buttonHeight}, "Start", ButtonLook::Primary, nullptr, startEnabled)) net::startRun();
         by += buttonHeight + gap;
     }
     if (button(nav, leaveFocus, Rectangle{bx, by, bw, buttonHeight}, "Leave", ButtonLook::Normal, promptBack())) *leave = true;
@@ -645,7 +628,12 @@ CoopResult drawJoin(SaveData& data) {
     const int backFocus = showRetry ? kJoinBack : kJoinBack - 1;
     if (g_joinNav.selected > backFocus) g_joinNav.selected = backFocus;
 
+    // Pasted text goes to the room code field, wherever the selection is, since a code is what people paste here.
+    const bool pastedCode = input().pastedLength > 0 && !textEditing();
+    if (pastedCode) g_joinNav.selected = kJoinCode;
     textField(g_joinNav, kJoinCode, Rectangle{x, y, panelWidth, fieldHeight}, "Room code", g_code, TextKind::Code, "5 characters, such as K7QXM");
+    // A whole code pasted in: the next Enter joins.
+    if (pastedCode && net::validCode(g_code.text)) g_joinNav.selected = kJoinJoin;
     y += fieldHeight;
     text("Ask the host for their room code.", x, y + 4.0f * u, font::fitSize("Ask the host for their room code.", 16.0f * u, panelWidth), theme::kUiTextDim);
     y += hintHeight;
@@ -662,7 +650,7 @@ CoopResult drawJoin(SaveData& data) {
     }
 
     const bool canJoin = !busy && net::validCode(g_code.text);
-    if (button(g_joinNav, kJoinJoin, Rectangle{x, y, panelWidth, buttonHeight}, "Join", ButtonLook::Primary, promptConfirm(), canJoin)) {
+    if (button(g_joinNav, kJoinJoin, Rectangle{x, y, panelWidth, buttonHeight}, "Join", ButtonLook::Primary, nullptr, canJoin)) {
         char name[net::kNameMax + 1];
         effectiveName(false, name, sizeof(name));
         g_wasInRoom = false;

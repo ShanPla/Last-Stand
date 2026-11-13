@@ -61,6 +61,11 @@ bool touchIsOnlyPointer();
 // character. A no-op on native.
 void setTextEditing(bool editing);
 
+// The text the player pasted (Ctrl+V or Shift+Insert) since the last call, as plain printable
+// ASCII (tabs and new lines are dropped). Returns its length, or 0 when nothing was pasted. Needs no
+// permission: in the browser it comes from the page's paste event. It is cut to capacity - 1.
+int takePastedText(char* out, int capacity);
+
 // Puts text on the system clipboard, for the room code's Copy button. A no-op on native.
 // Nothing here throws, and a blocked clipboard simply does nothing.
 void copyToClipboard(const char* text);

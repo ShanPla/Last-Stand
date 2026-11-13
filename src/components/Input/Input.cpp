@@ -107,14 +107,18 @@ void readKeyboard(Snapshot& s) {
 
     // Typed characters are always read out of raylib's queue, so old ones can never turn up later
     // when a field opens. They are only kept while a field is being edited.
+    // A character that arrives while Ctrl is held belongs to a shortcut such as Ctrl+V, not to the text.
+    const bool shortcut = anyKeyDown(KEY_LEFT_CONTROL, KEY_RIGHT_CONTROL) || anyKeyDown(KEY_LEFT_SUPER, KEY_RIGHT_SUPER);
     int character = GetCharPressed();
     while (character != 0) {
-        if (g_textInput && character >= 32 && character < 127 && s.typedCount < static_cast<int>(sizeof(s.typed))) {
+        if (g_textInput && !shortcut && character >= 32 && character < 127 && s.typedCount < static_cast<int>(sizeof(s.typed))) {
             s.typed[s.typedCount++] = static_cast<char>(character);
             s.lastDevice = Device::Keyboard;
         }
         character = GetCharPressed();
     }
+    // Pasted text is always taken out of the platform's queue, so an old paste can't turn up later.
+    s.pastedLength = platform::takePastedText(s.pasted, static_cast<int>(sizeof(s.pasted)));
     // A held Backspace deletes again and again, after a short wait.
     if (g_textInput && s.backspaces == 0 && IsKeyDown(KEY_BACKSPACE) && GetTime() >= g_backspaceRepeatAt) {
         s.backspaces = 1;

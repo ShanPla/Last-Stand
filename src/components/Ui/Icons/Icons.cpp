@@ -388,6 +388,18 @@ void drawGemIcon(float cx, float cy, float size, Color color) { drawGrid(kGem, c
 
 void drawDashIcon(float cx, float cy, float size, Color color) { drawGrid(kDash, cx, cy, size, color); }
 
+float zombieIconRightEdge(float size) {
+    // The last column that holds any pixel of the head, since the sprite has empty columns at its sides.
+    int lastColumn = 0;
+    for (int y = 0; y < kGrid; ++y) {
+        for (int x = 0; x < kGrid; ++x) {
+            if (kZombie[y][x] != '.' && x > lastColumn) lastColumn = x;
+        }
+    }
+    const int cell = std::max(1, static_cast<int>(size / static_cast<float>(kGrid)));
+    return static_cast<float>((lastColumn + 1 - kGrid / 2) * cell);
+}
+
 void drawZombieIcon(float cx, float cy, float size, float alpha) {
     const int cell = std::max(1, static_cast<int>(size / static_cast<float>(kGrid)));
     const int left = static_cast<int>(std::lround(cx)) - cell * kGrid / 2;
