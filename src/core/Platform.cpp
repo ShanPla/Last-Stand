@@ -63,6 +63,11 @@ EM_JS(void, ls_js_install, (), {
 
     document.addEventListener('visibilitychange', function () { if (document.hidden) state.focusLost = true; });
     window.addEventListener('blur', function () { state.focusLost = true; });
+    // F3 shows the co-op network overlay. Most browsers also open their find bar on F3, which
+    // takes focus from the game, so the browser's own use of the key is turned off here.
+    window.addEventListener('keydown', function (event) {
+        if (event.key === 'F3' || event.keyCode === 114) event.preventDefault();
+    }, true);
 
     // Ctrl+V, Shift+Insert and the browser's own Paste item all send a paste event that carries the
     // text. Reading it here needs no permission prompt. Only the latest paste is kept until the

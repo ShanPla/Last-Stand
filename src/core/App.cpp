@@ -877,9 +877,11 @@ void frame() {
     if (!playing) g_pendingDash = false;
     else if (g_input.dash) g_pendingDash = true;
 
-    // Leaving the tab or window pauses at once, so no damage is taken unseen. In co-op only
-    // the host can pause, because the host's pause stops the run for everyone.
-    if (platform::consumeFocusLost() && !coopGuest()) pauseGame();
+    // Leaving the tab or window pauses a single-player run at once, so no damage is taken unseen.
+    // A co-op run is not paused just because the window lost focus (a click on another window, a
+    // second monitor), since the host's pause stops the run for everyone. A host whose tab is
+    // really hidden still pauses everyone, in pageHidden.
+    if (platform::consumeFocusLost() && !coopRun()) pauseGame();
     if (g_input.netOverlay) g_netOverlay = !g_netOverlay;
 
     // Back keys: pause while playing, and step back out of menus.
