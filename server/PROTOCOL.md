@@ -15,7 +15,10 @@ Version: 1. Every connection starts with a `hello` that names this version.
   `NODE_ENV` is `production`.
   A handshake with no `Origin` header (not a browser) is allowed unless `NODE_ENV` is `production`.
   A refused handshake gets HTTP `403`. When the server already has its maximum connections, it
-  answers HTTP `503`.
+  answers HTTP `503`. When one client address already has its maximum connections (see Limits),
+  it answers HTTP `429`.
+- A socket must send a good `hello` within 10 seconds of opening, or the server closes it with
+  code 1008.
 - `GET /healthz` (and `HEAD`) answers `200` with the body `ok`, for Render's health check and for
   waking a sleeping free instance. When the request's `Origin` is allowed, the answer carries
   `Access-Control-Allow-Origin` so the page can read it. Any other path answers `404`.
@@ -54,18 +57,20 @@ Version: 1. Every connection starts with a `hello` that names this version.
 | `{"t":"create","name":"Ana"}` | Make a room and become its host. The answer is a `room` message. |
 | `{"t":"join","code":"K7QXM","name":"Ben"}` | Join a room. Everyone in it gets a `room` message. A joiner gets one too. |
 | `{"t":"ready","ready":true}` | Mark yourself ready or not. `ready` must be a boolean. |
-| `{"t":"settings","settings":{"map":0,"difficulty":1,"mode":0}}` | Host only (`not-host` otherwise, `not-in-room` outside a room). The host's choice of map, difficulty and mode, so guests can see it in the lobby. The server reads nothing inside it: `settings` must be a plain JSON object (not an array or null) whose `JSON.stringify` is at most 200 characters, else `bad-request`. It is stored on the room and sent to everyone in the next `room` message; the sender gets no other answer. Allowed before and after `start`: it only changes what the lobby shows, and a Play Again in the same room uses the host's current choice. The browser uses small integers, and a reader must ignore missing or out-of-range values. |
+| `{"t":"settings","settings":{"map":0,"difficulty":1,"mode":0}}` | Host only (`not-host` otherwise, `not-in-room` outside a room). The host's choice of map, difficulty and mode, so guests can see it in the lobby. The server does not interpret it, but checks its shape: `settings` must be a flat JSON object (not an array or null) of at most 8 keys, each value a finite number, a string or a boolean (no `null`, arrays or objects), whose `JSON.stringify` is at most 200 characters, else `bad-request` and the old settings stay. It is stored on the room and sent to everyone in the next `room` message; the sender gets no other answer. Allowed before and after `start`: it only changes what the lobby shows, and a Play Again in the same room uses the host's current choice. The browser uses small integers, and a reader must ignore missing or out-of-range values. |
 | `{"t":"start"}` | Host only (`not-host` otherwise). Marks the room started. A second `start` gets `started`. A room can start with any number of players, ready or not. |
 | `{"t":"leave"}` | Leave the room. The socket stays open. The leaver gets no answer; the others get a `room` message. |
-| `{"t":"signal","to":2,"data":{...}}` | WebRTC signaling (offer, answer or ICE candidate) for one player. `data` must be a JSON object and is passed on unread. A signal to an empty slot or to yourself is silently dropped. Works before and after `start`. |
+| `{"t":"signal","to":2,"data":{...}}` | WebRTC signaling (offer, answer or ICE candidate) for one player. `data` is passed on unread, but must be a JSON object nested at most 4 levels deep (`data` itself is level 1, arrays count as levels too) with only strings, finite numbers, booleans and `null` at the ends, and its `JSON.stringify` must be at most 8,192 characters, else `bad-request`. The browser sends `{"kind":"offer"\|"answer","sdp":"..."}` and `{"kind":"ice","candidate":{"candidate":"...","sdpMid":"0","sdpMLineIndex":0,"usernameFragment":"..."}}`, which use 2 levels and about 1 KB. A signal to an empty slot or to yourself is silently dropped. Works before and after `start`. |
 | `{"t":"relay","on":true}` | This player's WebRTC failed. The server records the flag and sends no answer. It does not gate forwarding: binary frames are passed through for every player in a started room, because the other end of a failed pair has its own flag off and must still be able to send through the server. |
-| `{"t":"ping","n":17}` | Answered with `pong` with the same `n`, for measuring round trips. |
+| `{"t":"ping","n":17}` | Answered with `pong` with the same `n`, for measuring round trips. `n` must be a finite number, else `bad-request`. |
 
 | `{"t":"rejoin","code":"K7QXM","token":"..."}` | Take back a kept slot in a started room. Only from a socket in no room (`bad-request` otherwise, and when `code` or `token` is not a string). The code is case-insensitive. No such room: `not-found`. A room that has not started, a token that matches no slot, or the host's token: `bad-token`. On success everyone gets a `room` message, and the rejoiner then gets `started` (with its token) like at the start. |
 
 `ready`, `settings`, `start`, `leave`, `signal` and `relay` need the sender to be in a room, or they get
 `not-in-room`. Unknown message types, text that is not JSON, and JSON that is not an
-object with a string `t` all get `bad-request`.
+object with a string `t` all get `bad-request`. Fields the server does not use are ignored.
+If handling a message fails in a way these rules did not foresee, the sender gets `bad-request`
+and the server carries on; no message can stop the server.
 
 ## Server to client (JSON)
 
@@ -80,7 +85,8 @@ object with a string `t` all get `bad-request`.
 | `{"t":"pong","n":17}` | Answer to `ping`. |
 
 Error codes: `version`, `bad-request`, `bad-name`, `not-found`, `full`, `started`, `not-host`,
-`not-in-room`, `server-full`, `too-big`, `rate`, `bad-token`.
+`not-in-room`, `server-full`, `too-big`, `rate`, `bad-token`, `ip-limit` (on `create`: this
+client address already hosts its maximum of rooms; the browser shows it like any other error).
 
 ## Rejoin
 
@@ -111,6 +117,7 @@ Error codes: `version`, `bad-request`, `bad-name`, `not-found`, `full`, `started
   sent, because frames arrive many times per second.
 - A frame of just one byte (the target) is allowed and arrives as just the sender id.
 - If a receiver's socket is more than 1 MB behind, frames for it are dropped instead of queued.
+  The same rule covers JSON messages, see Limits.
 
 ## Limits
 
@@ -120,11 +127,37 @@ Error codes: `version`, `bad-request`, `bad-name`, `not-found`, `full`, `started
 | Message rate | 150 per second per connection, as a token bucket: 150 tokens refill each second, up to 300 stored, one token per message | `error` `rate` once per second, and extra messages are dropped. After 10 seconds without a pause of at least 1 second, the socket closes with code 1008 |
 | Rooms | 200 at once | `error` `server-full` on `create` |
 | Connections | 1,000 at once | the connection is refused with HTTP 503 |
-| Idle socket | no message for 60 seconds | the server sends a WebSocket ping frame (not JSON, browsers answer it by themselves), and closes the socket if there is no pong within 10 seconds |
+| Connections per client address | 20 at once | the connection is refused with HTTP 429. Only when the address source is on, see below |
+| Rooms per client address | 10 hosted at once | `error` `ip-limit` on `create`. Joining is not limited. Only when the address source is on |
+| Hello | a good `hello` within 10 seconds of opening | the socket closes with code 1008 |
+| Pings | every socket is pinged when it has not answered a ping for 60 seconds | the server sends a WebSocket ping frame (not JSON, browsers answer it by themselves), and closes the socket if there is no pong within 10 seconds. Messages the client sends do not count: only a pong shows that it still reads what the server sends |
+| Slow receiver | more than 1 MB waiting to be sent to one socket | every message for it, JSON or binary, is dropped while it is that far behind. If it stays that far behind for 10 seconds, the socket is cut (no close frame, since it would only wait in the same queue) |
 
 A message counts against the rate limit even if it is too big or invalid. The rate check comes
 first, then the size check. A server that is stopping closes every socket with code 1001.
 
 The limits can be lowered with environment variables, for tests: `MAX_MESSAGE_BYTES`,
 `RATE_PER_SEC`, `RATE_BURST`, `RATE_CLOSE_AFTER_MS`, `MAX_ROOMS`, `MAX_CONNECTIONS`, `IDLE_MS`,
-`PONG_WAIT_MS` and `ROOM_MAX_AGE_MS`.
+`PONG_WAIT_MS`, `ROOM_MAX_AGE_MS`, `HELLO_TIMEOUT_MS`, `MAX_BUFFERED_BYTES`, `SLOW_READER_MS`,
+`MAX_CONNECTIONS_PER_IP` and `MAX_ROOMS_PER_IP`.
+
+### Client address
+
+The per-address limits are generous because many players can share one address (a school, a
+cafe, a phone network). Where the address comes from is set by `CLIENT_IP_HEADER`:
+
+- Not set: the TCP peer address while developing. With `NODE_ENV=production` the per-address
+  limits are **off**, because a hosted server usually sits behind the host's proxy, so the TCP
+  peer is the proxy and every player would seem to share one address. The server says which
+  source it uses when it starts.
+- `socket`: the TCP peer address, also in production. For a server that faces the internet
+  itself.
+- A header name, for example `cf-connecting-ip` or `true-client-ip`: that header, read as one
+  address (anything after a comma is ignored). A request without the header is not limited per
+  address (its TCP peer would be the proxy, shared by everybody); the server-wide limits still
+  apply. This is only safe when the proxy in front of the server always overwrites
+  the header, because a client can send any header it likes. Never use `x-forwarded-for` behind
+  a proxy that only appends to it, as Render's does: the first entry would be whatever the
+  client wrote.
+
+Addresses are never written to the log.

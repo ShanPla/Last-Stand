@@ -45,13 +45,34 @@ describe('lobby settings', () => {
     await host.close();
   });
 
-  test('the server stores the object as it is, without reading it', async () => {
+  test('the server stores a flat object as it is, without reading its values', async () => {
     const { host } = await makeRoom(s.url, 'Ana');
-    const odd = { map: 99, extra: ['x', { y: null }], future: true };
+    const odd = { map: 99, name: 'x', future: true, speed: -1.5 };
     host.sendJson({ t: 'settings', settings: odd });
     assert.deepEqual((await host.nextJson()).settings, odd);
     host.sendJson({ t: 'settings', settings: {} });
     assert.deepEqual((await host.nextJson()).settings, {});
+    await host.close();
+  });
+
+  test('nested values, null values and too many keys are bad-request and keep the old settings', async () => {
+    const { host, code } = await makeRoom(s.url, 'Ana');
+    host.sendJson({ t: 'settings', settings: CHOICE });
+    await host.nextJson();
+    const many = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`k${i}`, i]));
+    for (const settings of [{ extra: ['x'] }, { a: { b: 1 } }, { a: null }, many]) {
+      host.sendJson({ t: 'settings', settings });
+      assert.deepEqual(await host.nextJson(), { t: 'error', code: 'bad-request' }, JSON.stringify(settings));
+    }
+    // Eight keys is the most allowed.
+    const eight = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`k${i}`, i]));
+    host.sendJson({ t: 'settings', settings: eight });
+    assert.deepEqual((await host.nextJson()).settings, eight);
+    host.sendJson({ t: 'settings', settings: CHOICE });
+    await host.nextJson();
+    const { client, room } = await joinRoom(s.url, code, 'Ben');
+    assert.deepEqual(room.settings, CHOICE);
+    await client.close();
     await host.close();
   });
 

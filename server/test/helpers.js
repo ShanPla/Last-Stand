@@ -24,10 +24,11 @@ export async function startRelay(overrides = {}) {
 
 export class Client {
   /** Opens a connection. Rejects if the server refuses the handshake. */
-  static open(url, { origin = DEV_ORIGIN, autoPong = true } = {}) {
+  static open(url, { origin = DEV_ORIGIN, autoPong = true, headers } = {}) {
     return new Promise((resolve, reject) => {
       const options = { autoPong };
       if (origin) options.origin = origin;
+      if (headers) options.headers = headers;
       const ws = new WebSocket(url, options);
       const client = new Client(ws);
       ws.once('open', () => resolve(client));

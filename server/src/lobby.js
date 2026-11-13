@@ -1,25 +1,27 @@
 // The lobby: every rule about creating, joining, starting and leaving rooms, plus passing
 // signaling and fallback frames between players. It works on `conn` objects (see connection.js)
-// with this shape: { room, slot, sendJson(obj), sendBinary(buf), bufferedAmount }.
+// with this shape: { room, slot, ip, sendJson(obj), sendBinary(buf) }. Sending is safe whatever
+// the receiver does: the connection drops messages for a receiver that is far behind.
 import { HOST_SLOT, MAX_PLAYERS } from './rooms.js';
+import { isFlatSettings, isSignalData } from './shapes.js';
 
 const NAME_PATTERN = /^[A-Za-z0-9 ]{1,12}$/;
-// The run settings are a few small numbers. This cap keeps the room message small whatever a client sends.
-export const MAX_SETTINGS_JSON = 200;
+// The run settings are a few small numbers, see shapes.js for the exact rule.
+export { MAX_SETTINGS_JSON } from './shapes.js';
 export const BROADCAST = 255;
-// If a receiver is this far behind, drop frames for it instead of piling up memory.
-const MAX_BUFFERED_BYTES = 1024 * 1024;
 
 export class Lobby {
   /**
    * @param {import('./rooms.js').RoomRegistry} registry
    * @param {(line: string) => void} log
    * @param {() => number} clock milliseconds, injectable for tests
+   * @param {{maxRoomsPerIp?: number}} [limits] rooms one client address may host at once
    */
-  constructor(registry, log, clock = Date.now) {
+  constructor(registry, log, clock = Date.now, limits = {}) {
     this.registry = registry;
     this.log = log;
     this.clock = clock;
+    this.maxRoomsPerIp = limits.maxRoomsPerIp ?? Infinity;
   }
 
   /**
@@ -75,6 +77,7 @@ export class Lobby {
     const name = cleanName(msg.name);
     if (name === null) return conn.sendError('bad-name');
     if (this.registry.isFull()) return conn.sendError('server-full');
+    if (this.#roomsHostedFrom(conn.ip) >= this.maxRoomsPerIp) return conn.sendError('ip-limit');
 
     const room = this.registry.create(this.clock());
     this.#seat(conn, room, name);
@@ -145,16 +148,15 @@ export class Lobby {
    * them in the lobby. The server does not look inside: it checks the shape and the size, stores
    * the object and broadcasts it in the next `room` message. It is allowed after the start too,
    * because it only changes what the lobby shows; the run itself gets its settings from the host.
+   * Only a flat object of a few plain values is kept: anything nested could make the next room
+   * message impossible to write (see shapes.js).
    */
   #settings(conn, msg) {
     const room = conn.room;
     if (!room) return conn.sendError('not-in-room');
     if (conn.slot !== HOST_SLOT) return conn.sendError('not-host');
-    const s = msg.settings;
-    if (typeof s !== 'object' || s === null || Array.isArray(s)) return conn.sendError('bad-request');
-    // stringify can throw for odd values, but a parsed JSON message never contains them.
-    if (JSON.stringify(s).length > MAX_SETTINGS_JSON) return conn.sendError('bad-request');
-    room.settings = s;
+    if (!isFlatSettings(msg.settings)) return conn.sendError('bad-request');
+    room.settings = msg.settings;
     room.broadcastRoom();
   }
 
@@ -178,9 +180,8 @@ export class Lobby {
   #signal(conn, msg) {
     const room = conn.room;
     if (!room) return conn.sendError('not-in-room');
-    if (!isPlayerId(msg.to) || typeof msg.data !== 'object' || msg.data === null) {
-      return conn.sendError('bad-request');
-    }
+    // data is passed on unread, but its shape is checked, so forwarding it can never fail.
+    if (!isPlayerId(msg.to) || !isSignalData(msg.data)) return conn.sendError('bad-request');
     const target = room.players[msg.to];
     // Someone who just left, or is away, is not an error worth reporting: the signal is simply
     // useless now.
@@ -218,13 +219,22 @@ export class Lobby {
 
     const out = Buffer.from(frame); // one copy, then only the first byte changes per recipient
     out[0] = conn.slot;
-    for (const p of recipients) {
-      if (p.conn.bufferedAmount > MAX_BUFFERED_BYTES) continue;
-      p.conn.sendBinary(out);
-    }
+    // sendBinary drops the frame for a receiver that is far behind (1 MB by default, connection.js).
+    for (const p of recipients) p.conn.sendBinary(out);
   }
 
   // --- helpers ---
+
+  /** How many open rooms are hosted from this client address. No address means no limit. */
+  #roomsHostedFrom(ip) {
+    if (ip === null || ip === undefined) return 0;
+    let n = 0;
+    for (const room of this.registry.rooms.values()) {
+      const host = room.players[HOST_SLOT];
+      if (host && host.conn && host.conn.ip === ip) n++;
+    }
+    return n;
+  }
 
   #seat(conn, room, name) {
     const player = room.addPlayer(conn, name);

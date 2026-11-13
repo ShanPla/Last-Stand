@@ -71,8 +71,9 @@ describe('limits on a real server', () => {
     c.sendBinary(Buffer.alloc(201));
     assert.deepEqual(await c.nextJson(), { t: 'error', code: 'too-big' });
     // Exactly at the limit is fine.
-    const filler = 'x'.repeat(200 - JSON.stringify({ t: 'ping', n: '' }).length);
-    c.sendText(JSON.stringify({ t: 'ping', n: filler }));
+    // Unknown fields are ignored, so a pad field makes a valid ping of exactly 200 bytes.
+    const filler = 'x'.repeat(200 - JSON.stringify({ t: 'ping', n: 1, pad: '' }).length);
+    c.sendText(JSON.stringify({ t: 'ping', n: 1, pad: filler }));
     assert.equal((await c.nextJson()).t, 'pong');
     await c.close();
     await s.stop();
@@ -242,9 +243,9 @@ describe('time based limits, with lowered values', () => {
     await s.stop();
   });
 
-  test('chatting keeps a socket from going idle', async () => {
+  test('a chatty socket that answers pings stays open', async () => {
     const s = await startRelay({ idleMs: 200, pongWaitMs: 100 });
-    const c = await Client.connect(s.url, { autoPong: false });
+    const c = await Client.connect(s.url); // auto-answers pings, like a browser
     for (let i = 0; i < 12; i++) {
       c.sendJson({ t: 'ping', n: i });
       assert.deepEqual(await c.nextJson(), { t: 'pong', n: i });
@@ -252,6 +253,18 @@ describe('time based limits, with lowered values', () => {
     }
     assert.ok(!c.closeInfo);
     await c.close();
+    await s.stop();
+  });
+
+  test('sending does not stand in for answering pings: a socket that never answers is closed', async () => {
+    // A client could keep sending while it never reads anything we send. Only a pong proves it
+    // reads, so chatting alone no longer keeps it open.
+    const s = await startRelay({ idleMs: 150, pongWaitMs: 150 });
+    const c = await Client.connect(s.url, { autoPong: false });
+    const timer = setInterval(() => c.ws.readyState === 1 && c.sendJson({ t: 'ping', n: 1 }), 30);
+    const info = await Promise.race([c.closedPromise, sleep(4000).then(() => null)]);
+    clearInterval(timer);
+    assert.ok(info, 'a socket that never answers pings should be closed even while it sends');
     await s.stop();
   });
 });
